@@ -81,24 +81,16 @@ def main_unified(unified: Path, out: Path):
         ni, no = convert_split(samples, Path("."), out, split, "")
         print(split, ni, "images", no, "objects")
     (out / "data.yaml").write_text(
-        f"path: {out}
-train: images/train
-val: images/val
-test: images/test
-"
-        f"kpt_shape: [9, 3]
-flip_idx: {FLIP_IDX}
-"
-        "names:
-" + "".join(f"  {i}: {c}
-" for i, c in enumerate(G.CLASSES)))
+        f"path: {out}\ntrain: images/train\nval: images/val\ntest: images/test\n"
+        f"kpt_shape: [9, 3]\nflip_idx: {FLIP_IDX}\n"
+        "names:\n" + "".join(f"  {i}: {c}\n" for i, c in enumerate(G.CLASSES)))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--unified", type=Path, default=None, help="JP-Unified dir with train/val/test.jsonl")
     ap.add_argument("--jp3d", type=Path, default=None)
-    ap.add_argument("--images", type=Path, required=True)
+    ap.add_argument("--images", type=Path, default=None)
     ap.add_argument("--extra", action="append", default=[], help="jsonl_dir:image_root for more sources")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
