@@ -12,6 +12,19 @@ import numpy as np
 from tools.carla_gen import W, H, labels_for, sample_mounting, spawn_traffic, ue_to_cv, world_to_cam_matrix
 
 
+def try_mount(world, tf, fov) -> bool:
+    """True when several vehicles are within the view frustum of a mounting."""
+    M = world_to_cam_matrix(tf)
+    f = W / (2 * math.tan(math.radians(fov) / 2))
+    n = 0
+    for a in world.get_actors().filter("vehicle.*"):
+        l = a.get_location()
+        p = ue_to_cv((M @ np.array([l.x, l.y, l.z, 1.0]))[:3])
+        if 3 < p[2] < 80 and abs(p[0] / p[2]) * f < W / 2 and abs(p[1] / p[2]) * f < H / 2:
+            n += 1
+    return n >= 4
+
+
 def main():
     client = carla.Client("localhost", 2000)
     client.set_timeout(120)
@@ -25,8 +38,11 @@ def main():
     spawn_traffic(client, world, rng, 80, 40, 8000)
     for _ in range(60):
         world.tick()
-    tf, kind = sample_mounting(world.get_map(), rng)
     fov = 50
+    for _try in range(30):
+        tf, kind = sample_mounting(world.get_map(), rng)
+        if try_mount(world, tf, fov):
+            break
     f = W / (2 * math.tan(math.radians(fov) / 2))
     K = np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]])
     b = world.get_blueprint_library().find("sensor.camera.instance_segmentation")
@@ -42,6 +58,11 @@ def main():
         d = q.get(timeout=30)
     raw = np.frombuffer(d.raw_data, dtype=np.uint8).reshape(H, W, 4)
     B, Gc, R = raw[..., 0].astype(int), raw[..., 1].astype(int), raw[..., 2].astype(int)
+    veh = np.isin(R, [12, 13, 14, 15, 16, 18, 19])
+    print("vehicle/person pixels:", int(veh.sum()))
+    for name0, ids0 in {"G+B<<8": Gc + (B << 8), "B+G<<8": B + (Gc << 8)}.items():
+        u = np.unique(ids0[veh])
+        print(name0, "ids on vehicle pixels:", u[:15].tolist(), "actor ids:", sorted(a.id for a in world.get_actors().filter("vehicle.*"))[:15])
     encodings = {"G+B<<8": Gc + (B << 8), "B+G<<8": B + (Gc << 8)}
     M = world_to_cam_matrix(tf)
     for name, ids in encodings.items():
