@@ -96,22 +96,34 @@ def main():
             # (distortion already removed). Undistorting again would bend them.
             Knew = K.copy()
             D = np.zeros(5)
-        R = orthonormal(np.array(ext["rotation"], float))
+        # The official LiDAR->camera "rotation" is affine (row norms down to ~0.83), not a rotation:
+        # transform the box corners with it exactly (that is what the 2D labels agree with) and keep the
+        # resulting image keypoints; the rigid 3D parameters are fitted to the transformed corners.
+        A = np.array(ext["rotation"], float)
         t = np.array(ext["translation"], float).reshape(3)
-        n_cam = R @ up_lidar
+        n_cam = A @ up_lidar
+        n_cam /= np.linalg.norm(n_cam)
         objs, ignore, bottoms = [], [], []
         for o in lab:
             typ = o["type"]
             c = np.array([o["3d_location"][k] for k in "xyz"], float)
             l, wd, hh = (float(o["3d_dimensions"][k]) for k in "lwh")
             yaw = float(o["rotation"])
-            centre = R @ c + t
-            bottom = centre - n_cam * hh / 2
-            head = R @ np.array([np.cos(yaw), np.sin(yaw), 0.0])
-            corners = G.box_corners(bottom[None], np.array([[l, wd, hh]]), head[None], n_cam)[0]
+            # Corners in the LiDAR frame, JP order: bottom FL FR RR RL, top FL FR RR RL.
+            cl = G.box_corners((c - np.array([0, 0, hh / 2]))[None], np.array([[l, wd, hh]]),
+                               np.array([[np.cos(yaw), np.sin(yaw), 0.0]]), up_lidar)[0]
+            corners = cl @ A.T + t
             if (corners[:, 2] < 0.5).any():
                 continue
-            uv = G.project(Knew, corners)
+            bottom = corners[:4].mean(0)
+            front, rear = corners[[0, 1]].mean(0), corners[[2, 3]].mean(0)
+            head = front - rear
+            l3 = float(np.linalg.norm(head))
+            w3 = float((np.linalg.norm(corners[0] - corners[1]) + np.linalg.norm(corners[3] - corners[2])) / 2)
+            h3 = float(np.linalg.norm(corners[4:].mean(0) - bottom))
+            head = head / max(l3, 1e-9)
+            kpts = G.project(Knew, np.vstack([bottom[None], corners]))
+            uv = kpts[1:]
             x1, y1 = np.clip(uv.min(0), 0, [w - 1, h - 1])
             x2, y2 = np.clip(uv.max(0), 0, [w - 1, h - 1])
             if x2 - x1 < 2 or y2 - y1 < 2:
@@ -128,8 +140,8 @@ def main():
                                 [sb["xmin"], (sb["ymin"] + sb["ymax"]) / 2], [sb["xmax"], (sb["ymin"] + sb["ymax"]) / 2]], float)
                 und = cv2.undistortPoints(pts.reshape(-1, 1, 2), K, D, P=Knew).reshape(-1, 2)
                 src_box = [float(und[:, 0].min()), float(und[:, 1].min()), float(und[:, 0].max()), float(und[:, 1].max())]
-            objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom, "dims": [l, wd, hh], "heading": head,
-                         "box2d": box, "src_box2d": src_box, "truncation": float(o.get("truncated_state", 0)),
+            objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom, "dims": [l3, w3, h3], "heading": head,
+                         "kpts2d": kpts.tolist(), "box2d": box, "src_box2d": src_box, "truncation": float(o.get("truncated_state", 0)),
                          "occlusion": str(o.get("occluded_state", ""))})
             bottoms.append(bottom)
         e = info.get(fid, {})

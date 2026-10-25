@@ -39,10 +39,14 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
         W, H = s["width"], s["height"]
         lines = []
         for o in s["objects"]:
-            pts = keypoints(o, K, plane)
-            if (pts[:, 2] < 0.3).any():
-                continue
-            uv = G.project(K, pts)
+            if "kpts2d" in o:
+                # Exact image keypoints from the source projection (e.g. DAIR affine calibration).
+                uv = np.array(o["kpts2d"], float)
+            else:
+                pts = keypoints(o, K, plane)
+                if (pts[:, 2] < 0.3).any():
+                    continue
+                uv = G.project(K, pts)
             x1, y1 = np.clip(uv.min(0), 0, [W - 1, H - 1])
             x2, y2 = np.clip(uv.max(0), 0, [W - 1, H - 1])
             if x2 - x1 < 3 or y2 - y1 < 3:

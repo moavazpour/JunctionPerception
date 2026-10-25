@@ -44,10 +44,13 @@ def main():
             dims[o["cls"]].append(o["dims"])
             b = np.array(o["bottom"])
             rngs[o["cls"]].append(float(np.hypot(b[0], b[2])))
-            c = G.box_corners(b[None], np.array([o["dims"]]), np.array([o["heading"]]), plane[:3])[0]
-            if (c[:, 2] < 0.3).any():
-                continue
-            uv = G.project(K, c)
+            if "kpts2d" in o:
+                uv = np.array(o["kpts2d"])[1:]
+            else:
+                c = G.box_corners(b[None], np.array([o["dims"]]), np.array([o["heading"]]), plane[:3])[0]
+                if (c[:, 2] < 0.3).any():
+                    continue
+                uv = G.project(K, c)
             pb = [*np.clip(uv.min(0), 0, [s["width"] - 1, s["height"] - 1]), *np.clip(uv.max(0), 0, [s["width"] - 1, s["height"] - 1])]
             cam_iou[s["camera"]].append(iou(pb, o.get("src_box2d") or o["box2d"]))
             cam_n[s["camera"]] += 1
