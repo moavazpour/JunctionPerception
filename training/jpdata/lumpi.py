@@ -127,9 +127,19 @@ def main():
                         if x2 - x1 < 3 or y2 - y1 < 3:
                             continue
                         box = [float(x1), float(y1), float(x2), float(y2)]
-                        if cid not in CMAP:
+                        score = v[6]
+                        # score 0 = automatic, uncorrected label (wrong sizes are common): ignore region.
+                        if cid not in CMAP or score < 1.0:
                             ignore.append(box)
                             continue
+                        if CMAP[cid] == "pedestrian" and score < 4.0 and max(l, w) > 1.0:
+                            # Uncorrected pedestrians often carry track-inflated length; keep a body footprint.
+                            l = w = 0.7
+                            cs = G.box_corners(bottom[None], np.array([[l, w, h]]), head[None], n)[0]
+                            uv = G.project(K, cs)
+                            x1, y1 = np.clip(uv.min(0), 0, [W - 1, H - 1])
+                            x2, y2 = np.clip(uv.max(0), 0, [W - 1, H - 1])
+                            box = [float(x1), float(y1), float(x2), float(y2)]
                         if fg is not None:
                             frac = float(fg[int(y1):int(y2) + 1, int(x1):int(x2) + 1].mean())
                             if frac < a.min_fg:
@@ -138,7 +148,7 @@ def main():
                                 continue
                         objs.append({"cls": CMAP[cid], "src_type": str(cid), "bottom": bottom.tolist(),
                                      "dims": [l, w, h], "heading": head.tolist(), "box2d": box,
-                                     "num_points": int(v[8])})
+                                     "num_points": int(v[8]), "score": score})
                         stats["kept"] += 1
                     name = f"{mkey}_c{dev}_{frame:06d}.jpg"
                     cv2.imwrite(str(out_dir / name), und, [cv2.IMWRITE_JPEG_QUALITY, 92])
