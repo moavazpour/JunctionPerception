@@ -157,7 +157,7 @@ def fit_plane(pts: np.ndarray, up_hint: np.ndarray, iters: int = 200, thresh: fl
     n, d = best
     inliers = pts[np.abs(pts @ n + d) < thresh]
     c = inliers.mean(0)
-    _, _, vt = np.linalg.svd(inliers - c)
+    _, _, vt = np.linalg.svd(inliers - c, full_matrices=False)  # full U would be N x N
     n = vt[-1]
     if n @ up_hint < 0:
         n = -n
