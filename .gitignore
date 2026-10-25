@@ -1,0 +1,42 @@
+# Media and data never enter git (privacy by design)
+*.mov
+*.MOV
+*.mp4
+*.mkv
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.pcd
+data/
+datasets/
+
+# Models
+*.onnx
+*.engine
+*.plan
+*.pt
+*.pth
+*.ckpt
+weights/
+
+# Build
+build/
+out/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Web
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
