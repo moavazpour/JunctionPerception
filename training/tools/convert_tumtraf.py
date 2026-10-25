@@ -80,13 +80,19 @@ def main():
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--devkit", type=Path, default=None)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--releases", default="R2,R4")
     args = ap.parse_args()
+    rels = args.releases.split(",")
     root = args.root.expanduser()
     devkit = (args.devkit or root / "tum-traffic-dataset-dev-kit-main").expanduser()
     out = args.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
 
-    records = [("R2",) + r for r in r2_records(root, devkit)] + [("R4",) + r for r in r4_records(root)]
+    records = []
+    if "R2" in rels:
+        records += [("R2",) + r for r in r2_records(root, devkit)]
+    if "R4" in rels:
+        records += [("R4",) + r for r in r4_records(root)]
     print(f"{len(records)} image samples")
 
     # Pass 1: fit one ground plane per (release, camera, lidar) from label bottoms in the LiDAR frame.
