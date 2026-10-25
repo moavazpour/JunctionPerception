@@ -45,11 +45,12 @@ def main():
                 P = np.array(d["projection_matrix"], float)
                 K, T = G.decompose_projection(P)
                 calibs[cam_key(c.stem)] = (K, T, d.get("image_width", 1920), d.get("image_height", 1200))
-            for lab in sorted((seq / "_labels").glob("*.json")):
+            images = {p.name: p for p in (seq / "_images").rglob("*") if p.suffix in (".jpg", ".png")}
+            for lab in sorted((seq / "_labels").rglob("*.json")):
                 d = json.loads(lab.read_text())
-                img = seq / "_images" / d["image_file_name"]
+                img = images.get(Path(d["image_file_name"]).name)
                 ck = cam_key(d["image_file_name"])
-                if not img.exists() or ck not in calibs:
+                if img is None or ck not in calibs:
                     continue
                 K, T, W, H = calibs[ck]
                 R, t = T[:3, :3], T[:3, 3]
