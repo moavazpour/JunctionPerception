@@ -1,0 +1,10 @@
+.git
+build
+web/node_modules
+web/dist
+training
+docs
+**/*.MOV
+**/*.mp4
+**/*.onnx
+**/*.engine
