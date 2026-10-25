@@ -8,8 +8,8 @@
 *.jpeg
 *.png
 *.pcd
-data/
-datasets/
+/data/
+/datasets/
 
 # Models
 *.onnx
