@@ -106,7 +106,7 @@ def main():
         objs, ignore, bottoms = [], [], []
         for o in lab:
             typ = o["type"]
-            c = np.array([o["3d_location"][k] for k in "xyz"], float)
+            c = np.array([float(o["3d_location"][k]) for k in "xyz"], float)
             l, wd, hh = (float(o["3d_dimensions"][k]) for k in "lwh")
             yaw = float(o["rotation"])
             # Corners in the LiDAR frame, JP order: bottom FL FR RR RL, top FL FR RR RL.
@@ -133,6 +133,8 @@ def main():
                 ignore.append(box)
                 continue
             sb = o.get("2d_box")
+            if sb:
+                sb = {k: float(v) for k, v in sb.items()}  # DAIR-V2X-I stores numbers as strings
             src_box = None
             if sb:
                 pts = np.array([[sb["xmin"], sb["ymin"]], [sb["xmax"], sb["ymin"]], [sb["xmax"], sb["ymax"]], [sb["xmin"], sb["ymax"]],
