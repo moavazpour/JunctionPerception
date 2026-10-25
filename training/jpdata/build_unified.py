@@ -18,11 +18,11 @@ import numpy as np
 
 from jp3d import geometry as G
 
-DIM_RANGES = {  # plausible (min, max) for l, w, h
-    "car": ((2.5, 7.0), (1.3, 2.6), (1.0, 3.2)),
-    "bus": ((6.0, 25.0), (2.0, 3.2), (2.3, 4.5)),
-    "truck": ((3.5, 13.0), (1.6, 3.2), (1.8, 4.5)),
-    "trailer": ((3.0, 18.0), (1.6, 3.2), (1.0, 4.5)),
+DIM_RANGES = {  # plausible (min, max) for l, w, h, covering every source's conventions
+    "car": ((2.5, 7.0), (1.3, 2.7), (1.0, 3.2)),
+    "bus": ((6.0, 19.5), (2.0, 3.7), (2.3, 4.6)),
+    "truck": ((1.5, 13.0), (1.6, 3.5), (1.6, 4.6)),  # TUMTraf TRUCK = tractor cab only (l ~2-3 m)
+    "trailer": ((3.0, 20.5), (1.6, 3.5), (1.0, 4.6)),
     "pedestrian": ((0.2, 1.5), (0.2, 1.5), (0.9, 2.3)),
     "bicycle": ((0.8, 2.6), (0.2, 1.5), (0.9, 2.3)),
     "escooter": ((0.6, 1.8), (0.2, 1.2), (1.0, 2.3)),
@@ -56,21 +56,24 @@ def qc(s: dict, stats: Counter, metric: bool = True) -> dict:
     """Drop objects that violate geometric sanity checks; count reasons."""
     plane = np.array(s["plane"])
     keep = []
+    ignore = list(s.get("ignore", []))
     for o in s["objects"]:
         if o["cls"] not in G.CLASSES:
             stats["unknown_class"] += 1
             continue
         rng = DIM_RANGES[o["cls"]]
         if metric and not all(lo <= v <= hi for v, (lo, hi) in zip(o["dims"], rng)):
-            stats[f"dims_out_of_range:{o['cls']}"] += 1
+            stats[f"dims_out_of_range:{s['source']}:{o['cls']}"] += 1
+            ignore.append(o["box2d"])  # visible but unreliable: neither positive nor negative
             continue
         dz = float(G.plane_height(plane, np.array([o["bottom"]]))[0])
         if metric and abs(dz) > 0.6:
-            stats["off_ground"] += 1
+            stats[f"off_ground:{s['source']}"] += 1
+            ignore.append(o["box2d"])
             continue
         keep.append(o)
     stats["objects_kept"] += len(keep)
-    return {**s, "objects": keep}
+    return {**s, "objects": keep, "ignore": ignore}
 
 
 def main():
@@ -82,7 +85,7 @@ def main():
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--subsample", action="append", default=[], help="name=fraction: keep this share of a source (by image)")
     ap.add_argument("--vehicle_side", default="kitti,dair_spd_vehicle", help="sources capped together")
-    ap.add_argument("--nonmetric", default="dair_spd_infra,dair_c_infra",
+    ap.add_argument("--nonmetric", default="dair_spd_infra,dair_c_infra,dair_spd_vehicle",
                     help="sources whose 3D boxes are approximate (keypoints exact): kept for training, excluded from 3D metrics")
     ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
     a = ap.parse_args()
@@ -113,15 +116,29 @@ def main():
                     frac[n] = frac.get(n, 1.0) * allowed / n_veh
     print("sampling fractions:", {n: round(frac.get(n, 1.0), 3) for n, _, _ in loaded})
     for name, root, lines in loaded:
-        for line in lines:
-            if h01(f"{a.seed}:pick:{name}:{hashlib.sha1(line[:300].encode()).hexdigest()}") >= frac.get(name, 1.0):
-                continue
+        picked = [l for l in lines
+                  if h01(f"{a.seed}:pick:{name}:{hashlib.sha1(l[:300].encode()).hexdigest()}") < frac.get(name, 1.0)]
+        # Balanced group split per source: groups in a seeded random order fill test, then val, up to
+        # their image shares; everything else is train. Groups never straddle splits.
+        sizes = Counter(group_of({**json.loads(l), "source": name}) for l in picked)
+        order = sorted(sizes, key=lambda g: h01(f"{a.seed}:{g}"))
+        total = sum(sizes.values())
+        assign, acc = {}, 0
+        for g in order:
+            if acc < a.test * total:
+                assign[g] = "test"
+            elif acc < (a.test + a.val) * total:
+                assign[g] = "val"
+            else:
+                assign[g] = "train"
+            acc += sizes[g]
+        for line in picked:
             s = json.loads(line)
             s["source"] = name
             s["_root"] = str(Path(root).expanduser())
             g = group_of(s)
             s["group"] = g
-            sp = split_of(g, a.seed, a.val, a.test)
+            sp = assign[g]
             s["metric3d"] = name not in nonmetric
             s = qc(s, stats, s["metric3d"])
             writers[sp].write(json.dumps(s) + "\n")
