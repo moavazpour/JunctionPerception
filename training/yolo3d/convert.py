@@ -75,9 +75,37 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
     return n_img, n_obj
 
 
-def main_unified(unified: Path, out: Path):
+def weather_copies(samples: list[dict], out: Path, frac: float, seed: int = 0):
+    """Offline adverse-weather copies of a fraction of the training images (fog, rain, night, glare, droplets)."""
+    import random
+
+    import cv2
+
+    from jp3d.weather import WeatherAug
+
+    rng = random.Random(seed)
+    aug = WeatherAug(p_color=0.5, p_weather=1.0, p_blur=0.3, p_jpeg=0.3)
+    picked = [s for s in samples if rng.random() < frac]
+    copies = []
+    (out / "weather").mkdir(parents=True, exist_ok=True)
+    for i, s in enumerate(picked):
+        im = cv2.imread(str(Path(s["_root"]) / s["image"]))
+        if im is None:
+            continue
+        for x1, y1, x2, y2 in s.get("ignore", []):
+            im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+        im = aug(im, np.random.default_rng(seed * 100003 + i))
+        rel = f"weather/{s['source']}_{i:06d}.jpg"
+        cv2.imwrite(str(out / rel), im, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        copies.append({**s, "_root": str(out), "image": rel, "ignore": [], "source": s["source"] + "_wx"})
+    return copies
+
+
+def main_unified(unified: Path, out: Path, weather_frac: float = 0.25):
     for split in ("train", "val", "test"):
         samples = [json.loads(l) for l in (unified / f"{split}.jsonl").read_text().splitlines() if l.strip()]
+        if split == "train" and weather_frac > 0:
+            samples += weather_copies(samples, out, weather_frac)
         ni, no = convert_split(samples, Path("."), out, split, "")
         print(split, ni, "images", no, "objects")
     (out / "data.yaml").write_text(
@@ -93,10 +121,11 @@ def main():
     ap.add_argument("--images", type=Path, default=None)
     ap.add_argument("--extra", action="append", default=[], help="jsonl_dir:image_root for more sources")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--weather", type=float, default=0.25, help="fraction of train images duplicated with weather effects")
     args = ap.parse_args()
     out = args.out.expanduser()
     if args.unified:
-        main_unified(args.unified.expanduser(), out)
+        main_unified(args.unified.expanduser(), out, args.weather)
         return
     sources = [(args.jp3d.expanduser(), args.images.expanduser(), "tum__")]
     for e in args.extra:
