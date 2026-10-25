@@ -52,7 +52,7 @@ def split_of(group: str, seed: int, val: float, test: float) -> str:
     return "test" if h < test else "val" if h < test + val else "train"
 
 
-def qc(s: dict, stats: Counter) -> dict:
+def qc(s: dict, stats: Counter, metric: bool = True) -> dict:
     """Drop objects that violate geometric sanity checks; count reasons."""
     plane = np.array(s["plane"])
     keep = []
@@ -61,11 +61,11 @@ def qc(s: dict, stats: Counter) -> dict:
             stats["unknown_class"] += 1
             continue
         rng = DIM_RANGES[o["cls"]]
-        if not all(lo <= v <= hi for v, (lo, hi) in zip(o["dims"], rng)):
+        if metric and not all(lo <= v <= hi for v, (lo, hi) in zip(o["dims"], rng)):
             stats[f"dims_out_of_range:{o['cls']}"] += 1
             continue
         dz = float(G.plane_height(plane, np.array([o["bottom"]]))[0])
-        if abs(dz) > 0.6:
+        if metric and abs(dz) > 0.6:
             stats["off_ground"] += 1
             continue
         keep.append(o)
@@ -82,6 +82,8 @@ def main():
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--subsample", action="append", default=[], help="name=fraction: keep this share of a source (by image)")
     ap.add_argument("--vehicle_side", default="kitti,dair_spd_vehicle", help="sources capped together")
+    ap.add_argument("--nonmetric", default="dair_spd_infra,dair_c_infra",
+                    help="sources whose 3D boxes are approximate (keypoints exact): kept for training, excluded from 3D metrics")
     ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
     a = ap.parse_args()
     out = a.out.expanduser()
@@ -92,6 +94,7 @@ def main():
     groups = defaultdict(set)
     stats = Counter()
     frac = {k: float(v) for k, v in (x.split("=") for x in a.subsample)}
+    nonmetric = set(a.nonmetric.split(",")) if a.nonmetric else set()
     loaded = []
     for spec in a.src:
         name, rest = spec.split("=", 1)
@@ -119,7 +122,8 @@ def main():
             g = group_of(s)
             s["group"] = g
             sp = split_of(g, a.seed, a.val, a.test)
-            s = qc(s, stats)
+            s["metric3d"] = name not in nonmetric
+            s = qc(s, stats, s["metric3d"])
             writers[sp].write(json.dumps(s) + "\n")
             groups[sp].add(g)
             summary[(name, sp)]["images"] += 1
