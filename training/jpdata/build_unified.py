@@ -43,6 +43,10 @@ def group_of(s: dict) -> str:
     return f"{src}:{s.get('camera')}:{t // 30}"
 
 
+def h01(key: str) -> float:
+    return int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+
+
 def split_of(group: str, seed: int, val: float, test: float) -> str:
     h = int(hashlib.sha1(f"{seed}:{group}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
     return "test" if h < test else "val" if h < test + val else "train"
@@ -76,6 +80,9 @@ def main():
     ap.add_argument("--val", type=float, default=0.1)
     ap.add_argument("--test", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--subsample", action="append", default=[], help="name=fraction: keep this share of a source (by image)")
+    ap.add_argument("--vehicle_side", default="kitti,dair_spd_vehicle", help="sources capped together")
+    ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
     a = ap.parse_args()
     out = a.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -84,11 +91,27 @@ def main():
     summary = defaultdict(Counter)
     groups = defaultdict(set)
     stats = Counter()
+    frac = {k: float(v) for k, v in (x.split("=") for x in a.subsample)}
+    loaded = []
     for spec in a.src:
         name, rest = spec.split("=", 1)
         jl, root = rest.split(":", 1)
-        for line in Path(jl).expanduser().read_text().splitlines():
-            if not line.strip():
+        lines = [l for l in Path(jl).expanduser().read_text().splitlines() if l.strip()]
+        loaded.append((name, root, lines))
+    # Cap vehicle-side cameras at a share of the final set.
+    veh = set(a.vehicle_side.split(","))
+    n_other = sum(len(l) * frac.get(n, 1.0) for n, _, l in loaded if n not in veh)
+    n_veh = sum(len(l) * frac.get(n, 1.0) for n, _, l in loaded if n in veh)
+    if n_veh > 0:
+        allowed = a.vehicle_cap / (1 - a.vehicle_cap) * n_other
+        if n_veh > allowed:
+            for n, _, _ in loaded:
+                if n in veh:
+                    frac[n] = frac.get(n, 1.0) * allowed / n_veh
+    print("sampling fractions:", {n: round(frac.get(n, 1.0), 3) for n, _, _ in loaded})
+    for name, root, lines in loaded:
+        for line in lines:
+            if h01(f"{a.seed}:pick:{name}:{hashlib.sha1(line[:300].encode()).hexdigest()}") >= frac.get(name, 1.0):
                 continue
             s = json.loads(line)
             s["source"] = name
