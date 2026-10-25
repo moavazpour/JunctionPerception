@@ -19,6 +19,8 @@ import numpy as np
 
 from jp3d import geometry as G
 
+SRC_CORNERS = ["bottom_left_front", "bottom_right_front", "bottom_right_back", "bottom_left_back",
+               "top_left_front", "top_right_front", "top_right_back", "top_left_back"]
 CMAP = {"CAR": "car", "VAN": "car", "EMERGENCY_VEHICLE": "car", "BUS": "bus", "TRUCK": "truck", "TRAILER": "trailer",
         "PEDESTRIAN": "pedestrian", "BICYCLE": "bicycle", "MOTORCYCLE": "motorcycle"}
 
@@ -34,7 +36,7 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     root = a.root.expanduser()
-    n = 0
+    n = dropped = 0
     with open(a.out, "w") as f:
         for seq in sorted(root.glob("a9_dataset_r00_s0*")):
             if not (seq / "_images").exists():
@@ -62,6 +64,7 @@ def main():
                 # World plane z = 0 in camera coordinates.
                 plane = G.transform_plane(np.array([0.0, 0.0, 1.0, 0.0]), T)
                 objs, ignore = [], []
+                rejected = 0
                 if not any("box3d" in l for l in d["labels"]):
                     continue  # pseudo-cuboid annotation only (R00 s00), not metric
                 for l in d["labels"]:
@@ -91,15 +94,25 @@ def main():
                     o = {"cls": CMAP[typ], "src_type": typ, "bottom": bottom.tolist(), "dims": dims,
                          "heading": head.tolist(), "box2d": box}
                     if "box3d_projected" in l:
-                        o["src_projected"] = l["box3d_projected"]
+                        # QC: our projection through the calibration must agree with the dataset's own
+                        # projected cuboid; disagreement means a stale or distorted calibration for this frame.
+                        src = np.array([l["box3d_projected"][k] for k in SRC_CORNERS]) * [W, H]
+                        off = np.linalg.norm(uv.mean(0) - src.mean(0)) / max(y2 - y1, 1.0)
+                        if off > 0.08:
+                            rejected += 1
+                            ignore.append(box)
+                            continue
                     objs.append(o)
+                if rejected > 0.3 * max(1, rejected + len(objs)):
+                    dropped += 1
+                    continue
                 f.write(json.dumps({
                     "source": "a9_r00", "sequence": seq.name, "group": f"a9_r00:{seq.name}:{ck}",
                     "image": str(img.relative_to(root)), "camera": ck, "width": W, "height": H,
                     "K": K.tolist(), "plane": plane.tolist(), "ignore": ignore, "objects": objs,
                     "weather": d.get("weather_type", "")}) + "\n")
                 n += 1
-    print("a9_r00", n, "samples ->", a.out)
+    print("a9_r00", n, "samples ->", a.out, f"({dropped} frames dropped by projection QC)")
 
 
 if __name__ == "__main__":
