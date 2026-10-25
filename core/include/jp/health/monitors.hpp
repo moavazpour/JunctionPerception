@@ -41,7 +41,8 @@ class StabilityMonitor {
     bool compensating = false;
   };
 
-  explicit StabilityMonitor(Config cfg = {}) : cfg_(cfg) {}
+  StabilityMonitor() = default;
+  explicit StabilityMonitor(Config cfg) : cfg_(cfg) {}
   // boxes: current detections (pixels) to mask out moving objects.
   const State& update(double stamp, const cv::Mat& frame_bgr, const cv::Matx33d& K,
                       const std::vector<Eigen::Vector4d>& boxes);
@@ -84,7 +85,8 @@ class VisibilityMonitor {
     double baseline_range = 0;
     double fragmentation = 0;             // share of short-lived tracks
   };
-  explicit VisibilityMonitor(Config cfg = {}) : cfg_(cfg) {}
+  VisibilityMonitor() = default;
+  explicit VisibilityMonitor(Config cfg) : cfg_(cfg) {}
   const State& update(double stamp, const cv::Mat& frame_bgr, const std::vector<Track>& tracks);
   const State& state() const { return st_; }
 
@@ -152,7 +154,8 @@ class OcclusionMap {
     double visible = 1, static_occluded = 0, dynamic_occluded = 0, unobservable = 0;
   };
 
-  explicit OcclusionMap(Config cfg = {}) : cfg_(cfg) {}
+  OcclusionMap() = default;
+  explicit OcclusionMap(Config cfg) : cfg_(cfg) {}
   void configure(const CameraModel& cam, const SiteMap& map, double default_range = 150.0);
   // Static occlusion is learned from segmentation (low rate); dynamic occlusion from current tracks.
   void updateStatic(const cv::Mat& labels, const CameraModel& cam);

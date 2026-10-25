@@ -57,7 +57,8 @@ class LaneLearner {
     int min_samples = 400;
     double max_range = 250.0;
   };
-  explicit LaneLearner(Config cfg = {}) : cfg_(cfg) {}
+  LaneLearner() = default;
+  explicit LaneLearner(Config cfg) : cfg_(cfg) {}
   // axis_yaw: dominant road direction in the ground frame; junction_ahead: junction lies at +axis.
   void setAxis(double axis_yaw, bool junction_ahead) {
     axis_yaw_ = axis_yaw;

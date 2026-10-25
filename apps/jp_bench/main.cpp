@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <iostream>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
