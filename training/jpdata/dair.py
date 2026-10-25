@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--undist", type=Path, required=True)
     ap.add_argument("--name", default="dair")
     ap.add_argument("--workers", type=int, default=14)
+    ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--undistort", action="store_true", help="apply cam_D (off: images are already rectified)")
     a = ap.parse_args()
     root, side = a.root.expanduser(), a.side
@@ -78,7 +79,7 @@ def main():
         for e in json.loads(di.read_text()):
             fid = Path(e.get("image_path", e.get("frame_id", ""))).stem
             info[fid] = e
-    fids = sorted(p.stem for p in (root / side / "label" / "camera").glob("*.json"))
+    fids = sorted(p.stem for p in (root / side / "label" / "camera").glob("*.json"))[: a.limit or None]
     jobs, records = [], []
     up_lidar = np.array([0.0, 0.0, 1.0])
     for fid in fids:
