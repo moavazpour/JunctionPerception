@@ -1,0 +1,24 @@
+# Validation site: TUMTraf S110 south2 camera (R02 s03) replayed as a video.
+# Ground truth calibration (dev-kit): f~1316/1368 px, pitch 19.7 deg, roll -0.6 deg, height 8.72 m.
+site:
+  id: tumtraf-s110
+  name: TUMTraf S110 (validation)
+camera:
+  id: south2
+  source: file:///data/videos/tumtraf_s03_south2_8mm.mp4
+  realtime: false
+  loop: true
+  position: {lat: 48.2413, lon: 11.6385, height_m: 8.0, height_sigma: 2.0, bearing_deg: 0}
+calibration:
+  file: /data/state/calibration_tumtraf_south2.json
+  force: true
+  min_duration_s: 40
+models:
+  detector: /models/gc3d.onnx
+  segmentation: /models/segformer_b2_cityscapes.onnx
+  fp16: true
+output:
+  file: /data/state/metadata_tumtraf_south2.jsonl
+health:
+  target_fps: 8.6
+state_dir: /data/state
