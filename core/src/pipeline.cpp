@@ -234,7 +234,7 @@ void Pipeline::publishMap() {
   if (!camera_) return;
   auto h = msg::header("map", cfg_.site_id, cfg_.camera_id, last_stamp_);
   h["map"] = map_.toJson();
-  h["camera"] = camera_->toJson();
+  h["camera_model"] = camera_->toJson();
   emit("map", h, 1, true);
   if (!cfg_.state_dir.empty()) std::ofstream(cfg_.state_dir + "/site_map_" + cfg_.camera_id + ".json") << map_.toJson().dump(1);
 }

@@ -55,7 +55,7 @@ client.on("message", (topic, payload) => {
       break;
     case "map":
       mapMsg = msg as MapMsg;
-      scene.setMap(mapMsg.map, mapMsg.camera);
+      scene.setMap(mapMsg.map, mapMsg.camera_model);
       if (firstMap) {
         scene.view("orbit");
         firstMap = false;

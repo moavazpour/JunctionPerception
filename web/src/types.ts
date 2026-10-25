@@ -87,7 +87,7 @@ export interface CameraJson {
 
 export interface MapMsg extends Header {
   map: SiteMap;
-  camera: CameraJson;
+  camera_model: CameraJson;
 }
 
 export interface ZoneState {
