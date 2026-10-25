@@ -31,6 +31,7 @@ from jp3d import geometry as G
 CMAP = {"Car": "car", "Van": "car", "Bus": "bus", "Truck": "truck", "Pedestrian": "pedestrian",
         "Cyclist": "bicycle", "Motorcyclist": "motorcycle"}
 IGNORE = {"Tricyclist", "Barrowlist", "Trafficcone", "TrafficCone", "Unknown", "Unknown_movable", "Unknown_unmovable"}
+STATIC = {"Trafficcone", "TrafficCone"}  # scene furniture: background, not an ignore region
 
 
 def orthonormal(R: np.ndarray) -> np.ndarray:
@@ -132,6 +133,8 @@ def main():
             if x2 - x1 < 2 or y2 - y1 < 2:
                 continue
             box = [float(x1), float(y1), float(x2), float(y2)]
+            if typ in STATIC:
+                continue
             if typ not in CMAP:
                 ignore.append(box)
                 continue
@@ -151,7 +154,10 @@ def main():
                          "occlusion": str(o.get("occluded_state", ""))})
             bottoms.append(bottom)
         e = info.get(fid, {})
-        seq = e.get("sequence_id") or e.get("batch_id") or e.get("intersection_loc") or "na"
+        seq = e.get("sequence_id") or e.get("batch_id")
+        if not seq:
+            # No sequence ids (DAIR-V2X-I): blocks of 200 consecutive frames per intersection.
+            seq = f"{e.get('intersection_loc', 'na')}_{int(fid) // 200 if fid.isdigit() else 0}"
         cam_id = intr.get("cameraID") or intr.get("serial_number", "cam")
         records.append({"fid": fid, "K": Knew, "n": n_cam, "objs": objs, "ignore": ignore, "bottoms": bottoms,
                         "w": w, "h": h, "seq": str(seq), "cam": str(cam_id), "loc": str(e.get("intersection_loc", ""))})
