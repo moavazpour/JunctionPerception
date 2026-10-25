@@ -143,3 +143,22 @@ Every converted source is checked before training:
   - keypoints inside the 2D box
   - footprint on the ground plane (|dz| < 0.3 m)
   - dimensions within class ranges
+
+## 8. Current build (JP-Unified v1)
+
+| Source | Images | Notes |
+|---|---|---|
+| TUMTraf Intersection (R02) | 4 257 | rectified; north/south LiDAR label sets merged |
+| TUMTraf-V2X (R04) | 1 800 | south2 + north cameras; test labels withheld upstream |
+| A9 Highway R00 | 299 | only frames whose calibration reproduces the dataset's own projections (342 dropped); s00 and R01 are pseudo-cuboids, s03/s04 have no images |
+| KITTI | 1 482 | 19 % sample (vehicle-side cap), drive-level groups |
+| DAIR V2X-Seq SPD infra | 5 631 | images already rectified; affine calibration applied exactly, keypoints exact, 3D approximate (non-metric) |
+| DAIR V2X-C infra | 5 572 | as above |
+| DAIR V2X-Seq SPD vehicle | 2 384 | vehicle-side cap; non-metric |
+| LUMPI | 8 460 | M1, M2, M4–M6 (M0 automatic labels only, M3 videos missing); uncorrected labels → ignore; undistorted |
+| CARLA (2 passes) | 8 325 | random mountings, 19 weathers + fog |
+
+Splits (by group, per source): train 30 114 (+7 493 adverse-weather copies), val 3 898, test 4 177 images.
+Train objects: car 257k, pedestrian 51k, motorcycle 23k, bicycle 20k, truck 17k, bus 5.4k, trailer 4.6k.
+Objects failing size or ground-plane checks become ignore regions. Per-source counts are in
+`unified/summary.json`.
