@@ -40,7 +40,7 @@ def orthonormal(R: np.ndarray) -> np.ndarray:
 def load_frame(root: Path, side: str, fid: str):
     lab = json.loads((root / side / "label" / "camera" / f"{fid}.json").read_text())
     intr = json.loads((root / side / "calib" / "camera_intrinsic" / f"{fid}.json").read_text())
-    ext_dir = "virtuallidar_to_camera" if side.startswith("infra") else "lidar_to_camera"
+    ext_dir = "virtuallidar_to_camera" if (root / side / "calib" / "virtuallidar_to_camera").exists() else "lidar_to_camera"
     ext = json.loads((root / side / "calib" / ext_dir / f"{fid}.json").read_text())
     return lab, intr, ext
 
