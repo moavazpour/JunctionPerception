@@ -32,7 +32,7 @@ def _rain(img, rng):
 
 def _night(img, rng):
     gamma = rng.uniform(1.8, 3.0)
-    out = 255.0 * (img / 255.0) ** gamma * rng.uniform(0.5, 0.9)
+    out = 255.0 * (np.clip(img, 0, 255) / 255.0) ** gamma * rng.uniform(0.5, 0.9)
     out += rng.normal(0, rng.uniform(3, 10), img.shape)
     return out
 

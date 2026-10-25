@@ -115,7 +115,7 @@ def main():
             for k, v in parts.items():
                 agg[k] = agg.get(k, 0) + v
             if step % 50 == 0:
-                print(f"ep {ep} step {step}/{total} loss {float(loss):.3f} " +
+                print(f"ep {ep} step {step}/{total} loss {float(loss.detach()):.3f} " +
                       " ".join(f"{k}={v:.3f}" for k, v in parts.items()), flush=True)
         n = len(dl)
         rec = {"epoch": ep, "time": time.time() - t0, **{k: v / n for k, v in agg.items()}}
