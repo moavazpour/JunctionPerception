@@ -95,8 +95,16 @@ class CameraAug:
 
 class JP3DDataset(Dataset):
     def __init__(self, jsonl: str | Path, image_root: str | Path, out_w=1280, out_h=736, train=True,
-                 weather=True, max_objs=256, seed=0):
-        self.samples = [json.loads(l) for l in Path(jsonl).read_text().splitlines() if l.strip()]
+                 weather=True, max_objs=256, seed=0, extra: list[tuple[Path, Path]] | None = None):
+        self.samples = []
+        for jl, root in [(Path(jsonl), Path(image_root))] + list(extra or []):
+            if not Path(jl).exists():
+                continue
+            for l in Path(jl).read_text().splitlines():
+                if l.strip():
+                    s = json.loads(l)
+                    s["_root"] = str(root)
+                    self.samples.append(s)
         self.root = Path(image_root)
         self.out_w, self.out_h, self.train = out_w, out_h, train
         self.cam_aug = CameraAug(out_w, out_h, train)
@@ -110,7 +118,7 @@ class JP3DDataset(Dataset):
 
     def load(self, idx: int, rng: np.random.Generator):
         s = self.samples[idx]
-        img = cv2.imread(str(self.root / s["image"]), cv2.IMREAD_COLOR)
+        img = cv2.imread(str(Path(s.get("_root", self.root)) / s["image"]), cv2.IMREAD_COLOR)
         K = np.array(s["K"], dtype=np.float64)
         plane = np.array(s["plane"], dtype=np.float64)
         Kn, dR, flip = self.cam_aug.sample(K, img.shape[1], img.shape[0], rng)

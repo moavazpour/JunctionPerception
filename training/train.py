@@ -66,16 +66,23 @@ def main():
     ap.add_argument("--eval_every", type=int, default=5)
     ap.add_argument("--eval_frames", type=int, default=600)
     ap.add_argument("--resume", type=Path, default=None)
+    ap.add_argument("--init", type=Path, default=None, help="initialise weights from a checkpoint (fine-tuning)")
+    ap.add_argument("--extra", action="append", default=[], help="dir_with_train.jsonl:image_root")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "args.json").write_text(json.dumps({k: str(v) for k, v in vars(args).items()}, indent=1))
 
     device = torch.device("cuda")
-    train_ds = JP3DDataset(args.data.expanduser() / "train.jsonl", args.images.expanduser(), args.width, args.height, train=True)
+    extra = [(Path(e.split(":")[0]).expanduser() / "train.jsonl", Path(e.split(":")[1]).expanduser()) for e in args.extra]
+    train_ds = JP3DDataset(args.data.expanduser() / "train.jsonl", args.images.expanduser(), args.width, args.height,
+                           train=True, extra=extra)
+    print(f"train samples: {len(train_ds)}", flush=True)
     val_ds = JP3DDataset(args.data.expanduser() / "val.jsonl", args.images.expanduser(), args.width, args.height, train=False)
     dl = DataLoader(train_ds, batch_size=args.bs, shuffle=True, num_workers=args.workers, collate_fn=collate,
                     drop_last=True, pin_memory=True, persistent_workers=True)
     model = GroundCenter3D(args.backbone).to(device)
+    if args.init:
+        model.load_state_dict(torch.load(args.init, map_location="cpu")["model"])
     bb = [p for n, p in model.named_parameters() if n.startswith("backbone.")]
     rest = [p for n, p in model.named_parameters() if not n.startswith("backbone.")]
     opt = torch.optim.AdamW([{"params": bb, "lr": args.lr * 0.5}, {"params": rest, "lr": args.lr}], weight_decay=1e-4)
