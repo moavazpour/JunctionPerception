@@ -29,6 +29,8 @@ import cv2
 W, H = 1920, 1080
 CLASS_OF_BASE = {"car": "car", "van": "car", "truck": "truck", "bus": "bus", "motorcycle": "motorcycle",
                  "bicycle": "bicycle"}
+MIN_VISIBLE = 0.10  # visible share of the projected box
+BLOCKING_TAGS = [3, 4, 9]  # building, wall, vegetation (CARLA 0.9.14+ semantic tags)
 WEATHERS = ["ClearNoon", "CloudyNoon", "WetNoon", "WetCloudyNoon", "MidRainyNoon", "HardRainNoon", "SoftRainNoon",
             "ClearSunset", "CloudySunset", "WetSunset", "WetCloudySunset", "MidRainSunset", "ClearNight",
             "CloudyNight", "WetNight", "SoftRainNight", "MidRainyNight", "HardRainNight", "DustStorm"]
@@ -156,7 +158,7 @@ def labels_for(world, cam_tf, K, inst: np.ndarray, rng_max=220.0):
     ids = inst[:, :, 1].astype(np.int32) + (inst[:, :, 0].astype(np.int32) << 8)
     uniq, counts = np.unique(ids, return_counts=True)
     pix = dict(zip(uniq.tolist(), counts.tolist()))
-    objs, bottoms = [], []
+    objs, bottoms, ignore = [], [], []
     for a in list(world.get_actors().filter("vehicle.*")) + list(world.get_actors().filter("walker.pedestrian.*")):
         cls = classify(a)
         if cls is None:
@@ -195,11 +197,16 @@ def labels_for(world, cam_tf, K, inst: np.ndarray, rng_max=220.0):
         if not (0 <= kp[0] < W and 0 <= kp[1] < H):
             continue
         area = max(1.0, (x2 - x1) * (y2 - y1))
+        vis = npx / area
+        if vis < MIN_VISIBLE or npx < 60:
+            # Barely visible: neither a positive (would teach hallucination) nor a negative.
+            ignore.append([float(x1), float(y1), float(x2), float(y2)])
+            continue
         objs.append({"cls": cls, "type": a.type_id, "bottom": bottom.tolist(), "dims": dims,
                      "heading": heading.tolist(), "box2d": [float(x1), float(y1), float(x2), float(y2)],
                      "trunc": 0.0, "num_points": int(npx), "occlusion": f"{min(1.0, npx / area):.2f}"})
         bottoms.append(bottom)
-    return objs, bottoms
+    return objs, bottoms, ignore
 
 
 def main():
@@ -272,7 +279,14 @@ def main():
                     continue
                 rgb = np.frombuffer(imgs[0].raw_data, dtype=np.uint8).reshape(H, W, 4)[:, :, :3]
                 inst = np.frombuffer(imgs[1].raw_data, dtype=np.uint8).reshape(H, W, 4)[:, :, :3]
-                objs, bottoms = labels_for(world, cam_tf, K, inst)
+                if fi == 0:
+                    # Reject mountings whose view is mostly blocked (camera inside a building, behind a tree).
+                    sem = inst[:, :, 2]
+                    blocked = float(np.isin(sem, BLOCKING_TAGS).mean())
+                    if blocked > 0.45:
+                        print(f"  rejected mounting ({blocked:.0%} blocked)", flush=True)
+                        break
+                objs, bottoms, ignore = labels_for(world, cam_tf, K, inst)
                 # Ground plane in camera frame: world up through the mean bottom height of visible objects,
                 # or through the road below the view centre.
                 Mi = world_to_cam_matrix(cam_tf)
@@ -288,7 +302,7 @@ def main():
                 cv2.imwrite(str(out / "images" / name), rgb, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 writers[split].write(json.dumps({
                     "release": "CARLA", "image": f"images/{name}", "camera": f"carla_{kind}", "frame_id": name[:-4],
-                    "width": W, "height": H, "K": K.tolist(), "plane": [*up.tolist(), d0], "objects": objs,
+                    "width": W, "height": H, "K": K.tolist(), "plane": [*up.tolist(), d0], "objects": objs, "ignore": ignore,
                     "weather": str(w), "fov": fov}) + "\n")
                 saved += 1
             for s in sensors:
