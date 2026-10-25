@@ -223,6 +223,9 @@ def main():
     writers = {s: open(out / f"{s}.jsonl", "a") for s in ("train", "val")}
     for town in args.maps.split(","):
         world = client.load_world(town)
+        # Parked cars are static map props without actor ids (no labels): remove them.
+        if town.endswith("_Opt"):
+            world.unload_map_layer(carla.MapLayer.ParkedVehicles)
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = 0.05
