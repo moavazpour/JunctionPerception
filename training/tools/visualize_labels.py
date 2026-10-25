@@ -50,9 +50,9 @@ def main():
     picks = np.linspace(0, len(samples) - 1, args.n).astype(int)
     for i in picks:
         s = samples[i]
-        img = cv2.imread(str(args.images.expanduser() / s["image"]))
+        img = cv2.imread(str(Path(s.get("_root", args.images.expanduser())) / s["image"]))
         draw_objects(img, np.array(s["K"]), np.array(s["plane"]), s["objects"])
-        name = f"{s['release']}_{s['camera'].replace('s110_camera_basler_', '')}_{i}.jpg"
+        name = f"{s.get('source', s.get('release', 'x'))}_{s['camera'].replace('s110_camera_basler_', '')}_{i}.jpg"
         cv2.imwrite(str(args.out / name), cv2.resize(img, None, fx=0.5, fy=0.5))
     print("wrote", len(picks), "images to", args.out)
 
