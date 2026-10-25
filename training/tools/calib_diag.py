@@ -68,7 +68,7 @@ def main():
     ap.add_argument("--dets", required=True)
     ap.add_argument("--K", required=True)
     ap.add_argument("--plane", required=True)
-    a = ap.parse_args()
+    a, _ = ap.parse_known_args()
     fx, fy, cx, cy = map(float, a.K.split(","))
     Kgt = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
     pgt = np.array(list(map(float, a.plane.split(","))))
