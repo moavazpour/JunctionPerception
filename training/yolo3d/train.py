@@ -21,11 +21,12 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--fraction", type=float, default=1.0, help="share of the training set (smoke tests)")
     a = ap.parse_args()
     model = YOLO(a.model)
     model.train(
         data=a.data, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch, workers=a.workers, project=a.out, name=a.name,
-        exist_ok=True, resume=a.resume, cos_lr=True, close_mosaic=10,
+        exist_ok=True, resume=a.resume, cos_lr=True, close_mosaic=10, fraction=a.fraction, patience=25,
         # Geometry-preserving augmentation only: keypoints are projections of a rigid cuboid, so shear and
         # perspective warps would teach impossible boxes. Scale/translate/flip are camera-consistent.
         degrees=0.0, shear=0.0, perspective=0.0, scale=0.5, translate=0.1, fliplr=0.5, mosaic=0.8, mixup=0.0,
