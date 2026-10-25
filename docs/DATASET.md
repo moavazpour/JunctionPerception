@@ -104,7 +104,9 @@ The table below is the label mapping per source. Raw label → JP-Unified class,
 | Dimension order | KITTI `h w l` → `l w h`; TUMTraf `l w h`; Rope3D like KITTI |
 | Heading | KITTI `rotation_y` about camera −y → heading `(cos ry, 0, −sin ry)` in camera frame; TUMTraf quaternion x-axis; CARLA forward vector. All re-projected into the ground plane |
 | Ground plane | KITTI: fitted per image to object bottoms, falling back to camera height 1.65 m. Rope3D/DAIR: `denorm`. TUMTraf: plane fitted to all label bottoms per camera (median residual ≈ 0.15 m). CARLA: world up through object bottoms |
-| Distortion | images must be undistorted: TUMTraf images are already rectified, LUMPI is rectified with its calibration |
+| Distortion | every image is checked: TUMTraf R02/R04 and KITTI are already rectified (verified with overlays). **DAIR-V2X / V2X-Seq images are raw with strong barrel distortion (k1 ≈ −0.45)**: they are undistorted with `cam_K`/`cam_D` into the rectified `P`. LUMPI and A9 R00/R01 are undistorted with their calibration when distortion coefficients are present. Undistorted copies live in `undist/<source>/` |
+| Vehicle-side data | KITTI and the vehicle-side camera of V2X-Seq-SPD see the road from 1.5 m. They are kept for viewpoint coverage but capped at **10 % of the training images** |
+| Image-only 3D labels | A9 R01 camera labels give the 8 projected cuboid corners without a 3D box. They are used directly as keypoints. The bottom centre is the intersection of the footprint diagonals (projectively exact), and left/right are ordered by the signed area of the footprint. These samples train the keypoint model but are excluded from 3D-metric evaluation |
 | Duplicate objects | multi-LiDAR label sets (TUMTraf north/south) are merged by class and 1 m footprint distance |
 | Truck + trailer | kept as two objects (TUMTraf convention). In sources labelling one articulated box, the object goes to `truck` |
 | Ignore regions | DontCare/ignored-class boxes are painted grey (114) in the training copy of the image so they are neither positives nor false negatives |
