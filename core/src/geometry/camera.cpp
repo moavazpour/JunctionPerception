@@ -1,5 +1,6 @@
 #include "jp/geometry/camera.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <nlohmann/json.hpp>
 

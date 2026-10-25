@@ -5,6 +5,7 @@
 #include <cuda_runtime_api.h>
 #include <spdlog/spdlog.h>
 
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>

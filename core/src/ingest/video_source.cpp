@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <stdexcept>
 #include <thread>
 
 namespace jp {

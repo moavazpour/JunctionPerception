@@ -1,0 +1,35 @@
+# NVIDIA Jetson Orin (JetPack 6.1: L4T r36.4, CUDA 12.6, TensorRT 10.3).
+# Build on the device (or with buildx + QEMU): docker build -f docker/Dockerfile.jetson -t junction-perception:jetson .
+# Engines must be built on the target: the runtime does that on first start and caches them in /models.
+ARG BASE=nvcr.io/nvidia/l4t-jetpack:r36.4.0
+
+FROM ${BASE} AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake ninja-build pkg-config \
+      libopencv-dev libeigen3-dev libyaml-cpp-dev nlohmann-json3-dev libspdlog-dev libgtest-dev libpaho-mqtt-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY CMakeLists.txt ./
+COPY cmake cmake
+COPY core core
+COPY apps apps
+COPY tests tests
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp \
+ && cmake --build build -j"$(nproc)" && ctest --test-dir build --output-on-failure && cmake --install build
+
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d libopencv-videoio4.5d libopencv-video4.5d \
+      libopencv-features2d4.5d libopencv-calib3d4.5d libyaml-cpp0.7 libspdlog1 libpaho-mqtt1.3 \
+      gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/jp /opt/jp
+ENV PATH=/opt/jp/bin:$PATH
+VOLUME ["/models", "/data/state", "/config"]
+ENTRYPOINT ["junction_perception"]
+CMD ["--config", "/config/site.yaml"]
+# Hardware decoding on Jetson: use a GStreamer source in the site config, e.g.
+#   source: "gst:rtspsrc location=rtsp://cam/stream latency=100 ! rtph264depay ! h264parse ! nvv4l2decoder !
+#            nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! video/x-raw,format=BGR ! appsink drop=1 sync=0"

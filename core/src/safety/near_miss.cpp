@@ -104,7 +104,7 @@ void NearMissDetector::updatePetGrid(
           // (following traffic in the same lane is headway, not a conflict).
           const bool crossing = std::abs(wrapAngle(cell.yaw - u.yaw)) > M_PI / 6;
           if (crossing && pet > 0.05 && pet < cfg_.pet_warning * 2) {
-            auto key = std::minmax(cell.id, u.id);
+            const std::pair<std::uint32_t, std::uint32_t> key = std::minmax(cell.id, u.id);
             auto it = pets.find(key);
             if (it == pets.end() || pet < it->second.first) pets[key] = {pet, centre};
           }
@@ -134,7 +134,7 @@ std::vector<NearMissEvent> NearMissDetector::update(double stamp, const std::vec
       // Pedestrians walking together are not conflicts.
       if (a.cls == ObjectClass::Pedestrian && b.cls == ObjectClass::Pedestrian) continue;
       ConflictMetrics m = evaluatePair(a, b);
-      const auto key = std::minmax(a.id, b.id);
+      const std::pair<std::uint32_t, std::uint32_t> key = std::minmax(a.id, b.id);
       if (auto it = pets.find(key); it != pets.end()) {
         m.pet = it->second.first;
         if (!m.ttc && !m.mttc) m.conflict_point = it->second.second;
