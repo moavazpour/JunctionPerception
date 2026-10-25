@@ -51,6 +51,7 @@ class Detector3D {
   std::unique_ptr<TrtEngine> engine_;
   cv::Size net_;
   int topk_ = 0, fields_ = 0;
+  bool yolo_ = false;
   std::vector<float> input_, output_;
 };
 

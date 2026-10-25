@@ -60,6 +60,7 @@ class CameraModel {
 
   // Lift a calibration-free detection; pixel_sigma drives the reported position covariance.
   std::optional<Detection3D> lift(const ImageDetection& det, double pixel_sigma = 1.5) const;
+  std::optional<Detection3D> liftKeypoints(const ImageDetection& det, double pixel_sigma = 1.5) const;
 
   // 8 corners of a ground-frame box (bottom 4 then top 4) projected to pixels (invalid if behind).
   std::optional<std::array<Eigen::Vector2d, 8>> projectBox(const Eigen::Vector3d& bottom, double yaw,

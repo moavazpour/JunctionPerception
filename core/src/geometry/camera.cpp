@@ -86,7 +86,101 @@ double CameraModel::horizonRow(double u) const {
   return -(a[0] * u + a[2]) / a[1];
 }
 
+namespace {
+constexpr double kKpConf = 0.35;
+}
+
+// Footprint fit from projected cuboid keypoints (mirrors training/yolo3d/lift.py).
+std::optional<Detection3D> CameraModel::liftKeypoints(const ImageDetection& det, double pixel_sigma) const {
+  const Eigen::Vector3d prior = classPriorDims(det.cls);
+  std::array<std::optional<Eigen::Vector3d>, 9> g;
+  for (int i = 0; i < 9; ++i)
+    if (det.kpts[i].z() >= kKpConf) g[i] = pixelToGround(det.kpts[i].head<2>(), 0.0);
+  enum { FL = 1, FR = 2, RR = 3, RL = 4 };
+  const int order[4] = {FL, FR, RR, RL};
+  int have = 0;
+  for (int i : order) have += g[i].has_value();
+  if (have == 3) {
+    for (int k = 0; k < 4; ++k) {
+      if (g[order[k]]) continue;
+      const auto& a = *g[order[(k + 1) % 4]];
+      const auto& b = *g[order[(k + 2) % 4]];
+      const auto& c = *g[order[(k + 3) % 4]];
+      g[order[k]] = a + c - b;
+    }
+    have = 4;
+  }
+  Eigen::Vector3d bottom, head;
+  double length = prior[0], width = prior[1];
+  if (have == 4) {
+    const Eigen::Vector3d front = (*g[FL] + *g[FR]) / 2, rear = (*g[RL] + *g[RR]) / 2;
+    head = front - rear;
+    bottom = (front + rear) / 2;
+    const double l = head.norm(), w = ((*g[FL] - *g[FR]).norm() + (*g[RL] - *g[RR]).norm()) / 2;
+    if (l > 0.3 * prior[0] && l < 2.5 * prior[0] && w > 0.3 * prior[1] && w < 2.5 * prior[1]) {
+      length = l;
+      width = w;
+    }
+  } else {
+    if (!g[0]) return std::nullopt;
+    bottom = *g[0];
+    head = Eigen::Vector3d::Zero();
+    if (g[FL] && g[RL]) head += *g[FL] - *g[RL];
+    if (g[FR] && g[RR]) head += *g[FR] - *g[RR];
+    if (head.head<2>().norm() < 1e-6) head = bottom - cameraPositionGround();  // unknown: along the ray
+  }
+  head.z() = 0;
+  if (head.norm() < 1e-6) return std::nullopt;
+  const double yaw = std::atan2(head.y(), head.x());
+  // Height that best reprojects the visible top corners.
+  double h = prior[2];
+  {
+    const Eigen::Vector3d x(std::cos(yaw), std::sin(yaw), 0), y(-std::sin(yaw), std::cos(yaw), 0);
+    static constexpr int sgn[4][2] = {{1, 1}, {1, -1}, {-1, -1}, {-1, 1}};
+    double best_e = 1e18;
+    bool any = false;
+    for (int j = 0; j < 4; ++j) any |= det.kpts[5 + j].z() >= kKpConf;
+    if (any) {
+      for (double hh = 0.3; hh <= 5.0; hh += 0.02) {
+        double e = 0;
+        for (int j = 0; j < 4; ++j) {
+          if (det.kpts[5 + j].z() < kKpConf) continue;
+          const Eigen::Vector3d p = bottom + sgn[j][0] * length / 2 * x + sgn[j][1] * width / 2 * y + Eigen::Vector3d(0, 0, hh);
+          auto px = groundToPixel(p);
+          if (px) e += (*px - det.kpts[5 + j].head<2>()).squaredNorm();
+        }
+        if (e < best_e) {
+          best_e = e;
+          h = hh;
+        }
+      }
+    }
+  }
+  ImageDetection d2 = det;
+  if (auto kp = groundToPixel(bottom)) d2.kp = *kp;
+  Detection3D out;
+  out.img = d2;
+  out.bottom = bottom;
+  out.yaw = yaw;
+  out.dims = {length, width, h};
+  out.range = bottom.head<2>().norm();
+  // Covariance from the centre keypoint, as for the direct model.
+  const double box_h = std::max(det.box2d[3] - det.box2d[1], 1.0);
+  const double su = pixel_sigma + 0.01 * box_h, sv = pixel_sigma + 0.02 * box_h;
+  Eigen::Matrix2d J;
+  for (int k = 0; k < 2; ++k) {
+    Eigen::Vector2d dd = Eigen::Vector2d::Zero();
+    dd[k] = 1.0;
+    auto p1 = pixelToGround(d2.kp + dd, 0.0);
+    J.col(k) = p1 ? Eigen::Vector2d(p1->head<2>() - bottom.head<2>()) : Eigen::Vector2d(1e3, 1e3);
+  }
+  out.pos_cov = J * Eigen::Vector2d(su * su, sv * sv).asDiagonal() * J.transpose() + Eigen::Matrix2d::Identity() * 0.01;
+  out.img.dims = out.dims;
+  return out;
+}
+
 std::optional<Detection3D> CameraModel::lift(const ImageDetection& det, double pixel_sigma) const {
+  if (det.has_kpts) return liftKeypoints(det, pixel_sigma);
   auto bottom = pixelToGround(det.kp, det.dz);
   if (!bottom) return std::nullopt;
   const Eigen::Vector3d n = plane_.head<3>();

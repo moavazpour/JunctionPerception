@@ -67,12 +67,17 @@ Detector3D::Detector3D(const DetectorConfig& cfg) : cfg_(cfg) {
   TrtEngine::Options opt;
   opt.fp16 = cfg.fp16;
   engine_ = TrtEngine::fromOnnx(cfg.onnx, opt);
-  const auto& in = engine_->tensor("image");
+  const TensorInfo* inp = nullptr;
+  const TensorInfo* outp = nullptr;
+  for (const auto& t : engine_->tensors()) (t.is_input ? inp : outp) = &t;
+  const auto& in = *inp;
   net_ = cv::Size(static_cast<int>(in.shape[3]), static_cast<int>(in.shape[2]));
-  const auto& out = engine_->tensor("dets");
+  const auto& out = *outp;
   topk_ = static_cast<int>(out.shape[1]);
   fields_ = static_cast<int>(out.shape[2]);
-  if (fields_ != 13) throw std::runtime_error("unexpected detector output layout");
+  // Two layouts: GroundCenter3D [K,13] and YOLO26-pose end-to-end [K, 6 + 9*3] (x1 y1 x2 y2 score class kpts).
+  yolo_ = fields_ == 6 + 27;
+  if (fields_ != 13 && !yolo_) throw std::runtime_error("unexpected detector output layout");
   input_.resize(in.bytes / sizeof(float));
   output_.resize(out.bytes / sizeof(float));
   spdlog::info("Detector3D: input {}x{}, top-{}", net_.width, net_.height, topk_);
@@ -83,10 +88,34 @@ Detector3D::~Detector3D() = default;
 double Detector3D::lastLatencyMs() const { return engine_->lastLatencyMs(); }
 
 std::vector<ImageDetection> Detector3D::detect(const cv::Mat& net_bgr, const Letterbox& lb) {
-  bgrToNchwNormalized(net_bgr, input_.data(), kMean, kStd);
+  static constexpr float kZero[3] = {0.f, 0.f, 0.f}, k255[3] = {255.f, 255.f, 255.f};
+  bgrToNchwNormalized(net_bgr, input_.data(), yolo_ ? kZero : kMean, yolo_ ? k255 : kStd);
   engine_->infer({input_.data()}, {output_.data()});
   std::vector<ImageDetection> dets;
   const double s = lb.scale();
+  if (yolo_) {
+    for (int k = 0; k < topk_; ++k) {
+      const float* d = output_.data() + static_cast<size_t>(k) * fields_;
+      if (d[4] < cfg_.score_threshold) continue;  // end-to-end output is not guaranteed sorted
+      const int c = static_cast<int>(d[5]);
+      if (c < 0 || c >= static_cast<int>(ObjectClass::Count)) continue;
+      ImageDetection det;
+      det.score = d[4];
+      det.cls = static_cast<ObjectClass>(c);
+      const cv::Point2d p0 = lb.toFrame({d[0], d[1]}), p1 = lb.toFrame({d[2], d[3]});
+      det.box2d = {p0.x, p0.y, p1.x, p1.y};
+      det.has_kpts = true;
+      for (int j = 0; j < 9; ++j) {
+        const cv::Point2d q = lb.toFrame({d[6 + 3 * j], d[7 + 3 * j]});
+        det.kpts[j] = {q.x, q.y, d[8 + 3 * j]};
+      }
+      det.kp = det.kpts[0].head<2>();
+      det.dims = classPriorDims(det.cls);
+      dets.push_back(det);
+    }
+    std::sort(dets.begin(), dets.end(), [](const auto& a, const auto& b) { return a.score > b.score; });
+    return dets;
+  }
   for (int k = 0; k < topk_; ++k) {
     const float* d = output_.data() + static_cast<size_t>(k) * fields_;
     if (d[0] < cfg_.score_threshold) break;  // top-K is sorted by score

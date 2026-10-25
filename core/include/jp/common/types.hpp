@@ -28,6 +28,12 @@ constexpr std::array<std::string_view, static_cast<size_t>(ObjectClass::Count)> 
     "car", "bus", "truck", "trailer", "pedestrian", "bicycle", "escooter", "motorcycle"};
 
 inline std::string_view className(ObjectClass c) { return kClassNames[static_cast<size_t>(c)]; }
+// Prior dimensions (l, w, h) in metres; must match training/jp3d/geometry.py.
+inline Eigen::Vector3d classPriorDims(ObjectClass c) {
+  static const Eigen::Vector3d d[] = {{4.45, 1.90, 1.60}, {12.0, 2.60, 3.20}, {6.80, 2.50, 3.20}, {10.5, 2.60, 3.40},
+                                      {0.65, 0.65, 1.72}, {1.75, 0.65, 1.70}, {1.15, 0.60, 1.80}, {2.10, 0.85, 1.60}};
+  return d[static_cast<size_t>(c)];
+}
 inline bool isVulnerable(ObjectClass c) {
   return c == ObjectClass::Pedestrian || c == ObjectClass::Bicycle || c == ObjectClass::EScooter ||
          c == ObjectClass::Motorcycle;
@@ -46,6 +52,10 @@ struct ImageDetection {
   double dz = 0;             // height of bottom centre above ground (m)
   Eigen::Vector3d dims;      // l, w, h (m)
   double alpha = 0;          // ground-relative observation angle (rad)
+  // Keypoint models: projected bottom centre, footprint corners FL FR RR RL, top corners FL FR RR RL
+  // as (u, v, confidence). When present, lifting fits the footprint directly instead of using priors.
+  bool has_kpts = false;
+  std::array<Eigen::Vector3d, 9> kpts{};
 };
 
 // Detection lifted to the local ground frame (ENU-aligned, metres, z up, origin under the camera).
