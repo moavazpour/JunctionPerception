@@ -16,8 +16,9 @@ from jp3d import geometry as G
 from jp3d.data import tumtraf as T
 
 R2_CAMS = ["s110_camera_basler_south1_8mm", "s110_camera_basler_south2_8mm"]
-R4_CAMS = ["s110_camera_basler_south1_8mm", "s110_camera_basler_south2_8mm",
-           "s110_camera_basler_north_8mm", "s110_camera_basler_east_8mm"]
+# R04 south1 and east projections published in the dev-kit do not align with the images (verified
+# visually), so those cameras are excluded.
+R4_CAMS = ["s110_camera_basler_south2_8mm", "s110_camera_basler_north_8mm"]
 
 
 def list_images(d: Path) -> tuple[list[str], np.ndarray]:
