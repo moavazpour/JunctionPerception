@@ -82,9 +82,13 @@ def main():
         lab, intr, ext = load_frame(root, side, fid)
         K = np.array(intr["cam_K"], float).reshape(3, 3)
         D = np.array(intr["cam_D"], float)
-        Pm = np.array(intr["P"], float).reshape(3, 4)
-        Knew = Pm[:, :3]
-        w, h = int(intr["width"]), int(intr["height"])
+        w, h = int(intr.get("width", 1920)), int(intr.get("height", 1080))
+        if "P" in intr:
+            Knew = np.array(intr["P"], float).reshape(3, 4)[:, :3]
+        elif np.abs(D).sum() > 0:
+            Knew, _ = cv2.getOptimalNewCameraMatrix(K, D, (w, h), 0.0)
+        else:
+            Knew = K.copy()
         R = orthonormal(np.array(ext["rotation"], float))
         t = np.array(ext["translation"], float).reshape(3)
         n_cam = R @ up_lidar
