@@ -42,8 +42,8 @@ bool VideoSource::open() {
   if (!(fps_ > 1 && fps_ < 241)) fps_ = 30;
   size_ = {static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH)), static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT))};
   file_t0_ = nowSeconds();
-  wall0_ = std::chrono::steady_clock::now();
   frames_ = 0;
+  paced_ = false;
   spdlog::info("Opened {} ({}x{} @ {:.2f} fps)", describe(), size_.width, size_.height, fps_);
   return true;
 }
@@ -77,6 +77,11 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
       // File time base: frame index / fps, anchored to the wall clock at open.
       stamp = file_t0_ + frames_ / fps_;
       if (cfg_.realtime) {
+        // Anchor pacing at the first frame actually read (engine builds may delay the first read).
+        if (!paced_) {
+          wall0_ = std::chrono::steady_clock::now() - std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(frames_ / fps_));
+          paced_ = true;
+        }
         const auto due = wall0_ + std::chrono::duration<double>(frames_ / fps_);
         std::this_thread::sleep_until(due);
       }

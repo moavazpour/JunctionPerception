@@ -43,6 +43,7 @@ class VideoSource {
   double file_t0_ = 0;
   std::chrono::steady_clock::time_point wall0_;
   double last_emit_ = -1;
+  bool paced_ = false;
 };
 
 }  // namespace jp

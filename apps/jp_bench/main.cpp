@@ -9,13 +9,59 @@
 #include <iostream>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <memory>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include "jp/geometry/camera.hpp"
 #include "jp/infer/detector.hpp"
 
+// Development aid: calibration-free detections on a video (metadata), optional debug overlays kept local.
+static int runVideo(const std::string& onnx, const std::string& video, const std::string& out, const std::string& overlay,
+                    int every, int max_frames, float thr, bool fp16) {
+  jp::DetectorConfig dc;
+  dc.onnx = onnx;
+  dc.fp16 = fp16;
+  dc.score_threshold = thr;
+  jp::Detector3D det(dc);
+  cv::VideoCapture cap(video, cv::CAP_FFMPEG);
+  if (!cap.isOpened()) return 1;
+  const double fps = cap.get(cv::CAP_PROP_FPS);
+  std::ofstream os(out);
+  cv::Mat frame, net;
+  int k = 0;
+  std::unique_ptr<jp::Letterbox> lb;
+  while (cap.read(frame)) {
+    if (max_frames && k >= max_frames) break;
+    if (k++ % every) continue;
+    if (!lb) lb = std::make_unique<jp::Letterbox>(frame.size(), det.inputSize());
+    lb->apply(frame, net);
+    const auto dets = det.detect(net, *lb);
+    nlohmann::json a = nlohmann::json::array();
+    for (const auto& d : dets)
+      a.push_back({{"cls", jp::className(d.cls)}, {"score", d.score}, {"kp", {d.kp.x(), d.kp.y()}},
+                   {"box2d", {d.box2d[0], d.box2d[1], d.box2d[2], d.box2d[3]}}, {"dims", {d.dims.x(), d.dims.y(), d.dims.z()}},
+                   {"dz", d.dz}, {"alpha", d.alpha}});
+    os << nlohmann::json{{"frame", k - 1}, {"t", (k - 1) / fps}, {"dets", a}}.dump() << "
+";
+    if (!overlay.empty() && (k - 1) % (every * 150) == 0) {
+      for (const auto& d : dets) {
+        if (d.score < 0.3) continue;
+        cv::rectangle(frame, cv::Point2d(d.box2d[0], d.box2d[1]), cv::Point2d(d.box2d[2], d.box2d[3]), {255, 160, 60}, 2);
+        cv::circle(frame, cv::Point2d(d.kp.x(), d.kp.y()), 4, {0, 0, 255}, -1);
+        cv::putText(frame, std::string(jp::className(d.cls)) + " " + std::to_string(int(d.score * 100)),
+                    cv::Point2d(d.box2d[0], d.box2d[1] - 4), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255}, 1);
+      }
+      cv::imwrite(overlay + "/frame_" + std::to_string(k - 1) + ".jpg", frame);
+    }
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
-  std::string onnx, data, images, out;
+  std::string onnx, data, images, out, video, overlay;
+  int every = 1, max_frames = 0;
   bool fp16 = true;
   float thr = 0.05f;
   for (int i = 1; i < argc; ++i) {
@@ -26,7 +72,12 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--out")) out = next();
     else if (!std::strcmp(argv[i], "--fp32")) fp16 = false;
     else if (!std::strcmp(argv[i], "--threshold")) thr = std::stof(next());
+    else if (!std::strcmp(argv[i], "--video")) video = next();
+    else if (!std::strcmp(argv[i], "--overlay")) overlay = next();
+    else if (!std::strcmp(argv[i], "--every")) every = std::stoi(next());
+    else if (!std::strcmp(argv[i], "--max-frames")) max_frames = std::stoi(next());
   }
+  if (!video.empty() && !onnx.empty() && !out.empty()) return runVideo(onnx, video, out, overlay, every, max_frames, thr, fp16);
   if (onnx.empty() || data.empty() || images.empty() || out.empty()) {
     std::cerr << "usage: jp_bench --onnx M --data split.jsonl --images ROOT --out preds.jsonl [--fp32]\n";
     return 2;
