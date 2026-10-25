@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Junction Perception</title>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span class="dot"></span> Junction Perception <span id="site" class="muted"></span></div>
+      <div class="hdr-right">
+        <span id="cam" class="muted"></span>
+        <span id="clock" class="muted"></span>
+        <span id="conn" class="pill degraded">connecting</span>
+      </div>
+    </header>
+    <main>
+      <section id="view">
+        <div class="toolbar">
+          <button data-view="orbit">Chase</button>
+          <button data-view="top">Top</button>
+          <button data-view="camera">Camera</button>
+          <label><input type="checkbox" id="occ" checked /> Occlusion</label>
+          <label><input type="checkbox" id="labels" /> Labels</label>
+        </div>
+        <div class="legend">
+          <span><i class="sw occ-s"></i>static occlusion</span>
+          <span><i class="sw occ-d"></i>hidden behind vehicle</span>
+          <span><i class="sw occ-r"></i>below resolution</span>
+        </div>
+      </section>
+      <aside>
+        <div class="card">
+          <div class="row"><span id="level" class="pill big degraded">–</span>
+            <div class="conf"><div class="muted small">System confidence</div><b id="confidence">–</b>
+              <div class="meter"><div id="confbar"></div></div></div></div>
+          <ul id="reasons" class="reasons"></ul>
+          <div id="metrics" class="grid2 small"></div>
+        </div>
+        <nav class="tabs">
+          <button data-tab="users" class="active">Road users <span id="count" class="badge">0</span></button>
+          <button data-tab="lanes">Lanes</button>
+          <button data-tab="events">Safety</button>
+          <button data-tab="coverage">Coverage</button>
+          <button data-tab="calib">Calibration</button>
+        </nav>
+        <div id="tab-users" class="tab active">
+          <div id="classes" class="chips"></div>
+          <div id="selected" class="card small"></div>
+          <table id="users"><thead><tr><th></th><th>ID</th><th>km/h</th><th>m/s²</th><th>Lane</th><th>Stop</th><th>ETA</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div id="tab-lanes" class="tab">
+          <table id="lanes"><thead><tr><th>Lane</th><th>Users</th><th>Queue</th><th>Length</th><th>Crossed</th><th>km/h</th></tr></thead><tbody></tbody></table>
+          <div class="muted small">Virtual detectors (MQTT <code>…/detector/&lt;id&gt;</code>)</div>
+          <div id="zones" class="chips"></div>
+        </div>
+        <div id="tab-events" class="tab"><ul id="events" class="events"></ul></div>
+        <div id="tab-coverage" class="tab">
+          <div class="muted small">Share of each lane the camera can observe right now: visible · behind vehicles · static occlusion · out of view / resolution</div>
+          <div id="coverage"></div>
+        </div>
+        <div id="tab-calib" class="tab"><div id="calib" class="muted">Waiting for calibration…</div></div>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
