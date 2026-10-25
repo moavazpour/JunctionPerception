@@ -22,6 +22,8 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import cv2
+
+cv2.setNumThreads(1)  # many tiny calls: thread pools only add overhead (and memory) here
 import numpy as np
 
 from jp3d import geometry as G
