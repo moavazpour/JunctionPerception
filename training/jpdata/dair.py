@@ -1,5 +1,8 @@
 """DAIR-V2X-C and V2X-Seq-SPD (infrastructure or vehicle side) -> JP-Unified jsonl.
 
+NOTE: despite cam_D in the calibration, the released images are already rectified (2D boxes match the
+pinhole cam_K projection with IoU 0.84 vs 0.52 with distortion). Undistortion is therefore off by default.
+
 DAIR images are raw (distorted, plumb_bob k1 ~ -0.45). Every image is undistorted with cam_K/cam_D into
 the rectified camera P, and labels are expressed in that rectified camera:
 
@@ -64,6 +67,7 @@ def main():
     ap.add_argument("--undist", type=Path, required=True)
     ap.add_argument("--name", default="dair")
     ap.add_argument("--workers", type=int, default=14)
+    ap.add_argument("--undistort", action="store_true", help="apply cam_D (off: images are already rectified)")
     a = ap.parse_args()
     root, side = a.root.expanduser(), a.side
     info = {}
@@ -83,12 +87,15 @@ def main():
         K = np.array(intr["cam_K"], float).reshape(3, 3)
         D = np.array(intr["cam_D"], float)
         w, h = int(intr.get("width", 1920)), int(intr.get("height", 1080))
-        if "P" in intr:
+        if a.undistort and "P" in intr:
             Knew = np.array(intr["P"], float).reshape(3, 4)[:, :3]
-        elif np.abs(D).sum() > 0:
+        elif a.undistort and np.abs(D).sum() > 0:
             Knew, _ = cv2.getOptimalNewCameraMatrix(K, D, (w, h), 0.0)
         else:
+            # Verified numerically: the released DAIR images and 2D boxes follow the pinhole cam_K
+            # (distortion already removed). Undistorting again would bend them.
             Knew = K.copy()
+            D = np.zeros(5)
         R = orthonormal(np.array(ext["rotation"], float))
         t = np.array(ext["translation"], float).reshape(3)
         n_cam = R @ up_lidar
@@ -130,6 +137,12 @@ def main():
         cam_id = intr.get("cameraID") or intr.get("serial_number", "cam")
         records.append({"fid": fid, "K": Knew, "n": n_cam, "objs": objs, "ignore": ignore, "bottoms": bottoms,
                         "w": w, "h": h, "seq": str(seq), "cam": str(cam_id), "loc": str(e.get("intersection_loc", ""))})
+        if not a.undistort:
+            dst = str(a.undist.expanduser() / f"{fid}.jpg")
+            Path(dst).parent.mkdir(parents=True, exist_ok=True)
+            if not Path(dst).exists():
+                Path(dst).symlink_to(src.resolve())
+            continue
         dst = str(a.undist.expanduser() / f"{fid}.jpg")
         jobs.append((str(src), dst, K.tolist(), D.tolist(), Knew.tolist(), w, h))
     # Ground plane per (camera, sequence): LiDAR up through the median bottom height (robust to slopes).
