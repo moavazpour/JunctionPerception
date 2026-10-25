@@ -53,10 +53,21 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
                 inside = 0 <= u < W and 0 <= v < H
                 vals += [u / W if inside else 0.0, v / H if inside else 0.0, 2 if inside else 0]
             lines.append(" ".join(f"{v:.6f}" if isinstance(v, float) else str(v) for v in vals))
-        name = prefix + s["image"].replace("/", "__")
+        name = prefix + (s.get("source", "") + "__" if s.get("source") else "") + s["image"].replace("/", "__")
+        src = Path(s.get("_root", image_root)) / s["image"]
         dst = out / "images" / split / name
         if not dst.exists():
-            os.symlink((image_root / s["image"]).resolve(), dst)
+            if s.get("ignore"):
+                # Ignore regions (DontCare, ignored classes) are painted grey: neither positive nor negative.
+                import cv2
+
+                im = cv2.imread(str(src))
+                for x1, y1, x2, y2 in s["ignore"]:
+                    im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+                dst = dst.with_suffix(".jpg")
+                cv2.imwrite(str(dst), im, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            else:
+                os.symlink(src.resolve(), dst)
         (out / "labels" / split / (Path(name).stem + ".txt")).write_text("\n".join(lines) + ("\n" if lines else ""))
         # Camera model next to the label, for 3D evaluation of the pose model.
         n_img += 1
@@ -64,14 +75,37 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
     return n_img, n_obj
 
 
+def main_unified(unified: Path, out: Path):
+    for split in ("train", "val", "test"):
+        samples = [json.loads(l) for l in (unified / f"{split}.jsonl").read_text().splitlines() if l.strip()]
+        ni, no = convert_split(samples, Path("."), out, split, "")
+        print(split, ni, "images", no, "objects")
+    (out / "data.yaml").write_text(
+        f"path: {out}
+train: images/train
+val: images/val
+test: images/test
+"
+        f"kpt_shape: [9, 3]
+flip_idx: {FLIP_IDX}
+"
+        "names:
+" + "".join(f"  {i}: {c}
+" for i, c in enumerate(G.CLASSES)))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--jp3d", type=Path, required=True)
+    ap.add_argument("--unified", type=Path, default=None, help="JP-Unified dir with train/val/test.jsonl")
+    ap.add_argument("--jp3d", type=Path, default=None)
     ap.add_argument("--images", type=Path, required=True)
     ap.add_argument("--extra", action="append", default=[], help="jsonl_dir:image_root for more sources")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     out = args.out.expanduser()
+    if args.unified:
+        main_unified(args.unified.expanduser(), out)
+        return
     sources = [(args.jp3d.expanduser(), args.images.expanduser(), "tum__")]
     for e in args.extra:
         d, r = e.split(":")
