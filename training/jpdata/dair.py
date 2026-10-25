@@ -113,8 +113,16 @@ def main():
             if typ not in CMAP:
                 ignore.append(box)
                 continue
+            sb = o.get("2d_box")
+            src_box = None
+            if sb:
+                pts = np.array([[sb["xmin"], sb["ymin"]], [sb["xmax"], sb["ymin"]], [sb["xmax"], sb["ymax"]], [sb["xmin"], sb["ymax"]],
+                                [(sb["xmin"] + sb["xmax"]) / 2, sb["ymin"]], [(sb["xmin"] + sb["xmax"]) / 2, sb["ymax"]],
+                                [sb["xmin"], (sb["ymin"] + sb["ymax"]) / 2], [sb["xmax"], (sb["ymin"] + sb["ymax"]) / 2]], float)
+                und = cv2.undistortPoints(pts.reshape(-1, 1, 2), K, D, P=Knew).reshape(-1, 2)
+                src_box = [float(und[:, 0].min()), float(und[:, 1].min()), float(und[:, 0].max()), float(und[:, 1].max())]
             objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom, "dims": [l, wd, hh], "heading": head,
-                         "box2d": box, "truncation": float(o.get("truncated_state", 0)),
+                         "box2d": box, "src_box2d": src_box, "truncation": float(o.get("truncated_state", 0)),
                          "occlusion": str(o.get("occluded_state", ""))})
             bottoms.append(bottom)
         e = info.get(fid, {})

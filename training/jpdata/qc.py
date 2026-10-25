@@ -49,7 +49,7 @@ def main():
                 continue
             uv = G.project(K, c)
             pb = [*np.clip(uv.min(0), 0, [s["width"] - 1, s["height"] - 1]), *np.clip(uv.max(0), 0, [s["width"] - 1, s["height"] - 1])]
-            cam_iou[s["camera"]].append(iou(pb, o["box2d"]))
+            cam_iou[s["camera"]].append(iou(pb, o.get("src_box2d") or o["box2d"]))
             cam_n[s["camera"]] += 1
     print(f"== {a.jsonl.name}: {n_img} images, {sum(cls_n.values())} objects, {n_ign} ignore regions")
     print(f"{'class':<11}{'n':>8}{'l':>7}{'w':>6}{'h':>6}{'r_med':>7}{'r_p90':>7}")
