@@ -28,7 +28,8 @@ def main():
     samples = [json.loads(l) for l in a.data.read_text().splitlines() if l.strip()]
     with open(a.out, "w") as f:
         for s in samples:
-            r = model.predict(str(a.images / s["image"]), imgsz=a.imgsz, conf=a.conf, verbose=False, max_det=300)[0]
+            img = Path(s.get("_root", a.images)) / s["image"]
+            r = model.predict(str(img), imgsz=a.imgsz, conf=a.conf, verbose=False, max_det=300)[0]
             K, plane = np.array(s["K"]), np.array(s["plane"])
             objs = []
             if r.keypoints is not None and len(r.boxes):
