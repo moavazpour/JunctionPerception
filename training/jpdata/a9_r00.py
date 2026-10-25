@@ -62,7 +62,11 @@ def main():
                 # World plane z = 0 in camera coordinates.
                 plane = G.transform_plane(np.array([0.0, 0.0, 1.0, 0.0]), T)
                 objs, ignore = [], []
+                if not any("box3d" in l for l in d["labels"]):
+                    continue  # pseudo-cuboid annotation only (R00 s00), not metric
                 for l in d["labels"]:
+                    if "box3d" not in l:
+                        continue
                     b = l["box3d"]
                     typ = l["category"].upper()
                     loc = np.array([b["location"][k] for k in "xyz"], float)
@@ -84,8 +88,11 @@ def main():
                     if typ not in CMAP:
                         ignore.append(box)
                         continue
-                    objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom.tolist(), "dims": dims,
-                                 "heading": head.tolist(), "box2d": box})
+                    o = {"cls": CMAP[typ], "src_type": typ, "bottom": bottom.tolist(), "dims": dims,
+                         "heading": head.tolist(), "box2d": box}
+                    if "box3d_projected" in l:
+                        o["src_projected"] = l["box3d_projected"]
+                    objs.append(o)
                 f.write(json.dumps({
                     "source": "a9_r00", "sequence": seq.name, "group": f"a9_r00:{seq.name}:{ck}",
                     "image": str(img.relative_to(root)), "camera": ck, "width": W, "height": H,
