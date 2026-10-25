@@ -45,11 +45,15 @@ def main():
                 P = np.array(d["projection_matrix"], float)
                 K, T = G.decompose_projection(P)
                 calibs[cam_key(c.stem)] = (K, T, d.get("image_width", 1920), d.get("image_height", 1200))
-            images = {p.name: p for p in (seq / "_images").rglob("*") if p.suffix in (".jpg", ".png")}
+            # Index by timestamp: label file names disagree with image names in some sequences (jpg vs png,
+            # north vs south in s02).
+            images = {"_".join(p.stem.split("_")[:2]): p for p in (seq / "_images").rglob("*") if p.suffix in (".jpg", ".png")}
             for lab in sorted((seq / "_labels").rglob("*.json")):
                 d = json.loads(lab.read_text())
-                img = images.get(Path(d["image_file_name"]).name)
-                ck = cam_key(d["image_file_name"])
+                img = images.get("_".join(Path(d["image_file_name"]).stem.split("_")[:2]))
+                ck = cam_key(img.name) if img else ""
+                if ck not in calibs and len(calibs) == 1:
+                    ck = next(iter(calibs))
                 if img is None or ck not in calibs:
                     continue
                 K, T, W, H = calibs[ck]
