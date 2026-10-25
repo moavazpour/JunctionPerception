@@ -143,7 +143,8 @@ def main():
                 pts = np.array([[sb["xmin"], sb["ymin"]], [sb["xmax"], sb["ymin"]], [sb["xmax"], sb["ymax"]], [sb["xmin"], sb["ymax"]],
                                 [(sb["xmin"] + sb["xmax"]) / 2, sb["ymin"]], [(sb["xmin"] + sb["xmax"]) / 2, sb["ymax"]],
                                 [sb["xmin"], (sb["ymin"] + sb["ymax"]) / 2], [sb["xmax"], (sb["ymin"] + sb["ymax"]) / 2]], float)
-                und = cv2.undistortPoints(pts.reshape(-1, 1, 2), K, D, P=Knew).reshape(-1, 2)
+                # cv2.undistortPoints leaks native memory when called per object; only needed when undistorting.
+                und = cv2.undistortPoints(pts.reshape(-1, 1, 2), K, D, P=Knew).reshape(-1, 2) if a.undistort else pts
                 src_box = [float(und[:, 0].min()), float(und[:, 1].min()), float(und[:, 0].max()), float(und[:, 1].max())]
             objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom, "dims": [l3, w3, h3], "heading": head,
                          "kpts2d": kpts.tolist(), "box2d": box, "src_box2d": src_box, "truncation": float(o.get("truncated_state", 0)),
