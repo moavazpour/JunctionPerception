@@ -43,8 +43,7 @@ static int runVideo(const std::string& onnx, const std::string& video, const std
       a.push_back({{"cls", jp::className(d.cls)}, {"score", d.score}, {"kp", {d.kp.x(), d.kp.y()}},
                    {"box2d", {d.box2d[0], d.box2d[1], d.box2d[2], d.box2d[3]}}, {"dims", {d.dims.x(), d.dims.y(), d.dims.z()}},
                    {"dz", d.dz}, {"alpha", d.alpha}});
-    os << nlohmann::json{{"frame", k - 1}, {"t", (k - 1) / fps}, {"dets", a}}.dump() << "
-";
+    os << nlohmann::json{{"frame", k - 1}, {"t", (k - 1) / fps}, {"dets", a}}.dump() << "\n";
     if (!overlay.empty() && (k - 1) % (every * 150) == 0) {
       for (const auto& d : dets) {
         if (d.score < 0.3) continue;
