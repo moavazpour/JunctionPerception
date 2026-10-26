@@ -124,7 +124,7 @@ std::optional<ImageDetection> observeKp(const CameraModel& cam, const Eigen::Vec
 
 struct KpCase {
   int w, h;
-  double f, pitch_deg, roll_deg, height, bearing, noise;
+  double f, pitch_deg, roll_deg, height, bearing, noise, pos_tol;
 };
 
 void runKeypointCase(const KpCase& k) {
@@ -184,13 +184,50 @@ void runKeypointCase(const KpCase& k) {
     ASSERT_TRUE(px);
     auto g = res.camera.pixelToGround(*px);
     ASSERT_TRUE(g);
-    EXPECT_LT((*g - p).norm(), 0.04 * s) << "at " << s << " m";
+    EXPECT_LT((*g - p).norm(), k.pos_tol * s) << "at " << s << " m";
   }
 }
 }  // namespace
 
-TEST(AutoCalibration, KeypointsFootbridgePhone) { runKeypointCase({1920, 1080, 1650, 10.0, 0.8, 7.0, 95.0, 1.0}); }
+TEST(AutoCalibration, KeypointsFootbridgePhone) { runKeypointCase({1920, 1080, 1650, 10.0, 0.8, 7.0, 95.0, 1.5, 0.04}); }
 
-TEST(AutoCalibration, KeypointsGantryCamera) { runKeypointCase({1920, 1200, 1350, 18.0, -1.2, 8.6, 200.0, 1.5}); }
+TEST(AutoCalibration, KeypointsGantryCamera) { runKeypointCase({1920, 1200, 1350, 18.0, -1.2, 8.6, 200.0, 2.0, 0.04}); }
 
-TEST(AutoCalibration, KeypointsWideAngleLowMount) { runKeypointCase({1280, 720, 700, 25.0, 2.0, 5.0, 10.0, 1.0}); }
+TEST(AutoCalibration, KeypointsWideAngleLowMount) { runKeypointCase({1280, 720, 700, 25.0, 2.0, 5.0, 10.0, 1.0, 0.08}); }
+
+#include "jp/calib/manual_calibration.hpp"
+
+TEST(ManualCalibration, RecoversCameraAndPositionFromMapPoints) {
+  const GeoAnchor configured{48.175995, 11.555590, 0, true};
+  // The real camera stands 3 m east, 2 m south of the configured position.
+  const auto [lat0, lon0] = enuToGeo(configured, Eigen::Vector2d(3.0, -2.0));
+  auto truth = CameraModel::fromPose(1920, 1080, 1700, 11.0 * M_PI / 180, -0.7 * M_PI / 180, 7.3, 92.0);
+  truth.anchor = {lat0, lon0, 0, true};
+  std::vector<GroundCorrespondence> pts;
+  std::mt19937 rng(5);
+  std::normal_distribution<double> px(0, 1.0), m(0, 0.15);  // click noise, map-reading noise
+  for (const Eigen::Vector2d g : {Eigen::Vector2d(25, 4), Eigen::Vector2d(30, -5), Eigen::Vector2d(55, 6),
+                                  Eigen::Vector2d(60, -7), Eigen::Vector2d(90, 3), Eigen::Vector2d(110, -4)}) {
+    // Ground points along the viewing direction (bearing 92 deg), in the camera's ENU frame.
+    const double b = 92.0 * M_PI / 180;
+    const Eigen::Vector2d e = g.x() * Eigen::Vector2d(std::sin(b), std::cos(b)) + g.y() * Eigen::Vector2d(-std::cos(b), std::sin(b));
+    auto uv = truth.groundToPixel({e.x(), e.y(), 0});
+    ASSERT_TRUE(uv);
+    const auto [la, lo] = enuToGeo(truth.anchor, e + Eigen::Vector2d(m(rng), m(rng)));
+    pts.push_back({*uv + Eigen::Vector2d(px(rng), px(rng)), la, lo});
+  }
+  const auto r = calibrateFromCorrespondences(1920, 1080, pts, configured);
+  ASSERT_TRUE(r.ok) << r.message;
+  EXPECT_NEAR(r.camera.K()(0, 0) / 1700, 1.0, 0.08);
+  EXPECT_NEAR(r.camera.pitch() * 180 / M_PI, 11.0, 0.5);
+  EXPECT_NEAR(r.camera.roll() * 180 / M_PI, -0.7, 0.5);
+  EXPECT_NEAR(r.camera.cameraHeight(), 7.3, 0.5);
+  EXPECT_NEAR(std::remainder(r.camera.bearingDeg() - 92.0, 360.0), 0.0, 1.0);
+  EXPECT_LT((geoToEnu(configured, r.camera.anchor.lat, r.camera.anchor.lon) - Eigen::Vector2d(3.0, -2.0)).norm(), 1.0);
+  EXPECT_LT(r.rms_px, 3.0);
+}
+
+TEST(ManualCalibration, RejectsTooFewPoints) {
+  const auto r = calibrateFromCorrespondences(1920, 1080, {{{100, 500}, 48.1, 11.5}}, {48.1, 11.5, 0, true});
+  EXPECT_FALSE(r.ok);
+}

@@ -272,7 +272,7 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
   const Eigen::Matrix3d& Rgc = cam.R_ground_cam();
   const Eigen::Vector3d C(0, 0, 1), ez(0, 0, 1);
   const Eigen::Vector3d prior = classPriorDims(ObjectClass::Car);
-  std::vector<double> lL, lW, lH, verts, rects;
+  std::vector<double> lL, lW, lH, verts, rects, sig;
   double shape = 0;
   int bad = 0;
   for (const ImageDetection* d : dets) {
@@ -318,35 +318,45 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
     }
     std::sort(hs.begin(), hs.begin() + nh);
     const double H1 = nh % 2 ? hs[nh / 2] : (hs[nh / 2 - 1] + hs[nh / 2]) / 2;
-    const double box_ang = std::max(d->box2d[3] - d->box2d[1], 10.0) / f;
-    vr = vr / nh / box_ang;  // relative to the box's angular size
+    const double bh = std::max(d->box2d[3] - d->box2d[1], 10.0), bw = std::max(d->box2d[2] - d->box2d[0], 10.0);
+    vr = vr / nh / (bh / f);  // relative to the box's angular size
+    // Keypoint noise (a few pixels) dominates for small boxes: residual scales grow as the box shrinks.
+    const double ext = std::min(bh, bw);
+    const double s_rect = std::hypot(0.04, 3.0 / ext), s_vert = std::hypot(0.05, 2.0 / bh), s_size = 3.0 / ext;
     lL.push_back(std::log(prior.x() / L1));
     lW.push_back(std::log(prior.y() / W1));
     lH.push_back(std::log(prior.z() / H1));
-    shape += cauchy(rect, 0.06) + cauchy(vr, 0.08);
+    sig.push_back(s_size);
+    shape += cauchy(rect, s_rect) + cauchy(vr, s_vert);
     verts.push_back(vr);
     rects.push_back(rect);
   }
   const int n = static_cast<int>(lL.size());
   if (n < 20) return 1e6;
   // Lifted sizes scale with the camera height: every size ratio is an estimate of log(height).
-  std::vector<double> all;
-  all.insert(all.end(), lL.begin(), lL.end());
-  all.insert(all.end(), lW.begin(), lW.end());
-  all.insert(all.end(), lH.begin(), lH.end());
-  const double m0 = median(all);
+  // Height estimate from the most precise half of the boxes.
+  std::vector<double> all, precise;
+  const double sig_med = median(sig);
+  for (int i = 0; i < n; ++i) {
+    for (double v : {lL[i], lW[i], lH[i]}) {
+      all.push_back(v);
+      if (sig[i] <= sig_med) precise.push_back(v);
+    }
+  }
+  const double m0 = median(precise);
   const double lp = std::log(pri_.height_m), sp = pri_.height_sigma / pri_.height_m, sm = 0.05;
   const double m = (m0 / (sm * sm) + lp / (sp * sp)) / (1 / (sm * sm) + 1 / (sp * sp));
   double size = 0;
   for (int i = 0; i < n; ++i)
-    size += cauchy(lL[i] - m, 0.15) + cauchy(lW[i] - m, 0.12) + cauchy(lH[i] - m, 0.15);
+    size += cauchy(lL[i] - m, std::hypot(0.12, sig[i])) + cauchy(lW[i] - m, std::hypot(0.08, sig[i])) +
+            cauchy(lH[i] - m, std::hypot(0.10, sig[i]));
   double total = (shape + size) / n + 3.0 * bad / (n + bad) + 0.02 * std::pow(roll / (pri_.roll_sigma_deg * kDeg), 2) +
                  0.02 * std::pow((m - lp) / sp, 2);
   double cv = 0;
   if (with_speed) total += 0.7 * speedCost(CameraModel::fromPose(w_, h_, f, pitch, roll, std::exp(m), 0.0), &cv);
   if (st) {
     std::vector<double> dev;
-    for (double v : all) dev.push_back(std::abs(v - m));
+    for (double v : precise) dev.push_back(std::abs(v - m));
     *st = {std::exp(m), median(dev), median(verts), median(rects), cv};
   }
   return total;

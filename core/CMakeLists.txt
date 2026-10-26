@@ -6,6 +6,7 @@ set(JP_CORE_SOURCES
   src/safety/near_miss.cpp
   src/health/monitors.cpp
   src/calib/auto_calibrator.cpp
+  src/calib/manual_calibration.cpp
   src/ingest/video_source.cpp
   src/output/messages.cpp
   src/output/mqtt_sink.cpp
