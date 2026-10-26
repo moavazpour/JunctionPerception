@@ -200,5 +200,12 @@ export interface SnapshotMsg extends Header {
   width: number;
   height: number;
   scale: number;
+  frame_width?: number;
+  frame_height?: number;
+  anchor?: { lat: number; lon: number };
   jpeg_base64: string;
+}
+
+export interface ManualResultMsg extends Header {
+  result: { action: string; ok: boolean; message?: string; rms_px?: number; max_px?: number };
 }

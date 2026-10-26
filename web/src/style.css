@@ -95,3 +95,13 @@ code { color: #c9d6ff; }
   main { flex-direction: column; }
   aside { width: 100%; max-width: none; height: 50vh; border-left: 0; border-top: 1px solid var(--line); }
 }
+.mc-img { width: 100%; border-radius: 8px; margin: 8px 0; border: 1px solid var(--line); cursor: crosshair; }
+.mc-map { height: 280px; border-radius: 8px; border: 1px solid var(--line); cursor: crosshair; }
+.mc-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.mc-buttons button, .mc-pairs button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; cursor: pointer;
+}
+.mc-buttons button:disabled { opacity: 0.4; cursor: default; }
+.mc-ok { color: var(--ok); }
+.mc-bad { color: var(--bad); }
+.mc-tip { font-weight: 700; padding: 0 4px; }

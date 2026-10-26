@@ -6,7 +6,9 @@
 #include <MQTTAsync.h>
 
 #include <atomic>
+#include <mutex>
 #include <stdexcept>
+#include <utility>
 
 namespace jp {
 
@@ -14,24 +16,55 @@ struct MqttSink::Impl {
   MQTTAsync client = nullptr;
   std::atomic<bool> up{false};
   MqttConfig cfg;
+  std::mutex m;
+  std::vector<std::pair<std::string, Handler>> subs;
 
-  static void onConnect(void* ctx, MQTTAsync_successData*) {
-    static_cast<Impl*>(ctx)->up = true;
-    spdlog::info("MQTT connected to {}", static_cast<Impl*>(ctx)->cfg.uri);
+  void subscribeAll() {
+    std::lock_guard<std::mutex> lk(m);
+    for (const auto& [topic, _] : subs) {
+      MQTTAsync_responseOptions ro = MQTTAsync_responseOptions_initializer;
+      MQTTAsync_subscribe(client, topic.c_str(), 1, &ro);
+    }
   }
-  static void onConnectFailure(void* ctx, MQTTAsync_failureData* resp) {
+  static void onConnect(void* ctx, MQTTAsync_successData*) {
+    auto* self = static_cast<Impl*>(ctx);
+    self->up = true;
+    spdlog::info("MQTT connected to {}", self->cfg.uri);
+    self->subscribeAll();
+  }
+  static void onConnectFailure(void*, MQTTAsync_failureData* resp) {
     spdlog::warn("MQTT connect failed ({}), retrying", resp ? resp->code : -1);
   }
   static void onConnLost(void* ctx, char* cause) {
     static_cast<Impl*>(ctx)->up = false;
     spdlog::warn("MQTT connection lost: {}", cause ? cause : "unknown");
   }
-  static int onMessage(void*, char* topic, int, MQTTAsync_message* m) {
-    MQTTAsync_freeMessage(&m);
+  static int onMessage(void* ctx, char* topic, int topic_len, MQTTAsync_message* msg) {
+    auto* self = static_cast<Impl*>(ctx);
+    const std::string t = topic_len > 0 ? std::string(topic, topic_len) : std::string(topic);
+    const std::string payload(static_cast<const char*>(msg->payload), msg->payloadlen);
+    std::vector<Handler> hs;
+    {
+      std::lock_guard<std::mutex> lk(self->m);
+      for (const auto& [st, h] : self->subs)
+        if (st == t) hs.push_back(h);
+    }
+    for (const auto& h : hs) {
+      try {
+        h(t, payload);
+      } catch (const std::exception& e) {
+        spdlog::warn("MQTT handler for {} failed: {}", t, e.what());
+      }
+    }
+    MQTTAsync_freeMessage(&msg);
     MQTTAsync_free(topic);
     return 1;
   }
-  static void onConnected(void* ctx, char*) { static_cast<Impl*>(ctx)->up = true; }
+  static void onConnected(void* ctx, char*) {  // also called after an automatic reconnect
+    auto* self = static_cast<Impl*>(ctx);
+    self->up = true;
+    self->subscribeAll();
+  }
 };
 
 MqttSink::MqttSink(const MqttConfig& cfg) : impl_(std::make_unique<Impl>()) {
@@ -81,6 +114,17 @@ void MqttSink::publish(const std::string& topic, const std::string& payload, int
   MQTTAsync_sendMessage(impl_->client, topic.c_str(), &m, &ro);
 }
 
+void MqttSink::subscribe(const std::string& topic, Handler cb) {
+  {
+    std::lock_guard<std::mutex> lk(impl_->m);
+    impl_->subs.emplace_back(topic, std::move(cb));
+  }
+  if (impl_->up) {
+    MQTTAsync_responseOptions ro = MQTTAsync_responseOptions_initializer;
+    MQTTAsync_subscribe(impl_->client, topic.c_str(), 1, &ro);
+  }
+}
+
 }  // namespace jp
 
 #else
@@ -91,6 +135,7 @@ MqttSink::MqttSink(const MqttConfig&) { spdlog::warn("Built without MQTT support
 MqttSink::~MqttSink() = default;
 bool MqttSink::connected() const { return false; }
 void MqttSink::publish(const std::string&, const std::string&, int, bool) {}
+void MqttSink::subscribe(const std::string&, Handler) {}
 }  // namespace jp
 
 #endif

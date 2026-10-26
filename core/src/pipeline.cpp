@@ -11,6 +11,7 @@
 #include <opencv2/imgproc.hpp>
 #include <thread>
 
+#include "jp/calib/manual_calibration.hpp"
 #include "jp/infer/detector.hpp"
 #include "jp/output/messages.hpp"
 
@@ -127,6 +128,12 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
   sink_ = std::make_unique<MultiSink>();
   if (cfg_.mqtt) sink_->add(std::make_unique<MqttSink>(*cfg_.mqtt));
   if (!cfg_.metadata_file.empty()) sink_->add(std::make_unique<FileSink>(cfg_.metadata_file));
+  sink_->subscribe(topic("calibration/manual"), [this](const std::string&, const std::string& payload) {
+    auto j = nlohmann::json::parse(payload, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return;
+    std::lock_guard<std::mutex> lk(cmd_m_);
+    cmds_.push_back(std::move(j));
+  });
 
   const cv::Size fs = src_->size();
   cv::Matx33d K = cv::Matx33d::eye();
@@ -262,6 +269,10 @@ void Pipeline::publishSnapshot(const cv::Mat& frame, const std::vector<ImageDete
   h["width"] = img.cols;
   h["height"] = img.rows;
   h["scale"] = s;
+  h["frame_width"] = frame.cols;
+  h["frame_height"] = frame.rows;
+  const GeoAnchor& a = camera_ && camera_->anchor.valid ? camera_->anchor : cfg_.anchor;
+  if (a.valid) h["anchor"] = {{"lat", a.lat}, {"lon", a.lon}};
   h["jpeg_base64"] = base64(buf);
   h["note"] = "calibration view; road users pixelated";
   emit("snapshot", h, 1, true);
@@ -299,13 +310,64 @@ void Pipeline::rebuildLanes(double stamp) {
   (void)stamp;
 }
 
+void Pipeline::handleCommand(const nlohmann::json& cmd) {
+  const std::string action = cmd.value("action", "solve");
+  nlohmann::json out = {{"action", action}};
+  if (action == "snapshot") {
+    snapshot_sent_ = false;
+    out["ok"] = true;
+  } else if (action == "auto") {
+    camera_.reset();
+    calibrator_ = makeCalibrator();
+    if (!cfg_.calibration_file.empty()) std::filesystem::remove(cfg_.calibration_file);
+    snapshot_sent_ = false;
+    out["ok"] = true;
+    out["message"] = "auto-calibration restarted";
+    spdlog::info("Operator restarted auto-calibration");
+  } else if (action == "solve") {
+    std::vector<GroundCorrespondence> pts;
+    for (const auto& p : cmd.value("points", nlohmann::json::array()))
+      pts.push_back({{p.at("u").get<double>(), p.at("v").get<double>()}, p.at("lat").get<double>(), p.at("lon").get<double>()});
+    const auto r = calibrateFromCorrespondences(src_->size().width, src_->size().height, pts, cfg_.anchor,
+                                                cfg_.focal_px, cfg_.distortion);
+    out["ok"] = r.ok;
+    out["message"] = r.message;
+    out["rms_px"] = r.rms_px;
+    out["max_px"] = r.max_px;
+    if (r.ok) {
+      camera_ = r.camera;
+      onCalibrated(nullptr, "manual");
+    }
+  } else {
+    out["ok"] = false;
+    out["message"] = "unknown action";
+  }
+  auto h = msg::header("calibration_command", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  h["result"] = out;
+  emit("calibration/manual/result", h, 1);
+}
+
 void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) {
   last_stamp_ = stamp;
+  std::deque<nlohmann::json> cmds;
+  {
+    std::lock_guard<std::mutex> lk(cmd_m_);
+    cmds.swap(cmds_);
+  }
+  for (const auto& c : cmds) {
+    try {
+      handleCommand(c);
+    } catch (const std::exception& e) {
+      spdlog::warn("Invalid operator command: {}", e.what());
+    }
+  }
   cv::Mat net;
   lb_->apply(frame, net);
   const auto dets = det_->detect(net, *lb_);
 
   if (!camera_) {
+    // The calibration view is also needed before any calibration exists (manual calibration).
+    if (cfg_.publish_snapshot && !snapshot_sent_ && frames_ > 30) publishSnapshot(frame, dets);
     calibrator_->add(stamp, dets);
     if (calibrator_->ready()) {
       const auto res = calibrator_->solve();

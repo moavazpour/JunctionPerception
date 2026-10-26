@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -14,6 +15,9 @@ class Sink {
   virtual ~Sink() = default;
   virtual void publish(const std::string& topic, const std::string& payload, int qos = 0, bool retain = false) = 0;
   virtual bool connected() const { return true; }
+  // Commands from operators (e.g. the web panel's manual calibration). Handlers run on the sink's thread.
+  using Handler = std::function<void(const std::string& topic, const std::string& payload)>;
+  virtual void subscribe(const std::string& /*topic*/, Handler /*cb*/) {}
 };
 
 struct MqttConfig {
@@ -30,6 +34,7 @@ class MqttSink : public Sink {
   ~MqttSink() override;
   void publish(const std::string& topic, const std::string& payload, int qos, bool retain) override;
   bool connected() const override;
+  void subscribe(const std::string& topic, Handler cb) override;
 
  private:
   struct Impl;
@@ -60,6 +65,9 @@ class MultiSink : public Sink {
     for (const auto& s : sinks_)
       if (!s->connected()) return false;
     return true;
+  }
+  void subscribe(const std::string& topic, Handler cb) override {
+    for (auto& s : sinks_) s->subscribe(topic, cb);
   }
 
  private:

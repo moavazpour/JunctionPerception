@@ -2,8 +2,10 @@ import mqtt from "mqtt";
 import "./style.css";
 import { Scene3D } from "./scene3d";
 import { renderCalibration } from "./calib";
+import { ManualCalibration } from "./manual";
 import type {
-  CalibrationMsg, DetectorsMsg, HealthMsg, MapMsg, NearMiss, ObjectsMsg, OcclusionMsg, RoadUser, SafetyMsg, SnapshotMsg,
+  CalibrationMsg, DetectorsMsg, HealthMsg, ManualResultMsg, MapMsg, NearMiss, ObjectsMsg, OcclusionMsg, RoadUser, SafetyMsg,
+  SnapshotMsg,
 } from "./types";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -29,13 +31,22 @@ let lastObjectsAt = 0;
 // ------------------------------------------------------------------ MQTT
 
 const client = mqtt.connect(wsUrl, { reconnectPeriod: 2000, connectTimeout: 5000 });
+const manual = new ManualCalibration($("#calib-manual"), (cmd) => {
+  if (site && cameraId) client.publish(`${prefix}/${site}/${cameraId}/calibration/manual`, JSON.stringify(cmd), { qos: 1 });
+});
 client.on("connect", () => {
   setConn(true);
   client.subscribe(`${prefix}/+/+/#`);
 });
 client.on("close", () => setConn(false));
 client.on("message", (topic, payload) => {
-  const leaf = topic.split("/").slice(3).join("/");
+  const parts = topic.split("/");
+  const leaf = parts.slice(3).join("/");
+  if (!site && parts.length > 3) {
+    site = parts[1];
+    cameraId = parts[2];
+  }
+  if (leaf === "calibration/manual") return; // our own commands
   if (leaf.startsWith("detector/")) return;
   let msg: any;
   try {
@@ -92,7 +103,11 @@ client.on("message", (topic, payload) => {
       break;
     case "snapshot":
       snapshot = msg as SnapshotMsg;
+      manual.setSnapshot(snapshot);
       renderCalib();
+      break;
+    case "calibration/manual/result":
+      manual.setResult(msg as ManualResultMsg);
       break;
   }
 });
@@ -241,7 +256,10 @@ for (const t of document.querySelectorAll<HTMLButtonElement>("[data-tab]"))
     document.querySelectorAll("[data-tab]").forEach((x) => x.classList.remove("active"));
     $(`#tab-${t.dataset.tab}`).classList.add("active");
     t.classList.add("active");
-    if (t.dataset.tab === "calib") renderCalib();
+    if (t.dataset.tab === "calib") {
+      renderCalib();
+      manual.show();
+    }
   });
 setInterval(() => {
   $("#clock").textContent = new Date().toLocaleTimeString();

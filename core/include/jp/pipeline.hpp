@@ -1,9 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "jp/calib/auto_calibrator.hpp"
@@ -72,6 +75,9 @@ class Pipeline {
   void rebuildLanes(double stamp);
   void publishMap();
   void publishSnapshot(const cv::Mat& frame, const std::vector<ImageDetection>& dets);
+  // Operator commands (web panel): manual calibration from map correspondences, restart auto-calibration,
+  // refresh the calibration snapshot. Received on <prefix>/<site>/<camera>/calibration/manual.
+  void handleCommand(const nlohmann::json& cmd);
   std::string topic(const std::string& leaf) const;
   void emit(const std::string& leaf, const nlohmann::json& body, int qos = 0, bool retain = false);
 
@@ -94,6 +100,8 @@ class Pipeline {
   CalibrationMonitor calmon_;
   OcclusionMap occlusion_;
   std::atomic<bool> stop_{false};
+  std::mutex cmd_m_;
+  std::deque<nlohmann::json> cmds_;
 
   std::uint64_t frames_ = 0, dropped_ = 0;
   double fps_ = 0, latency_ms_ = 0, last_stamp_ = -1;
