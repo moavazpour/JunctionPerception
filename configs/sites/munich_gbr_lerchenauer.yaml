@@ -33,7 +33,7 @@ map:
   stop_line: {lat: 48.1759537, lon: 11.5580265}
 
 models:
-  detector: /models/gc3d.onnx
+  detector: /models/jp_y26s_960.onnx
   segmentation: /models/segformer_b2_cityscapes.onnx
   fp16: true
   score_threshold: 0.2

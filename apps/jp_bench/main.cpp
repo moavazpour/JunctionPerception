@@ -94,7 +94,8 @@ int main(int argc, char** argv) {
   while (std::getline(in, line)) {
     if (line.empty()) continue;
     const auto s = nlohmann::json::parse(line);
-    cv::Mat img = cv::imread(images + "/" + s["image"].get<std::string>());
+    const std::string root = s.contains("_root") ? s["_root"].get<std::string>() : images;  // merged JP-Unified
+    cv::Mat img = cv::imread(root + "/" + s["image"].get<std::string>());
     if (img.empty()) {
       spdlog::warn("missing image {}", s["image"].get<std::string>());
       continue;
@@ -119,7 +120,7 @@ int main(int argc, char** argv) {
       objs.push_back({{"cls", jp::className(d.cls)},
                       {"score", d.score},
                       {"bottom", {b.x(), b.y(), b.z()}},
-                      {"dims", {d.dims.x(), d.dims.y(), d.dims.z()}},
+                      {"dims", {x->dims.x(), x->dims.y(), x->dims.z()}},
                       {"heading", {h.x(), h.y(), h.z()}},
                       {"box2d", {d.box2d[0], d.box2d[1], d.box2d[2], d.box2d[3]}}});
     }
