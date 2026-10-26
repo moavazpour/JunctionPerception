@@ -26,7 +26,7 @@ def list_images(d: Path) -> tuple[list[str], np.ndarray]:
     return files, np.array([T._timestamp(f) for f in files])
 
 
-def r2_records(root: Path, devkit: Path):
+def r2_records(root: Path, devkit: Path, use_north: bool = False):
     """Yield (split, image_rel, camera, frame_id, [(objs, P)])."""
     split_of = {}
     for split, name in (("train", "train"), ("val", "val"), ("test", "test_full")):
@@ -55,7 +55,7 @@ def r2_records(root: Path, devkit: Path):
                     continue
                 rel = (base / "images" / cam / img).relative_to(root).as_posix()
                 sets = [(south, T.P_SOUTH_TO[cam], "south")]
-                if north:
+                if north and use_north:
                     sets.append((north, T.P_NORTH_TO[cam], "north"))
                 yield split_of[img], rel, cam, lab.stem, sets
 
@@ -82,6 +82,9 @@ def main():
     ap.add_argument("--devkit", type=Path, default=None)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--releases", default="R2,R4")
+    # The dev-kit north-LiDAR -> camera projections are off by tens of pixels (duplicated, shifted boxes
+    # after merging with the south set), so only the south LiDAR labels are used by default.
+    ap.add_argument("--use_north", action="store_true")
     args = ap.parse_args()
     rels = args.releases.split(",")
     root = args.root.expanduser()
@@ -91,7 +94,7 @@ def main():
 
     records = []
     if "R2" in rels:
-        records += [("R2",) + r for r in r2_records(root, devkit)]
+        records += [("R2",) + r for r in r2_records(root, devkit, args.use_north)]
     if "R4" in rels:
         records += [("R4",) + r for r in r4_records(root)]
     print(f"{len(records)} image samples")
