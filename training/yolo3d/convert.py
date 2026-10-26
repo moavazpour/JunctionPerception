@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from jp3d import geometry as G
@@ -27,6 +28,29 @@ def keypoints(o: dict, K: np.ndarray, plane: np.ndarray):
     c = G.box_corners(b[None], np.array([o["dims"]]), np.array([o["heading"]]), n)[0]
     pts = np.vstack([b[None], c])  # 9 x 3
     return pts
+
+
+def paint_unreliable(im: np.ndarray, s: dict) -> np.ndarray:
+    """Grey out what must be neither positive nor negative: ignore boxes, and for sources whose labels stop
+    at a range (LiDAR coverage) every pixel whose ground point lies beyond that range, except labelled boxes."""
+    for x1, y1, x2, y2 in s.get("ignore", []):
+        im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+    R = s.get("coverage_range")
+    if R:
+        H, W = im.shape[:2]
+        step = 4
+        us, vs = np.meshgrid(np.arange(0, W, step) + step / 2, np.arange(0, H, step) + step / 2)
+        rays = G.pixel_rays(np.array(s["K"]), np.stack([us.ravel(), vs.ravel()], 1))
+        g = G.ray_plane_intersect(rays, np.array(s["plane"]))
+        dist = np.hypot(g[:, 0], g[:, 2])
+        far = (~np.isfinite(dist) | (dist > R)).reshape(us.shape).astype(np.uint8)
+        far = cv2.resize(far, (W, H), interpolation=cv2.INTER_NEAREST).astype(bool)
+        for o in s["objects"]:
+            x1, y1, x2, y2 = o["box2d"]
+            m = 0.1 * max(x2 - x1, y2 - y1)
+            far[int(max(y1 - m, 0)):int(y2 + m) + 1, int(max(x1 - m, 0)):int(x2 + m) + 1] = False
+        im[far] = 114
+    return im
 
 
 def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, prefix: str):
@@ -61,13 +85,8 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
         src = Path(s.get("_root", image_root)) / s["image"]
         dst = out / "images" / split / name
         if not dst.exists():
-            if s.get("ignore"):
-                # Ignore regions (DontCare, ignored classes) are painted grey: neither positive nor negative.
-                import cv2
-
-                im = cv2.imread(str(src))
-                for x1, y1, x2, y2 in s["ignore"]:
-                    im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+            if s.get("ignore") or s.get("coverage_range"):
+                im = paint_unreliable(cv2.imread(str(src)), s)
                 dst = dst.with_suffix(".jpg")
                 cv2.imwrite(str(dst), im, [cv2.IMWRITE_JPEG_QUALITY, 95])
             else:
@@ -96,12 +115,11 @@ def weather_copies(samples: list[dict], out: Path, frac: float, seed: int = 0):
         im = cv2.imread(str(Path(s["_root"]) / s["image"]))
         if im is None:
             continue
-        for x1, y1, x2, y2 in s.get("ignore", []):
-            im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+        im = paint_unreliable(im, s)
         im = aug(im, np.random.default_rng(seed * 100003 + i))
         rel = f"weather/{s['source']}_{i:06d}.jpg"
         cv2.imwrite(str(out / rel), im, [cv2.IMWRITE_JPEG_QUALITY, 92])
-        copies.append({**s, "_root": str(out), "image": rel, "ignore": [], "source": s["source"] + "_wx"})
+        copies.append({**s, "_root": str(out), "image": rel, "ignore": [], "coverage_range": None, "source": s["source"] + "_wx"})
     return copies
 
 

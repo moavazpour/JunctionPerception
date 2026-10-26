@@ -87,6 +87,8 @@ def main():
     ap.add_argument("--vehicle_side", default="kitti,dair_spd_vehicle", help="sources capped together")
     ap.add_argument("--nonmetric", default="dair_spd_infra,dair_c_infra,dair_spd_vehicle",
                     help="sources whose 3D boxes are approximate (keypoints exact): kept for training, excluded from 3D metrics")
+    ap.add_argument("--coverage_sources", default="lumpi,tumtraf_i,tumtraf_v2x,kitti",
+                    help="sources whose labels stop at a sensor range: beyond it the image is ignored")
     ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
     a = ap.parse_args()
     out = a.out.expanduser()
@@ -98,6 +100,7 @@ def main():
     stats = Counter()
     frac = {k: float(v) for k, v in (x.split("=") for x in a.subsample)}
     nonmetric = set(a.nonmetric.split(",")) if a.nonmetric else set()
+    cov_sources = set(a.coverage_sources.split(",")) if a.coverage_sources else set()
     loaded = []
     for spec in a.src:
         name, rest = spec.split("=", 1)
@@ -121,6 +124,15 @@ def main():
         # Balanced group split per source: groups in a seeded random order fill test, then val, up to
         # their image shares; everything else is train. Groups never straddle splits.
         sizes = Counter(group_of({**json.loads(l), "source": name}) for l in picked)
+        coverage = {}
+        if name in cov_sources:
+            # Labels come from a range-limited sensor: per camera, the range that contains 99 % of labels.
+            rng = defaultdict(list)
+            for l in picked:
+                s0 = json.loads(l)
+                rng[s0["camera"]] += [float(np.hypot(o["bottom"][0], o["bottom"][2])) for o in s0["objects"]]
+            coverage = {c: 1.05 * float(np.percentile(v, 99)) for c, v in rng.items() if len(v) > 50}
+            print(f"label coverage {name}:", {c: round(r) for c, r in coverage.items()})
         order = sorted(sizes, key=lambda g: h01(f"{a.seed}:{g}"))
         total = sum(sizes.values())
         assign, acc = {}, 0
@@ -139,6 +151,8 @@ def main():
             g = group_of(s)
             s["group"] = g
             sp = assign[g]
+            if s.get("camera") in coverage:
+                s["coverage_range"] = coverage[s["camera"]]
             s["metric3d"] = name not in nonmetric
             s = qc(s, stats, s["metric3d"])
             writers[sp].write(json.dumps(s) + "\n")
