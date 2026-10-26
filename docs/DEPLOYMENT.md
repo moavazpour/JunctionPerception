@@ -5,10 +5,15 @@
 ```bash
 git clone git@github.com:moavazpour/JunctionPerception.git && cd JunctionPerception
 mkdir -p models data/state data/videos
-# models/gc3d.onnx                    <- training/export_onnx.py
+# models/jp_y26s_960.onnx             <- python -m yolo3d.export --weights best.pt --imgsz 960 --out ...
 # models/segformer_b2_cityscapes.onnx <- training/export_segformer.py
 JP_MODELS=$PWD/models JP_DATA=$PWD/data docker compose up -d --build
 ```
+
+After a training run, `tools/deploy_model.sh` does the whole hand-over on the server: ONNX export, runtime
+image build (with unit tests), the TensorRT FP16 benchmark through the C++ detector and lifting on the
+held-out test split (per source), the TUMTraf S110 auto-calibration check against the dev-kit ground
+truth, and an end-to-end run of the test-site video. Reports land in `runs/deploy_<model>/`.
 
 The stack starts three services:
 
@@ -31,6 +36,11 @@ Add a camera by duplicating the `perception-cam1` service with its own site YAML
 3. Start the service. The `health` topic reports `auto-calibration in progress n%` until calibration finishes.
 4. Check the result in the panel's **Calibration** tab. Range rings and learned lanes are drawn over a
    pixelated snapshot.
+   If auto-calibration fails or looks wrong, use **Manual calibration** in the same tab: click a point on
+   the road surface in the snapshot (lane-marking corners, stop-line ends, kerb corners), then the same
+   point on the aerial map; repeat for at least 4 (better 6+) points spread from near to far and across
+   the road, then **Solve**. The device solves focal length, pose and the exact camera position, reports
+   the reprojection error and keeps the result. **Restart auto-calibration** discards it again.
 5. Lanes are learned from traffic over the first minutes. Stop lines come from the configured reference
    point and are refined from observed queues. A hand-made `map.file` overrides learning.
 

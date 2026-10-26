@@ -37,9 +37,23 @@ All timestamps are stream time (UNIX seconds).
 | `events/stopline` | on event | no | stop-line crossings per lane |
 | `health` | 1 Hz | yes | integrity level, confidence and reasons, plus stability, visibility, calibration and coverage |
 | `occlusion` | 1 Hz | no | BEV visibility grid (RLE) and occluded lane segments with cause |
-| `calibration` | on change | yes | camera model and auto-calibration quality |
+| `calibration` | on change | yes | camera model and calibration quality (`method`: `keypoints` or `vanishing-point`; `source`: `auto`, `manual`, `file`, `drift-compensated`) |
 | `map` | on change | yes | lanes, stop lines, zones, crosswalks (local ENU metres) + camera |
-| `snapshot` | after calibration | yes | optional pixelated JPEG for the calibration view |
+| `snapshot` | calibration mode | yes | optional pixelated JPEG for the calibration view (also before any calibration exists), with the frame size and the configured camera position |
+| `calibration/manual/result` | on command | no | outcome of an operator command (below) |
+
+### Operator commands (`calibration/manual`, subscribed)
+
+The web panel publishes JSON commands to `<prefix>/<site>/<camera>/calibration/manual`:
+
+| `action` | Fields | Effect |
+|---|---|---|
+| `solve` | `points: [{u, v, lat, lon}, …]` (≥ 4; frame pixels) | manual calibration from ground correspondences: focal length (unless configured), pose and camera position are solved and the result replaces the current calibration (persisted like an auto-calibration) |
+| `auto` | – | discard the calibration and restart auto-calibration |
+| `snapshot` | – | publish a fresh calibration snapshot |
+
+Every command is answered on `calibration/manual/result` with `ok`, `message` and, for `solve`, the
+reprojection error (`rms_px`, `max_px`). Enable MQTT authentication before exposing this channel.
 
 ### Road user (`objects[]`)
 
