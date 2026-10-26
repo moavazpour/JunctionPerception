@@ -43,7 +43,7 @@ def main():
             calib.append(m["calibration"])
         elif leaf == "events/safety":
             e = m["event"]
-            events[(e.get("type"), e.get("severity"))] += 1
+            events[(e.get("kind"), e.get("severity"))] += 1
         elif leaf == "health":
             health[m["health"].get("level")] += 1
         elif leaf == "map":
