@@ -54,6 +54,7 @@ def explains(label_box, det_box) -> bool:
 
 
 def main():
+    from jpdata.label_audit import audit  # imported here: label_audit imports this module
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="name=jsonl:image_root")
     ap.add_argument("--dets", type=Path, required=True)
@@ -63,6 +64,10 @@ def main():
     ap.add_argument("--min_agree", type=float, default=0.5)
     ap.add_argument("--conf_match", type=float, default=0.3)
     ap.add_argument("--conf_unlabelled", type=float, default=0.5)
+    ap.add_argument("--no_qc", action="store_true",
+                    help="keep every label (LiDAR-labelled sources: the single ground plane is only an approximation)")
+    ap.add_argument("--max_shifted", type=float, default=0.0,
+                    help="drop an image when this share of its visible labels is shifted against the object (0: off)")
     a = ap.parse_args()
     name, rest = a.src.split("=", 1)
     jl, root = rest.split(":", 1)
@@ -80,7 +85,8 @@ def main():
                 continue
             s = merge_truck_trailer(json.loads(line))
             s["source"] = name
-            s = qc(s, qc_stats, name not in NONMETRIC)  # size / ground-plane checks: failures become ignore
+            if not a.no_qc:
+                s = qc(s, qc_stats, name not in NONMETRIC)  # size / ground-plane checks: failures become ignore
             stats["images"] += 1
             if s["image"] not in dets:
                 stats["no_detections_file"] += 1
@@ -113,6 +119,13 @@ def main():
                 stats["dropped_mismatch"] += 1
                 dropped.append((s["image"], f"labels do not match image ({verified}/{checked} confirmed)"))
                 continue
+            if a.max_shifted > 0:
+                r = audit(s, dets[s["image"]], a.conf_match)
+                s["objects"] = [{k: v for k, v in o.items() if k != "audit"} for o in s["objects"]]
+                if r["shifted"] >= 2 and r["shifted"] >= a.max_shifted * r["n"]:
+                    stats["dropped_shifted"] += 1
+                    dropped.append((s["image"], f"labels shifted against objects ({r['shifted']}/{r['n']})"))
+                    continue
             # Visible road users nobody labelled.
             labelled = [o["box2d"] for o in s["objects"]]
             ign = list(s.get("ignore", []))
@@ -132,7 +145,7 @@ def main():
             f.write(json.dumps(s) + "\n")
     lines = [f"source {name}: {stats['images']} images, kept {stats['kept']}",
              f"  dropped: mismatch {stats['dropped_mismatch']}, black {stats['dropped_black']}, "
-             f"not detected {stats['no_detections_file']}",
+             f"shifted {stats['dropped_shifted']}, not detected {stats['no_detections_file']}",
              f"  label/detector agreement: median {np.median(agree_all) if agree_all else float('nan'):.3f}, "
              f"p10 {np.percentile(agree_all, 10) if agree_all else float('nan'):.3f}",
              f"  unlabelled visible road users (ignore_det): {stats['unlabelled_dets']} "
