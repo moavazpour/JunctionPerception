@@ -7,11 +7,14 @@ be trusted.
 
 **What it does**
 
-- Monocular 3D detection of cars, buses, trucks, trailers, pedestrians, cyclists, e-scooter riders and
-  motorcyclists, from any viewing angle. A ground-aware model is trained with camera-geometry
-  augmentation.
-- Automatic calibration from traffic: road vanishing point, focal length, pitch/roll/height, and
-  OpenStreetMap-aligned geo-registration.
+- Monocular 3D detection of cars, buses, trucks, pedestrians, cyclists and motorcyclists (e-scooter
+  riders once data exists), from any viewing angle. A YOLO26-pose network predicts the 9 projected
+  corners of every road user's 3D box; the box is lifted onto the calibrated ground plane. It is trained
+  on JP-Unified, a merge of TUMTraf, A9, LUMPI, KITTI and DAIR-V2X with one label format.
+- Automatic calibration from traffic: focal length, pitch, roll and height from the predicted car boxes
+  (re-projection of fitted boxes, size priors, speed consistency), OpenStreetMap-aligned
+  geo-registration, and a manual fallback in the web panel (click points in the camera view and on an
+  aerial map).
 - 3D tracking with a CTRA Kalman filter: speed, acceleration and turn rate, each with uncertainty.
 - Intersection model:
   - lanes and stop lines (learned from traffic or configured)
@@ -40,7 +43,7 @@ uses TypeScript, Three.js and Vite.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | design and algorithms |
 | [docs/INTERFACES.md](docs/INTERFACES.md) | inputs, MQTT topics and message schema |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | running the stack, new sites, Jetson |
-| [docs/BENCHMARK.md](docs/BENCHMARK.md) | TUMTraf results |
+| [docs/BENCHMARK.md](docs/BENCHMARK.md) | test-split results of the deployed model (written after training) |
 | [docs/PLAN.md](docs/PLAN.md) | project plan |
 
 ## Repository
@@ -49,9 +52,9 @@ uses TypeScript, Three.js and Vite.
 core/       C++20 library: geometry, inference, calibration, tracking, scene, safety, health, output
 apps/       junction_perception (runtime), jp_bench (benchmark runner)
 tests/      GoogleTest unit tests (geometry, tracking, safety, auto-calibration)
-training/   PyTorch: TUMTraf conversion, GroundCenter3D model, training, evaluation, ONNX export
+training/   jpdata (one converter per dataset, merge), yolo3d (YOLO export, training, ONNX export), evaluation
 web/        Three.js panel
-tools/      site setup from OpenStreetMap
+tools/      site setup from OpenStreetMap, training and post-training deployment scripts
 configs/    site configurations
 docker/     Dockerfiles (x86, Jetson, web), broker and proxy config
 ```

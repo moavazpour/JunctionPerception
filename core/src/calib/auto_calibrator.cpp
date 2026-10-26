@@ -528,7 +528,7 @@ CalibrationResult AutoCalibrator::solveKeypoints() const {
     for (double k = 0; k < all.size(); k += stride) out.push_back(all[static_cast<size_t>(k)]);
     return out;
   };
-  const auto coarse = subsample(150), fine = subsample(800);
+  const auto coarse = subsample(150), fine = subsample(2500);
 
   // Coarse grid (no speed term), keep the best few as Nelder-Mead seeds.
   const double lf0 = std::log(pri_.focal_min_rel * w_), lf1 = std::log(std::min(pri_.focal_max_rel, 5.0) * w_);
