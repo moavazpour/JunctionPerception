@@ -30,11 +30,22 @@ def keypoints(o: dict, K: np.ndarray, plane: np.ndarray):
     return pts
 
 
+PAINT = True  # set by --mode: "clean" leaves every pixel untouched
+
+
 def paint_unreliable(im: np.ndarray, s: dict) -> np.ndarray:
-    """Grey out what must be neither positive nor negative: ignore boxes, and for sources whose labels stop
-    at a range (LiDAR coverage) every pixel whose ground point lies beyond that range, except labelled boxes."""
-    for x1, y1, x2, y2 in s.get("ignore", []):
-        im[int(max(y1, 0)):int(y2) + 1, int(max(x1, 0)):int(x2) + 1] = 114
+    """Grey out what must be neither positive nor negative: unreliable labels (ignore) and visible road users
+    no label explains (ignore_det). Pixels of labelled objects are never painted."""
+    if not PAINT:
+        return im
+    H, W = im.shape[:2]
+    mask = np.zeros((H, W), bool)
+    for x1, y1, x2, y2 in list(s.get("ignore", [])) + list(s.get("ignore_det", [])):
+        mask[int(max(y1, 0)):int(min(y2, H - 1)) + 1, int(max(x1, 0)):int(min(x2, W - 1)) + 1] = True
+    for o in s["objects"]:
+        x1, y1, x2, y2 = o["box2d"]
+        mask[int(max(y1, 0)):int(min(y2, H - 1)) + 1, int(max(x1, 0)):int(min(x2, W - 1)) + 1] = False
+    im[mask] = 114
     R = s.get("coverage_range")
     if R:
         H, W = im.shape[:2]
@@ -85,7 +96,7 @@ def convert_split(samples: list[dict], image_root: Path, out: Path, split: str, 
         src = Path(s.get("_root", image_root)) / s["image"]
         dst = out / "images" / split / name
         if not dst.exists():
-            if s.get("ignore") or s.get("coverage_range"):
+            if PAINT and (s.get("ignore") or s.get("ignore_det") or s.get("coverage_range")):
                 im = paint_unreliable(cv2.imread(str(src)), s)
                 dst = dst.with_suffix(".jpg")
                 cv2.imwrite(str(dst), im, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -119,7 +130,7 @@ def weather_copies(samples: list[dict], out: Path, frac: float, seed: int = 0):
         im = aug(im, np.random.default_rng(seed * 100003 + i))
         rel = f"weather/{s['source']}_{i:06d}.jpg"
         cv2.imwrite(str(out / rel), im, [cv2.IMWRITE_JPEG_QUALITY, 92])
-        copies.append({**s, "_root": str(out), "image": rel, "ignore": [], "coverage_range": None, "source": s["source"] + "_wx"})
+        copies.append({**s, "_root": str(out), "image": rel, "ignore": [], "ignore_det": [], "coverage_range": None, "source": s["source"] + "_wx"})
     return copies
 
 
@@ -144,8 +155,12 @@ def main():
     ap.add_argument("--extra", action="append", default=[], help="jsonl_dir:image_root for more sources")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--weather", type=float, default=0.25, help="fraction of train images duplicated with weather effects")
+    ap.add_argument("--mode", choices=["clean", "ignore"], default="ignore",
+                    help="clean: images untouched; ignore: grey out unreliable and unlabelled objects")
     args = ap.parse_args()
     out = args.out.expanduser()
+    global PAINT
+    PAINT = args.mode == "ignore"
     if args.unified:
         main_unified(args.unified.expanduser(), out, args.weather)
         return

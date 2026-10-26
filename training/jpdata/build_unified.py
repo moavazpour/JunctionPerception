@@ -17,11 +17,12 @@ from pathlib import Path
 import numpy as np
 
 from jp3d import geometry as G
+from jpdata.truck_merge import merge_truck_trailer
 
 DIM_RANGES = {  # plausible (min, max) for l, w, h, covering every source's conventions
     "car": ((2.5, 7.0), (1.3, 2.7), (1.0, 3.2)),
     "bus": ((6.0, 19.5), (2.0, 3.7), (2.3, 4.6)),
-    "truck": ((1.5, 13.0), (1.6, 3.5), (1.6, 4.6)),  # TUMTraf TRUCK = tractor cab only (l ~2-3 m)
+    "truck": ((1.5, 25.0), (1.6, 3.6), (1.6, 4.6)),  # includes merged tractor + trailer(s)
     "trailer": ((3.0, 20.5), (1.6, 3.5), (1.0, 4.6)),
     "pedestrian": ((0.2, 1.5), (0.2, 1.5), (0.9, 2.3)),
     "bicycle": ((0.8, 2.6), (0.2, 1.5), (0.9, 2.3)),
@@ -87,7 +88,7 @@ def main():
     ap.add_argument("--vehicle_side", default="kitti,dair_spd_vehicle", help="sources capped together")
     ap.add_argument("--nonmetric", default="dair_spd_infra,dair_c_infra,dair_spd_vehicle",
                     help="sources whose 3D boxes are approximate (keypoints exact): kept for training, excluded from 3D metrics")
-    ap.add_argument("--coverage_sources", default="lumpi,tumtraf_i,tumtraf_v2x,kitti",
+    ap.add_argument("--coverage_sources", default="",
                     help="sources whose labels stop at a sensor range: beyond it the image is ignored")
     ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
     a = ap.parse_args()
@@ -155,6 +156,7 @@ def main():
             if s.get("camera") in coverage:
                 s["coverage_range"] = coverage[s["camera"]]
             s["metric3d"] = name not in nonmetric
+            s = merge_truck_trailer(s)
             s = qc(s, stats, s["metric3d"])
             writers[sp].write(json.dumps(s) + "\n")
             groups[sp].add(g)
