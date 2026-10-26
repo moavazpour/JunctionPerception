@@ -40,6 +40,7 @@ uses TypeScript, Three.js and Vite.
 
 | Document | Content |
 |---|---|
+| [docs/CODE_ARCHITECTURE.md](docs/CODE_ARCHITECTURE.md) | complete code architecture: modules, files, data flow, threads, training and deployment |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | design and algorithms |
 | [docs/INTERFACES.md](docs/INTERFACES.md) | inputs, MQTT topics and message schema |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | running the stack, new sites, Jetson |
