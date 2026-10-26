@@ -50,6 +50,9 @@ def main():
     ap.add_argument("--undist", type=Path, required=True)
     ap.add_argument("--every", type=float, default=2.0)
     ap.add_argument("--min_fg", type=float, default=0.10)
+    # The mask videos have a different frame count than the camera videos (not frame-synchronous), so
+    # mask-based visibility marked many visible objects as hidden. Off by default.
+    ap.add_argument("--use_mask", action="store_true")
     a = ap.parse_args()
     meta = json.loads((a.labels / "meta.json").read_text())
     out_dir = a.undist.expanduser()
@@ -100,7 +103,7 @@ def main():
                     if not ok:
                         continue
                     fg = None
-                    if mcap is not None:
+                    if mcap is not None and a.use_mask:
                         mcap.set(cv2.CAP_PROP_POS_FRAMES, frame)
                         okm, mk = mcap.read()
                         if okm:
@@ -129,10 +132,10 @@ def main():
                         box = [float(x1), float(y1), float(x2), float(y2)]
                         score = v[6]
                         # score 0 = automatic, uncorrected label (wrong sizes are common): ignore region.
-                        if cid not in CMAP or score < 1.0:
+                        if cid not in CMAP:
                             ignore.append(box)
                             continue
-                        if CMAP[cid] == "pedestrian" and score < 4.0 and max(l, w) > 1.0:
+                        if CMAP[cid] == "pedestrian" and score < 4.0 and max(l, w) > 1.0:  # automatic labels
                             # Uncorrected pedestrians often carry track-inflated length; keep a body footprint.
                             l = w = 0.7
                             cs = G.box_corners(bottom[None], np.array([[l, w, h]]), head[None], n)[0]
@@ -140,7 +143,7 @@ def main():
                             x1, y1 = np.clip(uv.min(0), 0, [W - 1, H - 1])
                             x2, y2 = np.clip(uv.max(0), 0, [W - 1, H - 1])
                             box = [float(x1), float(y1), float(x2), float(y2)]
-                        if fg is not None:
+                        if fg is not None and a.use_mask:
                             frac = float(fg[int(y1):int(y2) + 1, int(x1):int(x2) + 1].mean())
                             if frac < a.min_fg:
                                 stats["hidden"] += 1
