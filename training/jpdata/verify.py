@@ -23,6 +23,9 @@ from pathlib import Path
 import numpy as np
 
 from jpdata.truck_merge import merge_truck_trailer
+from jpdata.build_unified import qc
+
+NONMETRIC = {"dair_spd_infra", "dair_c_infra", "dair_spd_vehicle", "dair_i"}
 
 VEH_L, VRU_L = {"car", "bus", "truck", "trailer"}, {"pedestrian", "bicycle", "motorcycle", "escooter"}
 VEH_D, VRU_D = {"car", "bus", "truck"}, {"pedestrian", "bicycle", "motorcycle"}
@@ -69,12 +72,15 @@ def main():
         d = json.loads(l)
         dets[d["image"]] = d["dets"]
     stats = Counter()
+    qc_stats = Counter()
     agree_all, dropped = [], []
     with open(a.out, "w") as f:
         for line in Path(jl).expanduser().read_text().splitlines():
             if not line.strip():
                 continue
             s = merge_truck_trailer(json.loads(line))
+            s["source"] = name
+            s = qc(s, qc_stats, name not in NONMETRIC)  # size / ground-plane checks: failures become ignore
             stats["images"] += 1
             if s["image"] not in dets:
                 stats["no_detections_file"] += 1
@@ -131,6 +137,7 @@ def main():
              f"p10 {np.percentile(agree_all, 10) if agree_all else float('nan'):.3f}",
              f"  unlabelled visible road users (ignore_det): {stats['unlabelled_dets']} "
              f"({stats['unlabelled_dets'] / max(stats['kept'], 1):.2f} per image)",
+             f"  size/ground checks: {dict(qc_stats)}",
              "  dropped images:"] + [f"    {i}  {why}" for i, why in dropped]
     a.report.parent.mkdir(parents=True, exist_ok=True)
     a.report.write_text("\n".join(lines) + "\n")
