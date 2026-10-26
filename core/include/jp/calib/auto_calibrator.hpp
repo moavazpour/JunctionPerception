@@ -23,6 +23,13 @@ namespace jp {
 //       - priors on height, roll and focal length,
 //     with a coarse grid search followed by Nelder-Mead refinement.
 //  3. The ground frame is rotated so that the vanishing direction matches the road bearing.
+//
+// Keypoint detectors (projected 3D-box corners) use a direct 4-DoF search instead, with no vanishing
+// point: for a candidate focal length, pitch and roll every car footprint is lifted onto the ground and
+// must be a rectangle, its top corners must lie vertically above the footprint corners, and the box shape
+// must match the class prior. Lifted sizes scale linearly with the camera height, so the height follows
+// in closed form from the size ratios (combined with the mounting-height prior). Speed consistency along
+// tracks, roll and height priors complete the cost; grid search, then Nelder-Mead.
 struct CalibrationPriors {
   double height_m = 7.0, height_sigma = 2.0;
   std::optional<double> focal_px;            // fix the focal length when known
@@ -37,6 +44,8 @@ struct CalibrationResult {
   bool ok = false;
   CameraModel camera;
   Eigen::Vector2d vanishing_point{0, 0};
+  std::optional<double> road_yaw;  // dominant road direction in the final ground frame (rad from east)
+  std::string method;              // "keypoints" or "vanishing-point"
   int tracks_used = 0, detections_used = 0;
   double box_residual = 0;    // median relative 2D box disagreement
   double speed_cv = 0;        // median coefficient of variation of speed along tracks
@@ -73,6 +82,17 @@ class AutoCalibrator {
   };
   CameraModel build(const Params& p, const Eigen::Vector2d& vp, double bearing = 0.0) const;
   double cost(const Params& p, const Eigen::Vector2d& vp, double* box_res = nullptr, double* speed_cv = nullptr) const;
+  double speedCost(const CameraModel& cam, double* speed_cv = nullptr) const;
+  // Bearing of the camera so that the dominant direction of travel matches the road bearing prior.
+  double resolveBearing(double phi_deg) const;
+
+  // Keypoint path.
+  struct KpStats {
+    double height = 0, size_mad = 0, vert = 0, rect = 0, speed_cv = 0;
+  };
+  double kpCost(double logf, double pitch, double roll, const std::vector<const ImageDetection*>& dets,
+                KpStats* st = nullptr, bool with_speed = true) const;
+  CalibrationResult solveKeypoints() const;
 
   int w_, h_;
   CalibrationPriors pri_;

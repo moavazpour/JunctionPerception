@@ -197,7 +197,8 @@ nlohmann::json calibration(const CameraModel& cam, const CalibrationResult* res,
   nlohmann::json j = cam.toJson();
   j["source"] = source;
   if (res) {
-    j["vanishing_point"] = {r2(res->vanishing_point.x()), r2(res->vanishing_point.y())};
+    j["method"] = res->method;
+    if (res->method != "keypoints") j["vanishing_point"] = {r2(res->vanishing_point.x()), r2(res->vanishing_point.y())};
     j["tracks_used"] = res->tracks_used;
     j["detections_used"] = res->detections_used;
     j["box_residual"] = r3(res->box_residual);

@@ -192,7 +192,9 @@ void Pipeline::onCalibrated(const CalibrationResult* res, const std::string& sou
   tracker_.reset();
   // Road axis for lane learning: the vanishing direction (or the camera's forward direction).
   double axis = M_PI / 2 - cam.bearingDeg() * M_PI / 180.0;
-  if (res) {
+  if (res && res->road_yaw) {
+    axis = *res->road_yaw;
+  } else if (res) {
     const Eigen::Vector3d d = (cam.K().inverse() *
                                Eigen::Vector3d(res->vanishing_point.x(), res->vanishing_point.y(), 1)).normalized();
     Eigen::Vector3d g = cam.R_ground_cam() * d;
