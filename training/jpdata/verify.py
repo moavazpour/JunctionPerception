@@ -22,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+from jpdata.truck_merge import merge_truck_trailer
+
 VEH_L, VRU_L = {"car", "bus", "truck", "trailer"}, {"pedestrian", "bicycle", "motorcycle", "escooter"}
 VEH_D, VRU_D = {"car", "bus", "truck"}, {"pedestrian", "bicycle", "motorcycle"}
 
@@ -72,7 +74,7 @@ def main():
         for line in Path(jl).expanduser().read_text().splitlines():
             if not line.strip():
                 continue
-            s = json.loads(line)
+            s = merge_truck_trailer(json.loads(line))
             stats["images"] += 1
             if s["image"] not in dets:
                 stats["no_detections_file"] += 1
