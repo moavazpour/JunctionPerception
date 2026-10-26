@@ -91,6 +91,8 @@ def main():
     ap.add_argument("--coverage_sources", default="",
                     help="sources whose labels stop at a sensor range: beyond it the image is ignored")
     ap.add_argument("--vehicle_cap", type=float, default=0.10, help="max share of vehicle-side images in the merged set")
+    ap.add_argument("--qc", action="store_true",
+                    help="size / ground-plane checks (failures become ignore); off: labels are used as converted")
     a = ap.parse_args()
     out = a.out.expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -157,7 +159,11 @@ def main():
                 s["coverage_range"] = coverage[s["camera"]]
             s["metric3d"] = name not in nonmetric
             s = merge_truck_trailer(s)
-            s = qc(s, stats, s["metric3d"])
+            if a.qc:
+                s = qc(s, stats, s["metric3d"])
+            else:
+                s.pop("ignore", None)
+                s.pop("ignore_det", None)
             writers[sp].write(json.dumps(s) + "\n")
             groups[sp].add(g)
             summary[(name, sp)]["images"] += 1

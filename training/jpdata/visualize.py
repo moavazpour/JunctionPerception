@@ -38,12 +38,19 @@ def cuboid_px(o, K, plane):
     return G.project(K, c), G.project(K, np.array([o["bottom"]]))[0]
 
 
-def render(s, root: Path, width: int):
-    img = cv2.imread(str(root / s["image"]))
+BOX2D = (255, 255, 255)  # 2D box (the detector's box target): white, thin
+
+
+def render(s, root: Path, width: int, labels: bool = False):
+    img = cv2.imread(str(Path(s.get("_root", root)) / s["image"]))
     if img is None:
         return None
     t = max(1, round(img.shape[1] / 900))
     K, plane = np.array(s["K"]), np.array(s["plane"])
+    if labels:  # 2D boxes first so the cuboids stay on top
+        for o in s["objects"]:
+            x1, y1, x2, y2 = map(int, o["box2d"])
+            cv2.rectangle(img, (x1, y1), (x2, y2), BOX2D, max(1, t - 1), cv2.LINE_AA)
     for x1, y1, x2, y2 in s.get("ignore", []):
         cv2.rectangle(img, (int(x1), int(y1)), (int(x2), int(y2)), (70, 70, 70), t)
     for x1, y1, x2, y2 in s.get("ignore_det", []):
@@ -59,12 +66,22 @@ def render(s, root: Path, width: int):
                      t + (1 if (a, b) == (0, 1) else 0), cv2.LINE_AA)
         cv2.circle(img, tuple(kp.astype(int)), t + 2, (255, 255, 255), -1)
     s_ = width / img.shape[1]
-    return cv2.resize(img, None, fx=s_, fy=s_, interpolation=cv2.INTER_AREA)
+    img = cv2.resize(img, None, fx=s_, fy=s_, interpolation=cv2.INTER_AREA)
+    if labels:  # class names after resizing so the text stays readable
+        for o in s["objects"]:
+            x1, y1 = int(o["box2d"][0] * s_), int(o["box2d"][1] * s_)
+            name = o["cls"]
+            (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            y0 = max(th + 3, y1)
+            cv2.rectangle(img, (x1, y0 - th - 3), (x1 + tw + 2, y0), COLORS.get(name, (255, 255, 255)), -1)
+            cv2.putText(img, name, (x1 + 1, y0 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
+    return img
 
 
-def legend(path: Path):
-    rows = list(COLORS.items()) + [("front edge", (0, 0, 255)), ("ignore (unreliable label)", (70, 70, 70)),
-                                    ("unlabelled object found by detector", (200, 200, 200))]
+def legend(path: Path, labels: bool = False):
+    rows = list(COLORS.items()) + [("front edge", (0, 0, 255))]
+    rows += [("2D box", BOX2D)] if labels else [("ignore (unreliable label)", (70, 70, 70)),
+                                                ("unlabelled object found by detector", (200, 200, 200))]
     im = np.full((32 * len(rows) + 16, 460, 3), 255, np.uint8)
     for i, (name, col) in enumerate(rows):
         y = 24 + 32 * i
@@ -75,30 +92,33 @@ def legend(path: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", type=Path, required=True)
-    ap.add_argument("--root", type=Path, required=True)
+    ap.add_argument("--data", required=True, help="one or more jsonl files, comma separated")
+    ap.add_argument("--root", type=Path, default=Path("."), help="image root (merged samples carry their own _root)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--n", type=int, default=80)
     ap.add_argument("--report", type=Path, default=None)
     ap.add_argument("--orig", type=Path, default=None, help="converted data before verification (for dropped images)")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--labels", action="store_true", help="also draw 2D boxes and class names")
     a = ap.parse_args()
     out = a.out
     out.mkdir(parents=True, exist_ok=True)
-    legend(out / "legend.png")
-    samples = [json.loads(l) for l in a.data.read_text().splitlines() if l.strip()]
+    legend(out / "legend.png", a.labels)
+    samples = []
+    for d in a.data.split(","):
+        samples += [json.loads(l) for l in Path(d).read_text().splitlines() if l.strip()]
     rng = random.Random(a.seed)
     rows = []
     for i, s in enumerate(rng.sample(samples, min(a.n, len(samples))), 1):
-        im = render(s, a.root, a.width)
+        im = render(s, a.root, a.width, a.labels)
         if im is None:
             continue
         cv2.imwrite(str(out / f"{i:04d}.jpg"), im, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        rows.append([f"{i:04d}", s["image"], len(s["objects"]), len(s.get("ignore_det", [])), s.get("qc_agree", "")])
+        rows.append([f"{i:04d}", s.get("source", ""), s["image"], len(s["objects"])])
     with open(out / "index.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["number", "image", "labels", "unlabelled_detected", "label_detector_agreement"])
+        w.writerow(["number", "source", "image", "labels"])
         w.writerows(rows)
     if a.report and a.orig and a.report.exists():
         dropped = [l.strip().split("  ")[0] for l in a.report.read_text().splitlines() if l.startswith("    ")]
