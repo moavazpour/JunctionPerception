@@ -272,7 +272,7 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
   const Eigen::Matrix3d& Rgc = cam.R_ground_cam();
   const Eigen::Vector3d C(0, 0, 1), ez(0, 0, 1);
   const Eigen::Vector3d prior = classPriorDims(ObjectClass::Car);
-  std::vector<double> lL, lW, lH, verts, rects, sig, sigw, sigh;
+  std::vector<double> lL, lW, lH, verts, sig, sigw, sigh;
   double shape = 0;
   int bad = 0;
   for (const ImageDetection* d : dets) {
@@ -287,21 +287,16 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
       ++bad;
       continue;
     }
-    // Footprint FL FR RR RL must be a rectangle.
+    // Footprint FL FR RR RL.
     const Eigen::Vector3d sl = g[0] - g[3], sr = g[1] - g[2], fr = g[0] - g[1], re = g[3] - g[2];
     const double L1 = (sl.norm() + sr.norm()) / 2, W1 = (fr.norm() + re.norm()) / 2;
     if (L1 < 1e-4 || W1 < 1e-4) {
       ++bad;
       continue;
     }
-    auto ang = [](const Eigen::Vector3d& a, const Eigen::Vector3d& b) {
-      return std::acos(std::clamp(a.normalized().dot(b.normalized()), -1.0, 1.0));
-    };
-    const double rect = (ang(sl, sr) + ang(fr, re)) / 2 + std::abs((sl + sr).normalized().dot((fr + re).normalized()));
-    // Top corners vertically above the footprint corners: closest approach of the pixel ray and the vertical.
+    // Top corners: height of each above its footprint corner (closest approach of the pixel ray and the vertical).
     std::array<double, 4> hs{};
     int nh = 0;
-    double vr = 0;
     for (int i = 0; i < 4; ++i) {
       const Eigen::Vector3d r = (Rgc * (Kinv * Eigen::Vector3d(d->kpts[5 + i].x(), d->kpts[5 + i].y(), 1))).normalized();
       const Eigen::Vector3d w0 = C - g[i];
@@ -310,7 +305,6 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
       const double sc = (b * e - dd) / den, tc = (e - b * dd) / den;
       if (sc <= 0 || tc <= 0) continue;
       hs[nh++] = tc;
-      vr += (w0 + sc * r - tc * ez).norm() / sc;  // angular miss (rad)
     }
     if (nh < 2) {
       ++bad;
@@ -318,24 +312,41 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
     }
     std::sort(hs.begin(), hs.begin() + nh);
     const double H1 = nh % 2 ? hs[nh / 2] : (hs[nh / 2 - 1] + hs[nh / 2]) / 2;
-    const double bh = std::max(d->box2d[3] - d->box2d[1], 10.0);
-    vr = vr / nh / (bh / f);  // relative to the box's angular size
-    // Keypoint noise (a few pixels) dominates when an edge is short in the image (far cars: the footprint
-    // length is foreshortened to a few pixels). Each residual's scale grows as its image edges shrink.
+    // Best rectangular box through the lifted footprint and that height, re-projected. With the right camera
+    // the keypoints are reproduced to their noise; a wrong camera bends the footprint (no longer a rectangle,
+    // verticals no longer vertical), which shows up as pixel residuals. Residuals in pixels weight near and
+    // far cars by what the image actually measures.
+    const Eigen::Vector3d c = (g[0] + g[1] + g[2] + g[3]) / 4;
+    const Eigen::Vector2d fw = (sl + sr).head<2>(), lf = (fr + re).head<2>();
+    if (fw.norm() < 1e-9 || lf.norm() < 1e-9) {
+      ++bad;
+      continue;
+    }
+    const Eigen::Vector2d fdir = (fw.normalized() + Eigen::Vector2d(lf.y(), -lf.x()).normalized()).normalized();
+    const Eigen::Vector2d ldir(-fdir.y(), fdir.x());
+    const double l = (std::abs(sl.head<2>().dot(fdir)) + std::abs(sr.head<2>().dot(fdir))) / 2;
+    const double w = (std::abs(fr.head<2>().dot(ldir)) + std::abs(re.head<2>().dot(ldir))) / 2;
+    const auto box = cam.projectBox({c.x(), c.y(), 0.0}, std::atan2(fdir.y(), fdir.x()), {l, w, H1});
+    if (!box) {
+      ++bad;
+      continue;
+    }
+    double e2 = 0;
+    for (int i = 0; i < 8; ++i) e2 += ((*box)[i] - d->kpts[1 + i].head<2>()).squaredNorm();
+    const double rms = std::sqrt(e2 / 8);
+    // Size measurements are only as precise as their image edges are long.
     auto px = [&](int a, int b) { return std::max((d->kpts[a] - d->kpts[b]).head<2>().norm(), 1.0); };
     const double e_len = std::min(px(1, 4), px(2, 3)), e_wid = std::min(px(1, 2), px(4, 3));
     const double e_hgt = std::min({px(1, 5), px(2, 6), px(3, 7), px(4, 8)});
-    constexpr double kNoise = 2.5;  // px
-    const double s_rect = std::hypot(0.03, kNoise / std::min(e_len, e_wid)), s_vert = std::hypot(0.04, kNoise / bh);
-    lL.push_back(std::log(prior.x() / L1));
-    lW.push_back(std::log(prior.y() / W1));
+    constexpr double kNoise = 2.5;  // keypoint noise, px
+    lL.push_back(std::log(prior.x() / l));
+    lW.push_back(std::log(prior.y() / w));
     lH.push_back(std::log(prior.z() / H1));
     sig.push_back(kNoise / e_len);
     sigw.push_back(kNoise / e_wid);
     sigh.push_back(kNoise / e_hgt);
-    shape += cauchy(rect, s_rect) + cauchy(vr, s_vert);
-    verts.push_back(vr);
-    rects.push_back(rect);
+    shape += cauchy(rms, kNoise);
+    verts.push_back(rms);
   }
   const int n = static_cast<int>(lL.size());
   if (n < 20) return 1e6;
@@ -371,7 +382,7 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
   if (st) {
     std::vector<double> dev;
     for (double v : precise) dev.push_back(std::abs(v - m));
-    *st = {std::exp(m), median(dev), median(verts), median(rects), cv};
+    *st = {std::exp(m), median(dev), median(verts), cv};
   }
   return total;
 }
@@ -506,18 +517,18 @@ CalibrationResult AutoCalibrator::solveKeypoints() const {
   res.camera = CameraModel::fromPose(w_, h_, f, best[1], best[2], st.height, bearing);
   res.camera.anchor = pri_.anchor;
   res.road_yaw = (90.0 - (bearing + phi)) * kDeg;
-  res.box_residual = st.vert;
+  res.box_residual = st.reproj_px;  // median keypoint re-projection error (px)
   res.speed_cv = st.speed_cv;
-  res.confidence = std::clamp(1.0 - 3.0 * std::max(0.0, st.size_mad - 0.10) - 4.0 * std::max(0.0, st.vert - 0.05) -
+  res.confidence = std::clamp(1.0 - 3.0 * std::max(0.0, st.size_mad - 0.10) - 0.1 * std::max(0.0, st.reproj_px - 3.0) -
                                   2.0 * st.speed_cv,
                               0.0, 1.0);
   res.ok = true;
   res.message = "f=" + std::to_string(f) + " px, pitch=" + std::to_string(best[1] / kDeg) +
                 " deg, roll=" + std::to_string(best[2] / kDeg) + " deg, height=" + std::to_string(st.height) +
                 " m, bearing=" + std::to_string(bearing) + " deg";
-  spdlog::info("Auto-calibration (keypoints, {} cars): {} (size spread {:.3f}, verticality {:.3f}, rectangle {:.3f}, "
+  spdlog::info("Auto-calibration (keypoints, {} cars): {} (size spread {:.3f}, re-projection {:.2f} px, "
                "speed drift {:.3f}, confidence {:.2f})",
-               all.size(), res.message, st.size_mad, st.vert, st.rect, st.speed_cv, res.confidence);
+               all.size(), res.message, st.size_mad, st.reproj_px, st.speed_cv, res.confidence);
   return res;
 }
 

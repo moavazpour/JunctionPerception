@@ -25,11 +25,13 @@ namespace jp {
 //  3. The ground frame is rotated so that the vanishing direction matches the road bearing.
 //
 // Keypoint detectors (projected 3D-box corners) use a direct 4-DoF search instead, with no vanishing
-// point: for a candidate focal length, pitch and roll every car footprint is lifted onto the ground and
-// must be a rectangle, its top corners must lie vertically above the footprint corners, and the box shape
-// must match the class prior. Lifted sizes scale linearly with the camera height, so the height follows
-// in closed form from the size ratios (combined with the mounting-height prior). Speed consistency along
-// tracks, roll and height priors complete the cost; grid search, then Nelder-Mead.
+// point: for a candidate focal length, pitch and roll every car footprint is lifted onto the ground, the
+// best rectangular box (footprint rectangle + height from the top corners) is fitted and re-projected,
+// and the keypoint re-projection error in pixels is the main term (a wrong camera bends footprints and
+// verticals). Lifted sizes scale linearly with the camera height, so the height follows in closed form
+// from the size ratios against the class prior (combined with the mounting-height prior); the spread of
+// per-car scale, speed consistency along tracks, roll and height priors complete the cost. Grid search,
+// then Nelder-Mead.
 struct CalibrationPriors {
   double height_m = 7.0, height_sigma = 2.0;
   std::optional<double> focal_px;            // fix the focal length when known
@@ -88,7 +90,7 @@ class AutoCalibrator {
 
   // Keypoint path.
   struct KpStats {
-    double height = 0, size_mad = 0, vert = 0, rect = 0, speed_cv = 0;
+    double height = 0, size_mad = 0, reproj_px = 0, speed_cv = 0;
   };
   double kpCost(double logf, double pitch, double roll, const std::vector<const ImageDetection*>& dets,
                 KpStats* st = nullptr, bool with_speed = true) const;
