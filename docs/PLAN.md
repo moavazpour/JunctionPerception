@@ -36,9 +36,9 @@ and standard outputs, designed for edge deployment.
 | 3 | Near-miss: TTC, MTTC, PET, DRAC, hard braking | ✅ done; false positives under bad calibration, see 6 |
 | 4 | Self-monitoring: shake/drift compensation, visibility/weather, calibration consistency, occlusion, integrity | ✅ done |
 | 5 | Outputs (MQTT, CPM, detectors) + docker compose + web panel | ✅ done, running on the server |
-| 6 | Auto-calibration | ⚠️ implemented; on real intersection footage the hard vanishing-point constraint fails (turning traffic). Redesign: 4-DoF search with box consistency as the main term and vanishing points as soft terms, validated against TUMTraf ground truth |
-| 7 | **Data**: JP-Unified spec, converters for every source, CARLA generation, QC, splits | 🔄 in progress |
-| 8 | **Training**: YOLO26-pose-s and -m on JP-Unified, all useful augmentations | ⏳ after the datasets are downloaded |
+| 6 | Auto-calibration | ✅ keypoint self-calibration (box re-projection, size priors, speed) + manual map-point fallback in the web panel; validated on synthetic cameras, TUMTraf ground-truth check runs after training |
+| 7 | **Data**: JP-Unified spec, one converter per source, cleaning, merge | ✅ done (35k train / 4.5k val / 4.9k test images, see DATASET.md) |
+| 8 | **Training**: YOLO26-pose-s at 960 px on JP-Unified | 🔄 running; `tools/deploy_model.sh` takes over when it ends |
 | 9 | Benchmark: JP-Unified test split per source, TUMTraf official val, cross-dataset (zero-shot camera) tests, the deployed TensorRT engine through the C++ path | ⏳ |
 | 10 | Test-site run (Georg-Brauchle-Ring video): calibration, tracks, ETA, events, panel | ⏳ after 6 and 8 |
 | 11 | Edge: INT8, Jetson image validation, long-run test | ⏳ |

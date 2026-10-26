@@ -144,21 +144,29 @@ Every converted source is checked before training:
   - footprint on the ground plane (|dz| < 0.3 m)
   - dimensions within class ranges
 
-## 8. Current build (JP-Unified v1)
+## 8. Current build (JP-Unified, final)
 
-| Source | Images | Notes |
+Each source is converted by its own converter into `converted/<source>/data.jsonl` (images untouched),
+cleaned, then merged into `merged/{train,val,test}.jsonl`. No ignore regions, no detector-based
+filtering and no size or ground-plane checks are applied: labels are used as the datasets provide them.
+
+| Source | Images | Cleaning |
 |---|---|---|
-| TUMTraf Intersection (R02) | 4 257 | rectified; north/south LiDAR label sets merged |
-| TUMTraf-V2X (R04) | 1 800 | south2 + north cameras; test labels withheld upstream |
-| A9 Highway R00 | 299 | only frames whose calibration reproduces the dataset's own projections (342 dropped); s00 and R01 are pseudo-cuboids, s03/s04 have no images |
-| KITTI | 1 482 | 19 % sample (vehicle-side cap), drive-level groups |
-| DAIR V2X-Seq SPD infra | 5 631 | images already rectified; affine calibration applied exactly, keypoints exact, 3D approximate (non-metric) |
-| DAIR V2X-C infra | 5 572 | as above |
-| DAIR V2X-Seq SPD vehicle | 2 384 | vehicle-side cap; non-metric |
-| LUMPI | 8 460 | M1, M2, M4–M6 (M0 automatic labels only, M3 videos missing); uncorrected labels → ignore; undistorted |
-| CARLA (2 passes) | 8 325 | random mountings, 19 weathers + fog |
+| TUMTraf Intersection (R02) | 4 257 | south-LiDAR labels only (the dev-kit north-LiDAR projections are offset) |
+| TUMTraf-V2X (R04) | 1 800 | south2 + north cameras only (south1/east projections do not align); test labels withheld upstream |
+| A9 Highway R00 | 299 | s01/s02 frames whose calibration reproduces the dataset's own projections; s00/R01 have no 3D boxes, s03/s04 no images |
+| LUMPI | 6 867 | M1, M2, M4–M6 (M0 automatic labels only, M3 video missing); 836 black frames (camera c5) and camera c8 of M2 (labels drift in time against the video) removed; undistorted |
+| KITTI | 7 481 (1 738 used) | vehicle-side cap |
+| DAIR V2X-C infra | 8 577 | correct image package only; affine calibration applied exactly, keypoints exact, 3D approximate (non-metric) |
+| DAIR V2X-Seq SPD infra | 11 275 | images without labels removed; as above |
+| DAIR V2X-Seq SPD vehicle | 12 252 (2 767 used) | vehicle-side cap; non-metric |
+| DAIR-V2X-I | 7 058 | as above |
 
-Splits (by group, per source): train 30 114 (+7 493 adverse-weather copies), val 3 898, test 4 177 images.
-Train objects: car 257k, pedestrian 51k, motorcycle 23k, bicycle 20k, truck 17k, bus 5.4k, trailer 4.6k.
-Objects failing size or ground-plane checks become ignore regions. Per-source counts are in
-`unified/summary.json`.
+Tractor + trailer pairs are merged into one truck box everywhere (DAIR, KITTI and LUMPI label them
+that way); stand-alone trailers are trucks. Vehicle-side sources are capped at 10 % of the merged set.
+CARLA is not used (it lowered pose mAP on real validation data in an ablation).
+
+Splits (by group, per source): train 35 265 (+8 801 adverse-weather copies in the YOLO export),
+val 4 457, test 4 916 images. Train objects: car 429k, pedestrian 90k, motorcycle 49k, bicycle 41k,
+truck 24k, bus 11k; 29 % of the images are from German sites. Per-source counts are in
+`merged/summary.json`.
