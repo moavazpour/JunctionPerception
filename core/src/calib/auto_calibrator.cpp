@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <opencv2/imgproc.hpp>
 #include <random>
@@ -28,6 +29,67 @@ double median(std::vector<double> v) {
   if (v.empty()) return 0;
   std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
   return v[v.size() / 2];
+}
+
+using Vec6 = Eigen::Matrix<double, 6, 1>;
+using Res = Eigen::Matrix<double, 18, 1>;
+
+// Pixel residuals of a box (centre x, y, yaw, l, w, h in the camera's ground frame) against the 9 keypoints.
+bool boxResiduals(const Eigen::Matrix3d& KRcg, const Eigen::Vector3d& C, const ImageDetection& d, const Vec6& p, Res& r) {
+  static constexpr int sgn[4][2] = {{1, 1}, {1, -1}, {-1, -1}, {-1, 1}};
+  const double cy = std::cos(p[2]), sy = std::sin(p[2]);
+  const Eigen::Vector3d fx(cy, sy, 0), ly(-sy, cy, 0), ez(0, 0, 1);
+  auto proj = [&](const Eigen::Vector3d& P, int k) {
+    const Eigen::Vector3d q = KRcg * (P - C);
+    if (q.z() < 1e-6) return false;
+    r.segment<2>(2 * k) = q.head<2>() / q.z() - d.kpts[k].head<2>();
+    return true;
+  };
+  const Eigen::Vector3d b(p[0], p[1], 0);
+  if (!proj(b, 0)) return false;
+  for (int top = 0; top < 2; ++top)
+    for (int i = 0; i < 4; ++i)
+      if (!proj(b + sgn[i][0] * p[3] / 2 * fx + sgn[i][1] * p[4] / 2 * ly + top * p[5] * ez, 1 + top * 4 + i))
+        return false;
+  return true;
+}
+
+// Levenberg-Marquardt fit of a box to the keypoints for a fixed camera; returns the rms pixel error.
+double refineBox(const CameraModel& cam, const ImageDetection& d, Vec6& x, int iters = 5) {
+  const Eigen::Matrix3d KRcg = cam.K() * cam.R_ground_cam().transpose();
+  const Eigen::Vector3d C = cam.cameraPositionGround();
+  Res r, r2;
+  if (!boxResiduals(KRcg, C, d, x, r)) return std::numeric_limits<double>::quiet_NaN();
+  double cost = r.squaredNorm(), lambda = 1e-3;
+  for (int it = 0; it < iters; ++it) {
+    Eigen::Matrix<double, 18, 6> J;
+    for (int j = 0; j < 6; ++j) {
+      Vec6 xp = x;
+      const double h = 1e-5 * (1.0 + std::abs(x[j]));
+      xp[j] += h;
+      if (!boxResiduals(KRcg, C, d, xp, r2)) return std::sqrt(cost / 9);
+      J.col(j) = (r2 - r) / h;
+    }
+    Eigen::Matrix<double, 6, 6> A = J.transpose() * J;
+    const Vec6 g = J.transpose() * r;
+    bool improved = false;
+    for (int tries = 0; tries < 4 && !improved; ++tries) {
+      Eigen::Matrix<double, 6, 6> Al = A;
+      Al.diagonal() *= 1.0 + lambda;
+      const Vec6 xn = x + Al.ldlt().solve(-g);
+      if (xn[3] > 0 && xn[4] > 0 && xn[5] > 0 && boxResiduals(KRcg, C, d, xn, r2) && r2.squaredNorm() < cost) {
+        x = xn;
+        r = r2;
+        cost = r.squaredNorm();
+        lambda *= 0.3;
+        improved = true;
+      } else {
+        lambda *= 10;
+      }
+    }
+    if (!improved) break;
+  }
+  return std::sqrt(cost / 9);
 }
 }  // namespace
 
@@ -324,16 +386,19 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
     }
     const Eigen::Vector2d fdir = (fw.normalized() + Eigen::Vector2d(lf.y(), -lf.x()).normalized()).normalized();
     const Eigen::Vector2d ldir(-fdir.y(), fdir.x());
-    const double l = (std::abs(sl.head<2>().dot(fdir)) + std::abs(sr.head<2>().dot(fdir))) / 2;
-    const double w = (std::abs(fr.head<2>().dot(ldir)) + std::abs(re.head<2>().dot(ldir))) / 2;
-    const auto box = cam.projectBox({c.x(), c.y(), 0.0}, std::atan2(fdir.y(), fdir.x()), {l, w, H1});
-    if (!box) {
+    Eigen::Matrix<double, 6, 1> x;  // centre x, y, yaw, l, w, h (unit-height ground frame)
+    x << c.x(), c.y(), std::atan2(fdir.y(), fdir.x()),
+        (std::abs(sl.head<2>().dot(fdir)) + std::abs(sr.head<2>().dot(fdir))) / 2,
+        (std::abs(fr.head<2>().dot(ldir)) + std::abs(re.head<2>().dot(ldir))) / 2, H1;
+    // Gauss-Newton on the pixel residuals: the lifted footprint is only an initial guess (for far cars a
+    // pixel of keypoint noise moves the lifted corners by metres along the viewing direction).
+    double rms = refineBox(cam, *d, x);
+    if (!std::isfinite(rms)) {
       ++bad;
       continue;
     }
-    double e2 = 0;
-    for (int i = 0; i < 8; ++i) e2 += ((*box)[i] - d->kpts[1 + i].head<2>()).squaredNorm();
-    const double rms = std::sqrt(e2 / 8);
+    const double l = x[3], w = x[4];
+    const double Hb = x[5];
     // Size measurements are only as precise as their image edges are long.
     auto px = [&](int a, int b) { return std::max((d->kpts[a] - d->kpts[b]).head<2>().norm(), 1.0); };
     const double e_len = std::min(px(1, 4), px(2, 3)), e_wid = std::min(px(1, 2), px(4, 3));
@@ -341,7 +406,7 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
     constexpr double kNoise = 2.5;  // keypoint noise, px
     lL.push_back(std::log(prior.x() / l));
     lW.push_back(std::log(prior.y() / w));
-    lH.push_back(std::log(prior.z() / H1));
+    lH.push_back(std::log(prior.z() / Hb));
     sig.push_back(kNoise / e_len);
     sigw.push_back(kNoise / e_wid);
     sigh.push_back(kNoise / e_hgt);
@@ -463,7 +528,7 @@ CalibrationResult AutoCalibrator::solveKeypoints() const {
     for (double k = 0; k < all.size(); k += stride) out.push_back(all[static_cast<size_t>(k)]);
     return out;
   };
-  const auto coarse = subsample(400), fine = subsample(1500);
+  const auto coarse = subsample(150), fine = subsample(800);
 
   // Coarse grid (no speed term), keep the best few as Nelder-Mead seeds.
   const double lf0 = std::log(pri_.focal_min_rel * w_), lf1 = std::log(std::min(pri_.focal_max_rel, 5.0) * w_);
