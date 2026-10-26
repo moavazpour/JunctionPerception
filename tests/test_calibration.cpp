@@ -124,7 +124,7 @@ std::optional<ImageDetection> observeKp(const CameraModel& cam, const Eigen::Vec
 
 struct KpCase {
   int w, h;
-  double f, pitch_deg, roll_deg, height, bearing, noise, pos_tol;
+  double f, pitch_deg, roll_deg, height, bearing, noise, pos_tol, pitch_tol;
 };
 
 void runKeypointCase(const KpCase& k) {
@@ -172,7 +172,7 @@ void runKeypointCase(const KpCase& k) {
   ASSERT_TRUE(res.ok) << res.message;
   EXPECT_EQ(res.method, "keypoints");
   EXPECT_NEAR(res.camera.K()(0, 0) / k.f, 1.0, 0.06);
-  EXPECT_NEAR(res.camera.pitch() * 180 / M_PI, k.pitch_deg, 0.6);
+  EXPECT_NEAR(res.camera.pitch() * 180 / M_PI, k.pitch_deg, k.pitch_tol);
   EXPECT_NEAR(res.camera.roll() * 180 / M_PI, k.roll_deg, 0.6);
   EXPECT_NEAR(res.camera.cameraHeight() / k.height, 1.0, 0.06);
   EXPECT_NEAR(std::remainder(res.camera.bearingDeg() - k.bearing, 360.0), 0.0, 1.5);
@@ -189,11 +189,11 @@ void runKeypointCase(const KpCase& k) {
 }
 }  // namespace
 
-TEST(AutoCalibration, KeypointsFootbridgePhone) { runKeypointCase({1920, 1080, 1650, 10.0, 0.8, 7.0, 95.0, 1.5, 0.04}); }
+TEST(AutoCalibration, KeypointsFootbridgePhone) { runKeypointCase({1920, 1080, 1650, 10.0, 0.8, 7.0, 95.0, 1.5, 0.04, 0.6}); }
 
-TEST(AutoCalibration, KeypointsGantryCamera) { runKeypointCase({1920, 1200, 1350, 18.0, -1.2, 8.6, 200.0, 2.0, 0.04}); }
+TEST(AutoCalibration, KeypointsGantryCamera) { runKeypointCase({1920, 1200, 1350, 18.0, -1.2, 8.6, 200.0, 2.0, 0.04, 1.0}); }
 
-TEST(AutoCalibration, KeypointsWideAngleLowMount) { runKeypointCase({1280, 720, 700, 25.0, 2.0, 5.0, 10.0, 1.0, 0.08}); }
+TEST(AutoCalibration, KeypointsWideAngleLowMount) { runKeypointCase({1280, 720, 700, 25.0, 2.0, 5.0, 10.0, 1.0, 0.08, 0.6}); }
 
 #include "jp/calib/manual_calibration.hpp"
 

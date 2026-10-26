@@ -310,6 +310,14 @@ void Pipeline::rebuildLanes(double stamp) {
   (void)stamp;
 }
 
+void Pipeline::cancelCalibration() {
+  // The solver reads the calibrator: let a running solve finish before the calibrator is replaced.
+  if (calib_future_.valid()) {
+    calib_future_.wait();
+    calib_future_ = {};
+  }
+}
+
 void Pipeline::handleCommand(const nlohmann::json& cmd) {
   const std::string action = cmd.value("action", "solve");
   nlohmann::json out = {{"action", action}};
@@ -317,6 +325,7 @@ void Pipeline::handleCommand(const nlohmann::json& cmd) {
     snapshot_sent_ = false;
     out["ok"] = true;
   } else if (action == "auto") {
+    cancelCalibration();
     camera_.reset();
     calibrator_ = makeCalibrator();
     if (!cfg_.calibration_file.empty()) std::filesystem::remove(cfg_.calibration_file);
@@ -335,6 +344,7 @@ void Pipeline::handleCommand(const nlohmann::json& cmd) {
     out["rms_px"] = r.rms_px;
     out["max_px"] = r.max_px;
     if (r.ok) {
+      cancelCalibration();
       camera_ = r.camera;
       onCalibrated(nullptr, "manual");
     }
@@ -368,9 +378,14 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   if (!camera_) {
     // The calibration view is also needed before any calibration exists (manual calibration).
     if (cfg_.publish_snapshot && !snapshot_sent_ && frames_ > 30) publishSnapshot(frame, dets);
-    calibrator_->add(stamp, dets);
-    if (calibrator_->ready()) {
-      const auto res = calibrator_->solve();
+    if (!calib_future_.valid()) {
+      calibrator_->add(stamp, dets);
+      if (calibrator_->ready()) {
+        spdlog::info("Solving the auto-calibration ({} s of traffic)", cfg_.calibration_min_s);
+        calib_future_ = std::async(std::launch::async, [c = calibrator_.get()] { return c->solve(); });
+      }
+    } else if (calib_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      const auto res = calib_future_.get();
       if (res.ok) {
         camera_ = res.camera;
         onCalibrated(&res, "auto");

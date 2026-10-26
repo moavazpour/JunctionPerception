@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <deque>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -88,6 +89,8 @@ class Pipeline {
   std::unique_ptr<Letterbox> lb_;
   std::unique_ptr<MultiSink> sink_;
   std::unique_ptr<AutoCalibrator> calibrator_;
+  std::future<CalibrationResult> calib_future_;  // solve() runs off the frame loop (tens of seconds)
+  void cancelCalibration();
   std::optional<CameraModel> camera_;   // calibrated camera
   CameraModel frame_cam_;               // camera corrected for current shake/drift
   Tracker tracker_;
