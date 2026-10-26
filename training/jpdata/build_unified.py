@@ -126,12 +126,13 @@ def main():
         sizes = Counter(group_of({**json.loads(l), "source": name}) for l in picked)
         coverage = {}
         if name in cov_sources:
-            # Labels come from a range-limited sensor: per camera, the range that contains 99 % of labels.
+            # Labels come from a range-limited sensor: per camera, the range that contains 95 % of labels
+            # (conservative: beyond it a large share of visible objects is unlabelled).
             rng = defaultdict(list)
             for l in picked:
                 s0 = json.loads(l)
                 rng[s0["camera"]] += [float(np.hypot(o["bottom"][0], o["bottom"][2])) for o in s0["objects"]]
-            coverage = {c: 1.05 * float(np.percentile(v, 99)) for c, v in rng.items() if len(v) > 50}
+            coverage = {c: float(np.percentile(v, 95)) for c, v in rng.items() if len(v) > 50}
             print(f"label coverage {name}:", {c: round(r) for c, r in coverage.items()})
         order = sorted(sizes, key=lambda g: h01(f"{a.seed}:{g}"))
         total = sum(sizes.values())
