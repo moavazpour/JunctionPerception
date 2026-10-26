@@ -272,7 +272,7 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
   const Eigen::Matrix3d& Rgc = cam.R_ground_cam();
   const Eigen::Vector3d C(0, 0, 1), ez(0, 0, 1);
   const Eigen::Vector3d prior = classPriorDims(ObjectClass::Car);
-  std::vector<double> lL, lW, lH, verts, rects, sig;
+  std::vector<double> lL, lW, lH, verts, rects, sig, sigw, sigh;
   double shape = 0;
   int bad = 0;
   for (const ImageDetection* d : dets) {
@@ -318,15 +318,21 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
     }
     std::sort(hs.begin(), hs.begin() + nh);
     const double H1 = nh % 2 ? hs[nh / 2] : (hs[nh / 2 - 1] + hs[nh / 2]) / 2;
-    const double bh = std::max(d->box2d[3] - d->box2d[1], 10.0), bw = std::max(d->box2d[2] - d->box2d[0], 10.0);
+    const double bh = std::max(d->box2d[3] - d->box2d[1], 10.0);
     vr = vr / nh / (bh / f);  // relative to the box's angular size
-    // Keypoint noise (a few pixels) dominates for small boxes: residual scales grow as the box shrinks.
-    const double ext = std::min(bh, bw);
-    const double s_rect = std::hypot(0.04, 3.0 / ext), s_vert = std::hypot(0.05, 2.0 / bh), s_size = 3.0 / ext;
+    // Keypoint noise (a few pixels) dominates when an edge is short in the image (far cars: the footprint
+    // length is foreshortened to a few pixels). Each residual's scale grows as its image edges shrink.
+    auto px = [&](int a, int b) { return std::max((d->kpts[a] - d->kpts[b]).head<2>().norm(), 1.0); };
+    const double e_len = std::min(px(1, 4), px(2, 3)), e_wid = std::min(px(1, 2), px(4, 3));
+    const double e_hgt = std::min({px(1, 5), px(2, 6), px(3, 7), px(4, 8)});
+    constexpr double kNoise = 2.5;  // px
+    const double s_rect = std::hypot(0.03, kNoise / std::min(e_len, e_wid)), s_vert = std::hypot(0.04, kNoise / bh);
     lL.push_back(std::log(prior.x() / L1));
     lW.push_back(std::log(prior.y() / W1));
     lH.push_back(std::log(prior.z() / H1));
-    sig.push_back(s_size);
+    sig.push_back(kNoise / e_len);
+    sigw.push_back(kNoise / e_wid);
+    sigh.push_back(kNoise / e_hgt);
     shape += cauchy(rect, s_rect) + cauchy(vr, s_vert);
     verts.push_back(vr);
     rects.push_back(rect);
@@ -334,22 +340,30 @@ double AutoCalibrator::kpCost(double logf, double pitch, double roll, const std:
   const int n = static_cast<int>(lL.size());
   if (n < 20) return 1e6;
   // Lifted sizes scale with the camera height: every size ratio is an estimate of log(height).
-  // Height estimate from the most precise half of the boxes.
-  std::vector<double> all, precise;
-  const double sig_med = median(sig);
+  // Height estimate from the precise size measurements only (image edge long enough).
+  std::vector<double> precise;
   for (int i = 0; i < n; ++i) {
-    for (double v : {lL[i], lW[i], lH[i]}) {
-      all.push_back(v);
-      if (sig[i] <= sig_med) precise.push_back(v);
-    }
+    if (sig[i] < 0.1) precise.push_back(lL[i]);
+    if (sigw[i] < 0.1) precise.push_back(lW[i]);
+    if (sigh[i] < 0.1) precise.push_back(lH[i]);
+  }
+  if (precise.size() < 20) {
+    precise.clear();
+    precise.insert(precise.end(), lW.begin(), lW.end());
+    precise.insert(precise.end(), lH.begin(), lH.end());
   }
   const double m0 = median(precise);
   const double lp = std::log(pri_.height_m), sp = pri_.height_sigma / pri_.height_m, sm = 0.05;
   const double m = (m0 / (sm * sm) + lp / (sp * sp)) / (1 / (sm * sm) + 1 / (sp * sp));
+  // Size consistency of each car's overall scale only: aspect ratios vary between car models, and forcing
+  // them onto the prior would bend the geometry (shape is constrained by the rectangle and vertical terms).
   double size = 0;
-  for (int i = 0; i < n; ++i)
-    size += cauchy(lL[i] - m, std::hypot(0.12, sig[i])) + cauchy(lW[i] - m, std::hypot(0.08, sig[i])) +
-            cauchy(lH[i] - m, std::hypot(0.10, sig[i]));
+  for (int i = 0; i < n; ++i) {
+    const double wl = 1 / (0.12 * 0.12 + sig[i] * sig[i]), ww = 1 / (0.08 * 0.08 + sigw[i] * sigw[i]),
+                 wh = 1 / (0.10 * 0.10 + sigh[i] * sigh[i]);
+    const double si = (wl * lL[i] + ww * lW[i] + wh * lH[i]) / (wl + ww + wh);
+    size += cauchy(si - m, std::max(0.05, 1 / std::sqrt(wl + ww + wh)));
+  }
   double total = (shape + size) / n + 3.0 * bad / (n + bad) + 0.02 * std::pow(roll / (pri_.roll_sigma_deg * kDeg), 2) +
                  0.02 * std::pow((m - lp) / sp, 2);
   double cv = 0;
