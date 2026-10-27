@@ -57,10 +57,11 @@ The web panel publishes JSON commands to `<prefix>/<site>/<camera>/calibration/m
 | `snapshot` | – | publish a fresh calibration snapshot |
 | `refine_accept` / `refine_reject` | – | apply or dismiss the traffic-check proposal |
 
-`solve` is answered on `calibration/manual/result` with `ok`, `plausible`, `applied`, `quality` (`good`
-≤ 0.5 m, `fair` ≤ 1.25 m, `poor`), `ground_rms_m`/`ground_max_m`, `rms_px`/`max_px`, `focal_px`,
-`fov_deg`, `pitch_deg`, `roll_deg`, `height_m`, `bearing_deg`, `warnings`, per-input `residuals`
-(`kind`, `index`, `px`, `m`), `accuracy` (expected position sigma by range) and the solved `camera`.
+`solve` is answered on `calibration/manual/result` with `ok`, `plausible`, `applied`, `fit` (RMS of the
+residuals divided by the expected click and map error at each distance; about 1 when the clicks are as
+precise as expected), `quality` (`good` fit ≤ 1.5, `fair` ≤ 3, `poor`), `ground_rms_m`/`ground_max_m`,
+`rms_px`/`max_px`, `focal_px`, `fov_deg`, `pitch_deg`, `roll_deg`, `height_m`, `bearing_deg`, `warnings`,
+per-input `residuals` (`kind`, `index`, `px`, `m`, `norm`), `accuracy` (expected position sigma by range) and the solved `camera`.
 
 `<prefix>/<site>/<camera>/map/user/set` takes `{"map": {lanes, stop_lines, crosswalks, roi}}` (as
 `map/user`); drawn lanes replace the learned ones. `<prefix>/<site>/<camera>/config/set` takes

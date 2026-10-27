@@ -38,7 +38,7 @@ and standard outputs, designed for edge deployment.
 | 5 | Outputs (MQTT, CPM, detectors) + docker compose + web panel | ✅ done, running on the server |
 | 6 | Calibration | ✅ manual calibration is the deployed path: point pairs, traced lines and verticals with height and lens priors (MAP, robust), per-input residuals, expected accuracy, traffic check that proposes small corrections; keypoint self-calibration validated on synthetic cameras, not yet reliable on real footage (focal–pitch–height ambiguity; next: vanishing-point terms) |
 | 7 | **Data**: JP-Unified spec, one converter per source, cleaning, merge | ✅ done (35k train / 4.5k val / 4.9k test images, see DATASET.md) |
-| 8 | **Training**: YOLO26-pose-s at 960 px on JP-Unified | ✅ v1 (box mAP50 0.824, mAP50-95 0.606, pose mAP50-95 0.432); v2 fine-tune on heading-repaired DAIR labels, see the v1/v2 comparison |
+| 8 | **Training**: YOLO26-pose-s at 960 px on JP-Unified | ✅ v1 (box mAP50 0.824, mAP50-95 0.606, pose mAP50-95 0.432); v2 fine-tune on heading-repaired DAIR labels deployed (front/back flips 13.8 % → 9.8 %, pose mAP50-95 0.402 → 0.431, box mAP50-95 0.606 → 0.589 on test); v1 kept in models/v1 |
 | 9 | Benchmark: JP-Unified test split per source, TUMTraf official val, cross-dataset (zero-shot camera) tests, the deployed TensorRT engine through the C++ path | ✅ per-source TensorRT benchmark (LUMPI ATE 0.46 m, TUMTraf-I 0.57 m) |
 | 10 | Test-site run (Georg-Brauchle-Ring video): calibration, tracks, ETA, events, panel | 🔄 demo site running (looped video); manual calibration of the site pending |
 | 11 | Edge: INT8, Jetson image validation, long-run test | ⏳ |

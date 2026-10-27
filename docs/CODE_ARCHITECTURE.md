@@ -221,7 +221,11 @@ when ready, solves:
   each with a sigma of click accuracy plus the map-reading error (0.35 m) seen at its distance, so near
   points do not dominate; traced lines (pixel distance of every traced point to the projected map
   line); verticals (direction to the vertical vanishing point); Huber reweighting against wrong pairs.
-  Priors: focal length from the lens hint (log-normal), mounting height, camera position. Starts: both
+  Priors: focal length from the lens hint (log-normal, tight towards a wider view than the lens, loose
+  towards a narrower one: phones zoom digitally), mounting height, camera position. Quality is judged on
+  the residuals normalised by their expected sigma (`fit`), not in metres, so far points are not
+  penalised for the metres one pixel covers there. The panel's check view adds alignment pairs (a drawn
+  layout vertex dragged to its pixel) and re-solves live. Starts: both
   IPPE poses over a log grid of focal lengths plus look-at starts, Levenberg–Marquardt from the best
   four. Reported: ground and pixel residual per input, warnings (too few, clustered or collinear points,
   outlier pairs, focal or height far from the hints), expected position sigma by range from the
@@ -257,6 +261,8 @@ Calibrations are persisted to `calibration.file` and published (retained) on `ca
 - `jp_bench --onnx M --data split.jsonl --images ROOT --out preds.jsonl`: runs the deployed TensorRT
   detector and the runtime's lifting over a dataset split (camera-frame predictions for
   `tools.eval_predictions`); `--video` dumps calibration-free detections of a video.
+- `jp_calibrate --inputs state/<site>/calibration_inputs.json --size WxH --at LAT,LON [--lens L] [--height H]`:
+  re-solves stored manual-calibration inputs offline and prints the report (residuals, accuracy).
 
 ## 5. Interfaces
 

@@ -70,13 +70,20 @@ length, tilt, roll, height and the exact camera position are all solved from you
    - **Vertical** (optional): the bottom and top of a pole or building edge; fixes the roll.
    - **Solve** shows the quality (good / fair / poor), how well your points fit on the ground (metres)
      and in the image (pixels), field of view, height, tilt and direction, and hints such as *point 3 is
-     off by 2.4 m* or *all points are at a similar distance*. Each pair gets a coloured error
-     (green ≤ 0.5 m, amber ≤ 1.5 m, red: the two clicks are probably not the same spot). **Apply
-     calibration** activates it (a poor fit asks for confirmation).
+     off by 2.4 m* or *all points are at a similar distance*. Errors are judged against what clicking can
+     achieve at that distance: far away one image pixel covers many centimetres, so a far point may be
+     off by a metre and still be green. Amber is larger than expected, red means the two clicks are
+     probably not the same spot. **Apply calibration** activates it (a poor fit asks for confirmation).
+   - The lens setting is a lower bound on the zoom: phones zoom digitally on top of the lens, so a
+     narrower view than the setting is accepted, a wider one is not.
 4. **Check**: the drawn lanes, stop lines and a 5 m grid are drawn into the camera image, and the
-   camera image is projected onto the map. When they sit on the road, the calibration is good. The
-   aerial image itself can be a few decimetres off, so a small offset is normal. The **expected position
-   accuracy** lists the error from the calibration at 10–200 m.
+   camera image is projected onto the map. When they sit on the road, the calibration is good. Where
+   they do not, **drag the white dots** (vertices of the drawn lanes, stop lines, crosswalks and road
+   area) in the image to where that point really is: each drag pairs the map position of that vertex
+   with the pixel, the camera is solved again within a second, and the image on the map moves with it.
+   **Reset** drops the dragged pairs; **Apply calibration** activates the result. The aerial image itself
+   can be a few decimetres off, so a small offset is normal. The **expected position accuracy** lists the
+   error from the calibration at 10–200 m.
 
 **Traffic check.** After applying, the system watches the traffic: vehicles on a straight road drive
 parallel to each other and to the drawn lanes. If a slightly wrong tilt, roll or zoom makes their paths
