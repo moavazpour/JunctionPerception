@@ -123,3 +123,6 @@ code { color: #c9d6ff; }
 .mc-fullscreen { position: fixed; inset: 10px; z-index: 40; margin: 0; overflow: auto; background: var(--panel2); }
 .mc-fullscreen .mc-views { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
 .mc-fullscreen .mc-map { height: calc(100vh - 260px); min-height: 400px; margin-top: 8px; }
+.ns-search { display: flex; gap: 6px; margin: 6px 0; }
+.ns-search input { flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.ns-search button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; }

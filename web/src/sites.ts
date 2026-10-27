@@ -61,6 +61,7 @@ export class SitesPanel {
             <label><input type="radio" name="ns-src" value="stream" /> Live stream <input id="ns-url" placeholder="rtsp://user:pass@camera/stream" /></label>
             <label>Camera height above the road (m) <input id="ns-height" type="number" value="7" min="1" max="100" step="0.5" /></label>
           </div>
+          <div class="ns-search"><input id="ns-q" placeholder="Search an address or place…" /><button id="ns-go">Find</button></div>
           <div class="muted small">On the map: click where the camera is, then click a point it looks at.</div>
           <div id="ns-map" class="ns-map"></div>
           <div id="ns-pos" class="small muted">Camera position: not set</div>
@@ -71,6 +72,9 @@ export class SitesPanel {
     document.body.appendChild(this.el);
     this.el.querySelector("#sites-close")!.addEventListener("click", () => this.hide());
     this.el.querySelector("#ns-create")!.addEventListener("click", () => this.create());
+    const go = () => this.search((this.el.querySelector("#ns-q") as HTMLInputElement).value);
+    this.el.querySelector("#ns-go")!.addEventListener("click", go);
+    this.el.querySelector("#ns-q")!.addEventListener("keydown", (e) => (e as KeyboardEvent).key === "Enter" && go());
   }
 
   async show() {
@@ -97,6 +101,20 @@ export class SitesPanel {
 
   hide() {
     this.el.classList.add("hidden");
+  }
+
+  // Address search (OpenStreetMap Nominatim) to jump the map to the site.
+  private async search(q: string) {
+    if (!q.trim() || !this.map) return;
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+      const hits = await r.json();
+      if (!hits.length) return this.msg(`Nothing found for "${q}".`, false);
+      this.map.setView([Number(hits[0].lat), Number(hits[0].lon)], 18);
+      this.msg(hits[0].display_name);
+    } catch {
+      this.msg("Address search is not reachable; zoom the map by hand.", false);
+    }
   }
 
   private drawPos() {

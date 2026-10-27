@@ -37,7 +37,7 @@ export class ManualCalibration {
           <button id="mc-solve" disabled>Solve</button>
           <button id="mc-clear">Clear</button>
           <button id="mc-snap">New snapshot</button>
-          <button id="mc-auto">Restart auto-calibration</button>
+          <button id="mc-auto">Clear calibration</button>
         </div>
         <div id="mc-result" class="small"></div>
       </div>`;
@@ -56,7 +56,7 @@ export class ManualCalibration {
     });
     host.querySelector("#mc-snap")!.addEventListener("click", () => this.send({ action: "snapshot" }));
     host.querySelector("#mc-auto")!.addEventListener("click", () => {
-      if (confirm("Discard the current calibration and start auto-calibration again?")) this.send({ action: "auto" });
+      if (confirm("Discard the current calibration?")) this.send({ action: "auto" });
     });
     this.img.onload = () => this.redraw();
     this.drawImage();

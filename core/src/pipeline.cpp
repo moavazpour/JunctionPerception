@@ -337,9 +337,13 @@ void Pipeline::handleCommand(const nlohmann::json& cmd) {
     calibrator_ = makeCalibrator();
     if (!cfg_.calibration_file.empty()) std::filesystem::remove(cfg_.calibration_file);
     snapshot_sent_ = false;
+    // Clear the retained calibration and map so viewers do not keep showing the discarded geometry.
+    sink_->publish(topic("calibration"), "", 1, true);
+    sink_->publish(topic("map"), "", 1, true);
     out["ok"] = true;
-    out["message"] = "auto-calibration restarted";
-    spdlog::info("Operator restarted auto-calibration");
+    out["message"] = cfg_.auto_calibration ? "calibration cleared; auto-calibration restarted"
+                                           : "calibration cleared; waiting for a manual calibration";
+    spdlog::info("Operator cleared the calibration");
   } else if (action == "solve") {
     std::vector<GroundCorrespondence> pts;
     for (const auto& p : cmd.value("points", nlohmann::json::array()))
