@@ -270,6 +270,7 @@ export interface CalibPoint {
   v: number;
   lat: number;
   lon: number;
+  align?: string; // set for alignment pairs made in the check view
 }
 export interface CalibLine {
   px: [number, number][];
@@ -305,7 +306,8 @@ export interface SolveReport {
   height_m?: number;
   bearing_deg?: number;
   warnings?: string[];
-  residuals?: { kind: "point" | "line" | "vertical"; index: number; px: number; m: number }[];
+  residuals?: { kind: "point" | "line" | "vertical"; index: number; px: number; m: number; norm?: number }[];
+  fit?: number;
   accuracy?: { range_m: number; sigma_m: number }[];
   camera?: CameraJson;
 }

@@ -16,15 +16,16 @@ export const pc = (i: number) => PAIR_COLORS[i % PAIR_COLORS.length];
 export const LINE_COLOR = "#ffd43b";
 export const VERT_COLOR = "#36d6e7";
 
-export function errColor(m?: number) {
-  if (m === undefined) return "#9aa1aa";
-  return m <= 0.5 ? "#34c759" : m <= 1.5 ? "#ffb020" : "#ff453a";
+// Colour of a residual relative to the precision clicking can reach at that distance (1 = as expected).
+export function errColor(norm?: number) {
+  if (norm === undefined) return "#9aa1aa";
+  return norm <= 1.5 ? "#34c759" : norm <= 3 ? "#ffb020" : "#ff453a";
 }
 
 // Residuals of the last solve, by kind and position in the *complete* lists sent to the device.
 export function residualIndex(d: Draft, r?: SolveReport) {
-  const pts = new Map<number, { px: number; m: number }>();
-  const lines = new Map<number, { px: number; m: number }>();
+  const pts = new Map<number, { px: number; m: number; norm?: number }>();
+  const lines = new Map<number, { px: number; m: number; norm?: number }>();
   if (!r?.residuals) return { pts, lines };
   const ci: number[] = [];
   d.points.forEach((p, i) => p.u !== undefined && p.lat !== undefined && ci.push(i));
@@ -107,7 +108,7 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
       // Where the solved camera sees the map point: a short residual line.
       if (camera && q.lat !== undefined && q.lon !== undefined) {
         const pr = camera.projectGeo(q.lat, q.lon);
-        if (pr) p.push({ pts: [[q.u, q.v], pr], color: errColor(res.pts.get(i)?.m), width: 2 });
+        if (pr) p.push({ pts: [[q.u, q.v], pr], color: errColor(res.pts.get(i)?.norm), width: 2 });
       }
     });
     d.lines.forEach((l, i) => {
@@ -118,7 +119,7 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
         if (a && b) {
           // The map line extended across the image.
           const dx = b[0] - a[0], dy = b[1] - a[1];
-          p.push({ pts: [[a[0] - dx * 3, a[1] - dy * 3], [b[0] + dx * 3, b[1] + dy * 3]], color: errColor(res.lines.get(i)?.m), width: 1, dashed: true });
+          p.push({ pts: [[a[0] - dx * 3, a[1] - dy * 3], [b[0] + dx * 3, b[1] + dy * 3]], color: errColor(res.lines.get(i)?.norm), width: 1, dashed: true });
         }
       }
     });
@@ -183,8 +184,8 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
         const g = camera.unproject(q.u, q.v);
         if (g) {
           const ll = L.latLng(...enu2ll(camera, g));
-          L.polyline([[q.lat, q.lon], ll], { color: errColor(res.pts.get(i)?.m), weight: 2 }).addTo(lg);
-          L.circleMarker(ll, { radius: 4, color: errColor(res.pts.get(i)?.m), weight: 2, fillOpacity: 0 }).addTo(lg);
+          L.polyline([[q.lat, q.lon], ll], { color: errColor(res.pts.get(i)?.norm), weight: 2 }).addTo(lg);
+          L.circleMarker(ll, { radius: 4, color: errColor(res.pts.get(i)?.norm), weight: 2, fillOpacity: 0 }).addTo(lg);
         }
       }
     });
@@ -263,9 +264,9 @@ function enu2ll(cam: GroundCamera, g: [number, number]): [number, number] {
 
 function PairList({ res }: { res: ReturnType<typeof residualIndex> }) {
   const d = useDraft();
-  const fmt = (e?: { px: number; m: number }) =>
+  const fmt = (e?: { px: number; m: number; norm?: number }) =>
     e ? (
-      <span style={{ color: errColor(e.m) }} className="font-medium tabular-nums">
+      <span style={{ color: errColor(e.norm) }} className="font-medium tabular-nums">
         {e.m.toFixed(2)} m · {e.px.toFixed(1)} px
       </span>
     ) : (
@@ -334,7 +335,7 @@ function PairList({ res }: { res: ReturnType<typeof residualIndex> }) {
         </tbody>
       </table>
       <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-[11px] text-muted">
-        <RefreshCw size={11} /> Errors refresh after each solve. Green ≤ 0.5 m, amber ≤ 1.5 m, red: check that both clicks show the same spot.
+        <RefreshCw size={11} /> Errors refresh after each solve. Colours compare the error with what clicking can achieve at that distance (far points may be off by more metres): green as expected, amber larger, red: check that both clicks show the same spot.
       </div>
     </div>
   );

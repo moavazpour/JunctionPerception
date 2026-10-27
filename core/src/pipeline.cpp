@@ -491,6 +491,7 @@ void Pipeline::handleCalibration(const nlohmann::json& cmd, nlohmann::json& out)
              {"plausible", r.plausible},
              {"message", r.message},
              {"quality", r.quality},
+             {"fit", r.fit},
              {"rms_px", r.rms_px},
              {"max_px", r.max_px},
              {"ground_rms_m", r.ground_rms_m},
@@ -500,7 +501,7 @@ void Pipeline::handleCalibration(const nlohmann::json& cmd, nlohmann::json& out)
              {"warnings", r.warnings},
              {"residuals", J::array()},
              {"accuracy", J::array()}};
-    for (const auto& e : r.residuals) rep["residuals"].push_back({{"kind", e.kind}, {"index", e.index}, {"px", e.px}, {"m", e.m}});
+    for (const auto& e : r.residuals) rep["residuals"].push_back({{"kind", e.kind}, {"index", e.index}, {"px", e.px}, {"m", e.m}, {"norm", e.norm}});
     for (const auto& a : r.accuracy) rep["accuracy"].push_back({{"range_m", a.range_m}, {"sigma_m", a.sigma_m}});
     if (r.plausible) {
       rep["pitch_deg"] = r.camera.pitch() * 180 / M_PI;

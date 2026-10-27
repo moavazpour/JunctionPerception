@@ -7,7 +7,8 @@ import { enuToGeo, GroundCamera, type V2 } from "../geo";
 import { calibrationCommand } from "../mqtt";
 import { LANE_COLORS, useStore } from "../store";
 import type { RefineState, SnapshotMsg, SolveReport, UserMap } from "../types";
-import { ImageCanvas, type Poly } from "./ImageCanvas";
+import { solveDraft, useDraft, type AlignPair } from "./draft";
+import { ImageCanvas, type Handle, type Poly } from "./ImageCanvas";
 import { drawLayout, laneRibbon } from "./LayoutEditor";
 
 // Ground polyline (ENU) -> image polylines, split where it leaves the view.
@@ -50,6 +51,7 @@ export function overlayPolys(cam: GroundCamera, m: UserMap | undefined, grid: bo
       const n = rib.length / 2;
       const c = LANE_COLORS[i % LANE_COLORS.length];
       for (const edge of [rib.slice(0, n), rib.slice(n)]) for (const seg of projectPath(cam, edge.map(enu))) polys.push({ pts: seg, color: c, width: 2.5 });
+      for (const seg of projectPath(cam, l.points.map(enu))) polys.push({ pts: seg, color: c, width: 1, dashed: true });
     });
     for (const s of m.stop_lines) for (const seg of projectPath(cam, s.map((p) => enu(p as [number, number])), 0.25)) polys.push({ pts: seg, color: "#ffffff", width: 4 });
     for (const cw of m.crosswalks) for (const seg of projectPath(cam, [...cw, cw[0]].map(enu), 0.5)) polys.push({ pts: seg, color: "#ffffff", width: 1.5, dashed: true });
@@ -193,6 +195,44 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
   const [layout, setLayout] = useState(true);
   const [bev, setBev] = useState(true);
   const polys = useMemo(() => (camera ? overlayPolys(camera, userMap, grid, layout) : []), [camera, userMap, grid, layout]);
+  // Drag-to-align: moving a drawn vertex in the image pairs its map position with that pixel and re-solves.
+  const align = useDraft((s) => s.align);
+  const handles = useMemo(() => (camera && layout ? alignHandles(camera, userMap, align) : []), [camera, userMap, align, layout]);
+  const [solving, setSolving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const timer = useRef<number>();
+  const resolve = () => {
+    clearTimeout(timer.current);
+    timer.current = window.setTimeout(async () => {
+      setSolving(true);
+      try {
+        const r = await solveDraft(false);
+        setMsg(r.plausible ? "" : r.message ?? "no solution");
+      } catch (e) {
+        setMsg((e as Error).message);
+      } finally {
+        setSolving(false);
+      }
+    }, 350);
+  };
+  const onMove = (id: string, u: number, v: number) => {
+    const h = handles.find((x) => x.id === id);
+    if (!h) return;
+    const d = useDraft.getState();
+    d.set({ align: { ...d.align, [id]: { u, v, lat: h.lat, lon: h.lon } } });
+    resolve();
+  };
+  const apply = async () => {
+    const ok = report?.ok || confirm("The points fit poorly. Apply this calibration anyway?");
+    if (!ok) return;
+    setSolving(true);
+    try {
+      const r = await solveDraft(true, !report?.ok);
+      setMsg(r.applied ? "Applied." : r.message ?? "not applied");
+    } finally {
+      setSolving(false);
+    }
+  };
   const ref = useRef<HTMLDivElement>(null);
   const center = useMemo<[number, number] | null>(() => (camera?.anchor ? [camera.anchor.lat, camera.anchor.lon] : null), [camera?.anchor?.lat, camera?.anchor?.lon]);
   const map = useBaseMap(ref, center, 18.5);
@@ -222,17 +262,45 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
           <button data-on={layout} onClick={() => setLayout(!layout)}>Lanes & stop lines</button>
           <button data-on={bev} onClick={() => setBev(!bev)}>Image on map</button>
         </div>
-        <span className="text-xs text-muted">
-          The drawn lanes should sit on the painted lanes in the image, and the image on the map should line up with the roads. A
-          few decimetres off is normal (aerial imagery itself is not perfect).
+        <span className="flex-1 text-xs text-muted">
+          The drawn lanes should sit on the painted lanes in the image. If they do not, <b className="text-fg">drag the white dots</b> in
+          the image to where that point really is: the camera is solved again as you drag, and the image on the map follows. A few
+          decimetres off is normal (aerial imagery itself is not perfect).
         </span>
+        {solving && <span className="text-xs text-accent">solving…</span>}
+        {Object.keys(align).length > 0 && (
+          <button className="btn" onClick={() => { useDraft.getState().set({ align: {} }); resolve(); }}>
+            Reset {Object.keys(align).length} dragged
+          </button>
+        )}
+        <button className="btn-primary" disabled={solving || !report?.plausible} onClick={apply}>
+          Apply calibration
+        </button>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
-        <ImageCanvas snapshot={snapshot} handles={[]} polys={polys} className="h-[58vh] min-h-[360px]" />
+        <ImageCanvas snapshot={snapshot} handles={handles} polys={polys} onMove={onMove} className="h-[58vh] min-h-[360px]" />
         <div ref={ref} className="h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-line" />
       </div>
+      {msg && <div className="text-sm text-warn">{msg}</div>}
       <AccuracyTable report={report} />
       <RefineCard refine={refine} />
     </div>
   );
+}
+
+// Draggable vertices of the drawn layout, at their projection (or where the installer put them).
+export function alignHandles(cam: GroundCamera, m: UserMap | undefined, align: Record<string, AlignPair>) {
+  const out: (Handle & { lat: number; lon: number })[] = [];
+  if (!m) return out;
+  const add = (id: string, g: [number, number]) => {
+    const a = align[id];
+    const p = a ? ([a.u, a.v] as V2) : cam.projectGeo(g[0], g[1]);
+    if (!p || p[0] < -0.1 * cam.width || p[0] > 1.1 * cam.width || p[1] < -0.1 * cam.height || p[1] > 1.1 * cam.height) return;
+    out.push({ id, u: p[0], v: p[1], color: a ? "#ffb020" : "#ffffff", ring: !a, lat: g[0], lon: g[1] });
+  };
+  m.lanes.forEach((l) => l.points.forEach((g, j) => add(`lane:${l.id}:${j}`, g)));
+  m.stop_lines.forEach((s, i) => s.forEach((g, j) => add(`stop:${i}:${j}`, g as [number, number])));
+  m.crosswalks.forEach((c, i) => c.forEach((g, j) => add(`cw:${i}:${j}`, g)));
+  m.roi.forEach((g, j) => add(`roi:${j}`, g));
+  return out;
 }

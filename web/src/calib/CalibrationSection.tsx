@@ -9,7 +9,7 @@ import { NoSite } from "../settings/SettingsPage";
 import { LENSES } from "../settings/SitesSection";
 import { useStore } from "../store";
 import type { SolveReport } from "../types";
-import { completeLines, completePoints, completeVerticals, loadDraft, useDraft } from "./draft";
+import { completeLines, completePoints, completeVerticals, loadDraft, solveDraft, useDraft } from "./draft";
 import { LayoutEditor } from "./LayoutEditor";
 import { PairsEditor } from "./PairsEditor";
 import { RefineCard, Verify } from "./Verify";
@@ -161,22 +161,13 @@ function SolvePanel({ report, onReport, toCheck }: { report?: SolveReport; onRep
   const [busy, setBusy] = useState<"" | "solve" | "apply">("");
   const [err, setErr] = useState("");
   const pts = completePoints(d), lines = completeLines(d), verts = completeVerticals(d);
-  const ready = pts.length >= 4;
+  const nAlign = Object.keys(d.align).length;
+  const ready = pts.length + nAlign >= 4;
   const run = async (apply: boolean, force = false) => {
     setBusy(apply ? "apply" : "solve");
     setErr("");
     try {
-      const r = (await calibrationCommand({
-        action: "solve",
-        apply,
-        force,
-        points: pts.map((p) => ({ u: p.u, v: p.v, lat: p.lat, lon: p.lon })),
-        lines,
-        verticals: verts,
-        height_m: d.height,
-        height_sigma: d.heightSigma,
-        lens: d.lens,
-      })) as SolveReport;
+      const r = (await solveDraft(apply, force)) as SolveReport;
       onReport(r);
       if (apply && r.applied) toCheck();
     } catch (e) {
@@ -192,7 +183,8 @@ function SolvePanel({ report, onReport, toCheck }: { report?: SolveReport; onRep
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm">
           <b className="tabular-nums">{pts.length}</b> points · <b className="tabular-nums">{lines.length}</b> lines · <b className="tabular-nums">{verts.length}</b> verticals
-          {pts.length < 4 && <span className="ml-2 text-warn">(at least 4 points needed)</span>}
+          {nAlign > 0 && <> · <b className="tabular-nums">{nAlign}</b> aligned in the check view</>}
+          {pts.length + nAlign < 4 && <span className="ml-2 text-warn">(at least 4 points needed)</span>}
           {pts.length >= 4 && pts.length < 6 && !lines.length && <span className="ml-2 text-muted">(6+ points or a few lines make it robust)</span>}
         </div>
         <div className="flex-1" />
@@ -218,6 +210,7 @@ function SolvePanel({ report, onReport, toCheck }: { report?: SolveReport; onRep
             {report.ground_rms_m !== undefined && (
               <span className="text-sm">
                 Points fit <b>{report.ground_rms_m.toFixed(2)} m</b> on the ground (worst {report.ground_max_m?.toFixed(2)} m), {report.rms_px?.toFixed(1)} px in the image
+                {report.fit !== undefined && <span className="text-muted"> · {report.fit.toFixed(1)}× the expected click error</span>}
               </span>
             )}
             {report.applied && <span className="chip border-ok/30 bg-ok/10 text-ok">applied</span>}
