@@ -234,26 +234,28 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
     }
   };
   const ref = useRef<HTMLDivElement>(null);
-  const center = useMemo<[number, number] | null>(() => (camera?.anchor ? [camera.anchor.lat, camera.anchor.lon] : null), [camera?.anchor?.lat, camera?.anchor?.lon]);
-  const map = useBaseMap(ref, center, 18.5);
-  const lg = useRef(L.layerGroup());
+  // The map stays centred on the configured camera position: the solved one moves with every re-solve.
+  const config = useStore((s) => s.config);
+  const center = useMemo<[number, number] | null>(() => (config ? [config.placement.lat, config.placement.lon] : null), [config?.placement.lat, config?.placement.lon]);
+  const map = useBaseMap(ref, center, 18);
   useEffect(() => {
     if (!map) return;
-    lg.current.addTo(map);
+    // A fresh layer per run, removed on cleanup: nothing is ever added to a map that is gone.
+    const lg = L.layerGroup().addTo(map);
     let cancelled = false;
-    lg.current.clearLayers();
     if (bev && camera && snapshot)
       birdsEye(camera, snapshot).then((o) => {
-        if (!cancelled && o) L.imageOverlay(o.url, o.bounds, { opacity: 0.75 }).addTo(lg.current);
-        if (!cancelled && userMap) drawLayout(userMap, lg.current, { faint: true });
+        if (cancelled) return;
+        if (o) L.imageOverlay(o.url, o.bounds, { opacity: 0.75 }).addTo(lg);
+        if (userMap) drawLayout(userMap, lg, { faint: true });
       });
-    else if (userMap) drawLayout(userMap, lg.current, { faint: true });
-    if (camera?.anchor) L.circleMarker([camera.anchor.lat, camera.anchor.lon], { radius: 6, color: "#3e6ae1", weight: 3, fillOpacity: 1 }).bindTooltip("camera").addTo(lg.current);
+    else if (userMap) drawLayout(userMap, lg, { faint: true });
+    if (camera?.anchor) L.circleMarker([camera.anchor.lat, camera.anchor.lon], { radius: 6, color: "#3e6ae1", weight: 3, fillOpacity: 1 }).bindTooltip("camera").addTo(lg);
     return () => {
       cancelled = true;
+      lg.remove();
     };
   }, [map, camera, snapshot, bev, userMap]);
-  if (!camera) return <div className="card p-6 text-sm text-muted">Solve the calibration first (step 3).</div>;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -277,6 +279,7 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
           Apply calibration
         </button>
       </div>
+      {!camera && <div className="card p-6 text-sm text-muted">Solve the calibration first (step 3).</div>}
       <div className="grid gap-3 lg:grid-cols-2">
         <ImageCanvas snapshot={snapshot} handles={handles} polys={polys} onMove={onMove} className="h-[58vh] min-h-[360px]" />
         <div ref={ref} className="h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-line" />

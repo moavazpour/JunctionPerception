@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Header } from "./components/Header";
 import { LiveView } from "./components/LiveView";
 import { SettingsPage } from "./settings/SettingsPage";
@@ -52,7 +53,11 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <Header route={route} />
-      <main className="min-h-0 flex-1">{route.page === "settings" ? <SettingsPage section={route.section} /> : <LiveView />}</main>
+      <main className="min-h-0 flex-1">
+        <ErrorBoundary resetKey={`${route.page}/${route.section}`}>
+          {route.page === "settings" ? <SettingsPage section={route.section} /> : <LiveView />}
+        </ErrorBoundary>
+      </main>
     </div>
   );
 }
