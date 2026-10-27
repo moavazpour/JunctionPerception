@@ -151,7 +151,7 @@ def main():
                 src_box = [float(und[:, 0].min()), float(und[:, 1].min()), float(und[:, 0].max()), float(und[:, 1].max())]
             objs.append({"cls": CMAP[typ], "src_type": typ, "bottom": bottom, "dims": [l3, w3, h3], "heading": head,
                          "kpts2d": kpts.tolist(), "box2d": box, "src_box2d": src_box, "truncation": float(o.get("truncated_state", 0)),
-                         "occlusion": str(o.get("occluded_state", ""))})
+                         "occlusion": str(o.get("occluded_state", "")), "track_id": o.get("track_id")})
             bottoms.append(bottom)
         e = info.get(fid, {})
         seq = e.get("sequence_id") or e.get("batch_id")
@@ -160,7 +160,8 @@ def main():
             seq = f"{e.get('intersection_loc', 'na')}_{int(fid) // 200 if fid.isdigit() else 0}"
         cam_id = intr.get("cameraID") or intr.get("serial_number", "cam")
         records.append({"fid": fid, "K": Knew, "n": n_cam, "objs": objs, "ignore": ignore, "bottoms": bottoms,
-                        "w": w, "h": h, "seq": str(seq), "cam": str(cam_id), "loc": str(e.get("intersection_loc", ""))})
+                        "w": w, "h": h, "seq": str(seq), "cam": str(cam_id), "loc": str(e.get("intersection_loc", "")),
+                        "time": float(e.get("image_timestamp", 0) or 0) / 1e6})
         if not a.undistort:
             dst = str(a.undist.expanduser() / f"{fid}.jpg")
             Path(dst).parent.mkdir(parents=True, exist_ok=True)
@@ -206,7 +207,7 @@ def main():
                 "source": a.name, "sequence": r["seq"], "group": f"{a.name}:{r['cam']}:{r['seq']}",
                 "image": f"{r['fid']}.jpg", "camera": f"{a.name}_{r['cam']}", "width": r["w"], "height": r["h"],
                 "K": r["K"].tolist(), "plane": p.tolist(), "ignore": r["ignore"], "objects": objs,
-                "intersection": r["loc"]}) + "\n")
+                "intersection": r["loc"], "time": r["time"]}) + "\n")
             n_written += 1
     print(a.name, n_written, "samples ->", a.out, "(image root:", a.undist, ")")
 
