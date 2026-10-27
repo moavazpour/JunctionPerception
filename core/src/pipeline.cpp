@@ -332,11 +332,9 @@ void Pipeline::onCalibrated(const CalibrationResult* res, const std::string& sou
   if (!cfg_.calibration_file.empty() && source != "file") {
     std::ofstream(cfg_.calibration_file) << cj.dump(1);
   }
-  emit("calibration", [&] {
-    auto h = msg::header("calibration", cfg_.site_id, cfg_.camera_id, last_stamp_);
-    h["calibration"] = cj;
-    return h;
-  }(), 1, true);
+  calib_msg_ = msg::header("calibration", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  calib_msg_["calibration"] = cj;
+  emit("calibration", calib_msg_, 1, true);
   publishMap();
   snapshot_sent_ = false;
 }
@@ -456,6 +454,7 @@ void Pipeline::handleCalibration(const nlohmann::json& cmd, nlohmann::json& out)
     refine_status_ = "idle";
     publishRefine();
     // Clear the retained calibration and map so viewers do not keep showing the discarded geometry.
+    calib_msg_ = nullptr;
     sink_->publish(topic("calibration"), "", 1, true);
     sink_->publish(topic("map"), "", 1, true);
     sink_->publish(topic("detectors"), "", 1, true);
@@ -661,6 +660,29 @@ void Pipeline::applyUserMap() {
   publishMap();
 }
 
+// The broker keeps no state across restarts (persistence off): retained topics are refreshed every minute.
+void Pipeline::republishRetained(double stamp) {
+  if (t_retained_ >= 0 && stamp - t_retained_ < 60.0) return;
+  const bool first = t_retained_ < 0;
+  t_retained_ = stamp;
+  if (first) return;  // everything was just published at start-up
+  publishConfig();
+  auto h = msg::header("user_map", cfg_.site_id, cfg_.camera_id, stamp);
+  h["map"] = user_map_.toJson();
+  emit("map/user", h, 1, true);
+  if (manual_inputs_.is_object()) {
+    auto i = msg::header("calibration_inputs", cfg_.site_id, cfg_.camera_id, stamp);
+    i["inputs"] = manual_inputs_;
+    emit("calibration/inputs", i, 1, true);
+  }
+  publishRefine();
+  if (camera_ && calib_msg_.is_object()) {
+    emit("calibration", calib_msg_, 1, true);
+    publishMap();
+  }
+  if (cfg_.publish_snapshot) snapshot_sent_ = false;
+}
+
 void Pipeline::publishRefine() {
   auto h = msg::header("calibration_refine", cfg_.site_id, cfg_.camera_id, last_stamp_);
   nlohmann::json r = {{"status", refine_status_},
@@ -757,6 +779,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
 
   if (!camera_) {
     // The calibration view is also needed before any calibration exists (manual calibration).
+    republishRetained(stamp);
     if (cfg_.publish_snapshot && !snapshot_sent_ && frames_ > 30) publishSnapshot(frame, dets);
     if (!cfg_.auto_calibration) {
       // Manual mode: wait for the operator's calibration (web panel).
@@ -907,6 +930,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     t_invalid_ = -1;
   }
 
+  republishRetained(stamp);
   // 7. Outputs.
   renderPreview(frame, dets);
   latency_ms_ = (wallNow() - capture_wall) * 1000.0;

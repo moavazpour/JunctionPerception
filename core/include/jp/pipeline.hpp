@@ -107,6 +107,7 @@ class Pipeline {
   void setUserMap(const UserMap& m, bool persist);
   void applyUserMap();
   void publishRefine();
+  void republishRetained(double stamp);
   void renderPreview(const cv::Mat& frame, const std::vector<ImageDetection>& dets);
   nlohmann::json computeInfo() const;
   std::string topic(const std::string& leaf) const;
@@ -145,7 +146,8 @@ class Pipeline {
   std::future<std::optional<CalibrationRefiner::Proposal>> refine_future_;
   std::optional<CalibrationRefiner::Proposal> proposal_;
   std::string refine_status_ = "idle";  // idle | collecting | solving | proposal | consistent
-  double refine_spread_ = 0, t_refine_pub_ = -1;
+  double refine_spread_ = 0, t_refine_pub_ = -1, t_retained_ = -1;
+  nlohmann::json calib_msg_;  // last calibration message (republished with the other retained topics)
   std::future<cv::Mat> seg_future_;      // segmentation runs off the frame loop
   std::vector<bool> class_enabled_;
 
