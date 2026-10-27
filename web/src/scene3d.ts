@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { aerialGround } from "./aerial";
-import { STYLE, buildStylizedMap } from "./osmroads";
+import { PALETTES, buildStylizedMap } from "./osmroads";
+import { CLASS_LABEL, LANE_COLORS } from "./store";
 import { buildModel, glowTexture } from "./models";
 import type { CameraJson, DetectorsMsg, NearMiss, ObjectClass, OcclusionMsg, RoadUser, SiteMap } from "./types";
 
@@ -44,6 +45,9 @@ export class Scene3D {
   private anchor?: { lat: number; lon: number };
   // "stylized": roads drawn from OpenStreetMap (default); "aerial": satellite imagery.
   mapMode: "stylized" | "aerial" = "stylized";
+  theme: "dark" | "light" = "dark";
+  private hemi!: THREE.HemisphereLight;
+  private lastMap?: { map: SiteMap; cam: CameraJson };
   private clock = new THREE.Clock();
   selected: number | null = null;
   showAllLabels = false;
@@ -67,7 +71,8 @@ export class Scene3D {
     this.controls.enableDamping = true;
     this.controls.maxPolarAngle = Math.PI * 0.48;
 
-    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a1c20, 1.1));
+    this.hemi = new THREE.HemisphereLight(0xdfe8ff, 0x1a1c20, 1.1);
+    this.scene.add(this.hemi);
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
     key.position.set(-60, 120, 40);
     this.scene.add(key);
@@ -119,14 +124,33 @@ export class Scene3D {
     this.updateBaseMap();
   }
 
+  setTheme(t: "dark" | "light") {
+    if (t === this.theme) return;
+    this.theme = t;
+    this.hemi.intensity = t === "light" ? 1.6 : 1.1;
+    this.hemi.groundColor.setHex(t === "light" ? 0x8a8f96 : 0x1a1c20);
+    this.stylizedKey = "";  // redraw the road map in the new palette (OSM data is cached)
+    this.updateBaseMap();
+    if (this.lastMap) this.setMap(this.lastMap.map, this.lastMap.cam);
+  }
+
+  dispose() {
+    this.renderer.setAnimationLoop(null);
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+    this.labels.domElement.remove();
+  }
+
   // Base map under the scene: the stylized OpenStreetMap roads or the aerial imagery (loaded on demand,
   // once per camera position).
   private updateBaseMap() {
     const stylized = this.mapMode === "stylized";
-    const bg = stylized ? STYLE.background : 0x0c0e12;
+    const STYLE = PALETTES[this.theme];
+    const plain = this.theme === "light" ? 0xdfe2e6 : 0x0c0e12;
+    const bg = stylized ? STYLE.background : plain;
     this.scene.background = new THREE.Color(bg);
     (this.scene.fog as THREE.Fog).color.setHex(bg);
-    (this.ground.material as THREE.MeshStandardMaterial).color.setHex(stylized ? STYLE.ground : 0x15181d);
+    (this.ground.material as THREE.MeshStandardMaterial).color.setHex(stylized ? STYLE.ground : this.theme === "light" ? 0xd5d9de : 0x15181d);
     this.grid.visible = !stylized && !this.aerial;
     if (this.stylized) this.stylized.visible = stylized;
     if (this.aerial) this.aerial.visible = !stylized;
@@ -135,7 +159,7 @@ export class Scene3D {
     const key = `${a.lat.toFixed(6)},${a.lon.toFixed(6)}`;
     if (stylized && key !== this.stylizedKey) {
       this.stylizedKey = key;
-      buildStylizedMap(a.lat, a.lon).then((g) => {
+      buildStylizedMap(a.lat, a.lon, STYLE).then((g) => {
         if (!g || key !== this.stylizedKey) return;
         if (this.stylized) this.scene.remove(this.stylized);
         this.stylized = g;
@@ -157,15 +181,21 @@ export class Scene3D {
   }
 
   setMap(map: SiteMap, cam: CameraJson) {
+    this.lastMap = { map, cam };
     this.setAerial(cam);
     this.cam = cam;
     this.mapGroup.clear();
     this.zoneMeshes.clear();
     // Over aerial imagery the lanes are a light overlay, so the real road stays visible.
-    const asphalt = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.95, transparent: true, opacity: cam.anchor ? 0.35 : 1 });
-    const lineMat = new THREE.LineDashedMaterial({ color: 0xc9ced6, dashSize: 3, gapSize: 6 });
-    const solidMat = new THREE.LineBasicMaterial({ color: 0xc9ced6 });
+    // Learned lanes: a light neutral overlay on the base map. Drawn (installer) lanes: one colour each.
+    const light = this.theme === "light";
+    const neutral = light ? 0x8a9099 : 0x2b2f36;
+    let userIdx = 0;
     for (const lane of map.lanes) {
+      const user = lane.source === "user";
+      const colour = user ? new THREE.Color(LANE_COLORS[userIdx++ % LANE_COLORS.length]).getHex() : neutral;
+      const asphalt = new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: user ? 0.26 : cam.anchor ? 0.22 : 1, depthWrite: false });
+      const lineMat = new THREE.LineDashedMaterial({ color: user ? colour : light ? 0x7d838c : 0xc9ced6, dashSize: 3, gapSize: 6, transparent: true, opacity: user ? 0.9 : 0.5 });
       const pts = lane.centerline.map(([x, y]) => new THREE.Vector2(x, y));
       if (pts.length < 2) continue;
       const left: THREE.Vector3[] = [], right: THREE.Vector3[] = [];
@@ -206,7 +236,7 @@ export class Scene3D {
         chev.closePath();
         const m = new THREE.Mesh(
           new THREE.ShapeGeometry(chev),
-          new THREE.MeshBasicMaterial({ color: lane.to_junction ? 0x4e8cff : 0x5b6470, transparent: true, opacity: 0.55 }),
+          new THREE.MeshBasicMaterial({ color: user ? colour : lane.to_junction ? 0x4e8cff : 0x5b6470, transparent: true, opacity: user ? 0.85 : 0.55 }),
         );
         m.rotation.x = -Math.PI / 2;
         m.rotation.z = Math.atan2(t.y, t.x);
@@ -221,7 +251,6 @@ export class Scene3D {
         bar.position.copy(toV3(p.x, p.y, 0.05));
         this.mapGroup.add(bar);
       }
-      void solidMat;
     }
     for (const cw of map.crosswalks) this.mapGroup.add(this.zebra(cw));
     for (const z of map.zones) {
@@ -502,7 +531,7 @@ export class Scene3D {
       a.label.element.style.display = showLabel ? "" : "none";
       if (showLabel) {
         const eta = o.eta !== undefined && o.dist_to_stop !== undefined && o.dist_to_stop > 0 ? ` · ETA ${o.eta.toFixed(1)}s` : "";
-        a.label.element.textContent = `${Math.round(o.speed_kmh)} km/h${eta}`;
+        a.label.element.textContent = sel ? `${CLASS_LABEL[o.class]} #${o.id} · ${Math.round(Math.abs(o.speed_kmh))} km/h${eta}` : `${Math.round(Math.abs(o.speed_kmh))} km/h`;
         a.label.element.className = `tag ${sel ? "sel" : ""}`;
       }
     }

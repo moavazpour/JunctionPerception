@@ -11,12 +11,14 @@
 #include <yaml-cpp/yaml.h>
 
 #include "jp/calib/auto_calibrator.hpp"
+#include "jp/calib/refiner.hpp"
 #include "jp/health/monitors.hpp"
 #include "jp/ingest/video_source.hpp"
 #include "jp/output/sink.hpp"
 #include "jp/safety/near_miss.hpp"
 #include "jp/scene/intersection.hpp"
 #include "jp/scene/site_map.hpp"
+#include "jp/scene/user_map.hpp"
 #include "jp/tracking/tracker.hpp"
 
 namespace jp {
@@ -24,6 +26,7 @@ namespace jp {
 class Detector3D;
 class Segmenter;
 class Letterbox;
+class PreviewServer;
 
 struct PipelineConfig {
   std::string site_id = "site", site_name, camera_id = "cam1";
@@ -33,6 +36,7 @@ struct PipelineConfig {
   double height_m = 7.0, height_sigma = 2.0, bearing_deg = 0.0;
   std::optional<double> focal_px;
   std::vector<double> distortion;
+  std::string lens = "unknown";          // lens hint for manual calibration (phone_wide, phone_2x, ...)
   // Calibration.
   std::string calibration_file;
   bool force_recalibration = false;
@@ -49,8 +53,21 @@ struct PipelineConfig {
   // Models.
   std::string detector_onnx, segmenter_onnx;
   bool fp16 = true;
+  std::string backend = "auto";          // auto | tensorrt | cpu
+  int cpu_threads = 0;
   float score_threshold = 0.2f;
   double max_range = 250.0;
+  // Live settings (changeable from the panel, persisted in state_dir/settings.json).
+  std::optional<double> confidence;      // score needed to start a track
+  std::optional<double> keypoint_confidence;
+  std::vector<std::string> classes;      // reported classes (empty = all)
+  bool roi_filter = true;                // ignore objects outside the drawn road area
+  // Live view (MJPEG for the panel).
+  bool preview = true;
+  int preview_port = 8081;
+  double preview_fps = 12;
+  int preview_width = 960;
+  bool preview_overlay = true;
   // Output.
   std::string topic_prefix = "jp";
   std::optional<MqttConfig> mqtt;
@@ -81,6 +98,17 @@ class Pipeline {
   // Operator commands (web panel): manual calibration from map correspondences, restart auto-calibration,
   // refresh the calibration snapshot. Received on <prefix>/<site>/<camera>/calibration/manual.
   void handleCommand(const nlohmann::json& cmd);
+  void handleCalibration(const nlohmann::json& cmd, nlohmann::json& out);
+  // Live settings (topic config/set): thresholds, range, frame rate, classes, live view.
+  nlohmann::json settings() const;
+  void applySettings(const nlohmann::json& s, bool persist);
+  void publishConfig();
+  // Installer-drawn lanes, stop lines, crosswalks and road area (topic map/user/set).
+  void setUserMap(const UserMap& m, bool persist);
+  void applyUserMap();
+  void publishRefine();
+  void renderPreview(const cv::Mat& frame, const std::vector<ImageDetection>& dets);
+  nlohmann::json computeInfo() const;
   std::string topic(const std::string& leaf) const;
   void emit(const std::string& leaf, const nlohmann::json& body, int qos = 0, bool retain = false);
 
@@ -108,6 +136,18 @@ class Pipeline {
   std::atomic<bool> stop_{false};
   std::mutex cmd_m_;
   std::deque<nlohmann::json> cmds_;
+  std::unique_ptr<PreviewServer> preview_;
+  double t_preview_ = -1;
+  std::uint64_t loops_seen_ = 0;
+  UserMap user_map_;
+  nlohmann::json manual_inputs_, manual_result_;  // last manual calibration (inputs, solver report)
+  CalibrationRefiner refiner_;
+  std::future<std::optional<CalibrationRefiner::Proposal>> refine_future_;
+  std::optional<CalibrationRefiner::Proposal> proposal_;
+  std::string refine_status_ = "idle";  // idle | collecting | solving | proposal | consistent
+  double refine_spread_ = 0, t_refine_pub_ = -1;
+  std::future<cv::Mat> seg_future_;      // segmentation runs off the frame loop
+  std::vector<bool> class_enabled_;
 
   std::uint64_t frames_ = 0, dropped_ = 0;
   double fps_ = 0, latency_ms_ = 0, last_stamp_ = -1;

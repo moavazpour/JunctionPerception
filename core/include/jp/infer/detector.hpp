@@ -9,7 +9,8 @@
 
 namespace jp {
 
-class TrtEngine;
+class InferenceEngine;
+struct EngineOptions;
 
 // Maps a raw camera frame into the network input (undistortion + letterbox in one remap) and back.
 class Letterbox {
@@ -34,6 +35,8 @@ struct DetectorConfig {
   std::string onnx;
   float score_threshold = 0.15f;
   bool fp16 = true;
+  std::string backend = "auto";  // auto | tensorrt | cpu
+  int threads = 0;
 };
 
 // Ground-aware mono-3D detector (calibration-free outputs).
@@ -45,10 +48,12 @@ class Detector3D {
   // frame_bgr must already be letterboxed to inputSize() by the caller's Letterbox.
   std::vector<ImageDetection> detect(const cv::Mat& net_bgr, const Letterbox& lb);
   double lastLatencyMs() const;
+  void setScoreThreshold(float t) { cfg_.score_threshold = t; }
+  const InferenceEngine& engine() const { return *engine_; }
 
  private:
   DetectorConfig cfg_;
-  std::unique_ptr<TrtEngine> engine_;
+  std::unique_ptr<InferenceEngine> engine_;
   cv::Size net_;
   int topk_ = 0, fields_ = 0;
   bool yolo_ = false;
@@ -62,14 +67,14 @@ class Segmenter {
     Road = 0, Sidewalk, Building, Wall, Fence, Pole, TrafficLight, TrafficSign, Vegetation, Terrain, Sky,
     Person, Rider, Car, Truck, Bus, Train, Motorcycle, Bicycle, Unknown = 255
   };
-  explicit Segmenter(const std::string& onnx, bool fp16 = true);
+  Segmenter(const std::string& onnx, const EngineOptions& opt);
   ~Segmenter();
   // Returns CV_8U label map at the network resolution.
   cv::Mat segment(const cv::Mat& frame_bgr);
   cv::Size inputSize() const { return net_; }
 
  private:
-  std::unique_ptr<TrtEngine> engine_;
+  std::unique_ptr<InferenceEngine> engine_;
   cv::Size net_;
   int classes_ = 19;
   bool argmax_in_graph_ = false;

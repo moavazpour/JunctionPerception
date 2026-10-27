@@ -1,15 +1,17 @@
-"""Site manager: create, start, stop and delete perception instances from the web panel.
+"""Site manager: create, configure, start, stop and delete perception instances from the web panel.
 
 One site = one camera source (an uploaded video or an RTSP/HTTP stream) + its placement. Each site runs
-as its own `junction-perception` container on the GPU, publishing to the shared MQTT broker under
-jp/<site>/cam1/... . Site YAMLs live in <data>/sites, uploaded videos in <data>/videos, runtime state
-(calibration, learned map) in <data>/state.
+as its own `junction-perception` container (GPU, or CPU when there is none), publishing to the shared MQTT
+broker under jp/<site>/cam1/... and serving its live view on port 8081 (proxied by the panel at
+/live/<site>/). Site YAMLs live in <data>/sites, uploaded videos in <data>/videos, runtime state
+(calibration, drawn map, settings) in <data>/state.
 
 Environment:
   JP_DATA_HOST    host path of the data directory (mounted here at /data)
   JP_MODELS_HOST  host path of the models directory
   JP_NETWORK      docker network of the stack (to reach the broker)
   JP_IMAGE        runtime image (default junction-perception:latest)
+  JP_IMAGE_CPU    runtime image for CPU-only sites (default: JP_IMAGE, which also contains the CPU backend)
   JP_DETECTOR     detector ONNX inside /models (default jp_y26s_960.onnx)
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import re
 import shutil
 import time
 from pathlib import Path
+from typing import Literal
 
 import docker
 import yaml
@@ -34,12 +37,21 @@ HOST = os.environ.get("JP_DATA_HOST", "/data")
 MODELS_HOST = os.environ.get("JP_MODELS_HOST", "/models")
 NETWORK = os.environ.get("JP_NETWORK", "bridge")
 IMAGE = os.environ.get("JP_IMAGE", "junction-perception:latest")
+IMAGE_CPU = os.environ.get("JP_IMAGE_CPU", IMAGE)
 DETECTOR = os.environ.get("JP_DETECTOR", "jp_y26s_960.onnx")
 MAX_SITES = int(os.environ.get("JP_MAX_SITES", "4"))
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".m4v"}
+LENSES = {"unknown", "phone_wide", "phone_2x", "phone_3x", "cctv"}
 
 app = FastAPI(title="JunctionPerception site manager")
 dock = docker.from_env()
+
+
+def gpu_available() -> bool:
+    try:
+        return "nvidia" in (dock.info().get("Runtimes") or {})
+    except Exception:
+        return False
 
 
 class SiteIn(BaseModel):
@@ -50,6 +62,21 @@ class SiteIn(BaseModel):
     lon: float = Field(ge=-180, le=180)
     height_m: float = Field(default=7.0, gt=0.5, lt=200)
     bearing_deg: float = Field(default=0.0, ge=-360, le=360)
+    lens: str = "unknown"
+    device: Literal["auto", "gpu", "cpu"] = "auto"
+
+
+class SitePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    video: str | None = None
+    stream: str | None = None
+    loop: bool | None = None
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    height_m: float | None = Field(default=None, gt=0.5, lt=200)
+    bearing_deg: float | None = Field(default=None, ge=-360, le=360)
+    lens: str | None = None
+    device: Literal["auto", "gpu", "cpu"] | None = None
 
 
 def slug(s: str) -> str:
@@ -64,17 +91,27 @@ def container(site: str):
         return None
 
 
+def check_source(video: str | None, stream: str | None):
+    if video and (not (VIDEOS / video).is_file() or "/" in video):
+        raise HTTPException(400, "unknown video")
+    if stream and not re.match(r"^(rtsp|rtsps|http|https)://", stream):
+        raise HTTPException(400, "stream URL must start with rtsp:// or http(s)://")
+
+
 def site_yaml(sid: str, s: SiteIn) -> dict:
     source = f"file:///data/videos/{s.video}" if s.video else s.stream
     return {
         "site": {"id": sid, "name": s.name},
         "camera": {"id": "cam1", "source": source, "realtime": True, "loop": bool(s.video), "max_fps": 15,
+                   "lens": s.lens if s.lens in LENSES else "unknown",
                    "position": {"lat": s.lat, "lon": s.lon, "height_m": s.height_m, "height_sigma": 1.5,
                                 "bearing_deg": s.bearing_deg % 360}},
         "calibration": {"mode": "manual", "file": f"/data/state/{sid}/calibration.json", "publish_snapshot": True},
         "map": {"learn_lanes": True},
         "models": {"detector": f"/models/{DETECTOR}", "segmentation": "/models/segformer_b2_cityscapes.onnx",
-                   "fp16": True, "score_threshold": 0.25, "max_range_m": 250},
+                   "fp16": True, "score_threshold": 0.25, "max_range_m": 250,
+                   "backend": {"auto": "auto", "gpu": "tensorrt", "cpu": "cpu"}[s.device]},
+        "preview": {"enabled": True, "port": 8081, "fps": 12, "width": 960},
         "output": {"topic_prefix": "jp", "mqtt": {"uri": "tcp://mosquitto:1883", "client_id": f"jp-{sid}"},
                    "station_id": 1000 + (abs(hash(sid)) % 8999)},
         "health": {"target_fps": 15},
@@ -82,14 +119,21 @@ def site_yaml(sid: str, s: SiteIn) -> dict:
     }
 
 
+def device_of(cfg: dict) -> str:
+    return {"tensorrt": "gpu", "cpu": "cpu"}.get(cfg.get("models", {}).get("backend", "auto"), "auto")
+
+
 def start(sid: str):
     c = container(sid)
     if c is not None:
         c.remove(force=True)
+    cfg = yaml.safe_load((SITES / f"{sid}.yaml").read_text())
+    dev = device_of(cfg)
+    use_gpu = dev != "cpu" and gpu_available()
     dock.containers.run(
-        IMAGE, ["--config", f"/data/sites/{sid}.yaml"], name=f"jp-site-{sid}", detach=True,
+        IMAGE if use_gpu else IMAGE_CPU, ["--config", f"/data/sites/{sid}.yaml"], name=f"jp-site-{sid}", detach=True,
         restart_policy={"Name": "unless-stopped"}, network=NETWORK, labels={"jp.site": sid},
-        device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
+        device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])] if use_gpu else [],
         volumes={f"{HOST}/sites": {"bind": "/data/sites", "mode": "ro"}, f"{HOST}/videos": {"bind": "/data/videos", "mode": "ro"},
                  f"{HOST}/state": {"bind": "/data/state", "mode": "rw"}, MODELS_HOST: {"bind": "/models", "mode": "rw"}})
 
@@ -99,7 +143,12 @@ def describe(p: Path) -> dict:
     sid = cfg["site"]["id"]
     c = container(sid)
     cal = STATE / sid / "calibration.json"
-    return {"id": sid, "name": cfg["site"]["name"], "source": cfg["camera"]["source"].replace("file:///data/videos/", "video: "),
+    src = cfg["camera"]["source"]
+    video = src.startswith("file:///data/videos/")
+    return {"id": sid, "name": cfg["site"]["name"],
+            "source": src.replace("file:///data/videos/", "") if video else re.sub(r"//[^/@]*@", "//***@", src),
+            "kind": "video" if video else "stream", "loop": bool(cfg["camera"].get("loop", False)),
+            "lens": cfg["camera"].get("lens", "unknown"), "device": device_of(cfg),
             "position": cfg["camera"]["position"], "status": c.status if c else "stopped",
             "calibrated": cal.exists(), "created": p.stat().st_mtime}
 
@@ -124,10 +173,7 @@ async def upload(file: UploadFile = File(...)):
 def create(s: SiteIn):
     if bool(s.video) == bool(s.stream):
         raise HTTPException(400, "give either an uploaded video or a stream URL")
-    if s.video and (not (VIDEOS / s.video).is_file() or "/" in s.video):
-        raise HTTPException(400, "unknown video")
-    if s.stream and not re.match(r"^(rtsp|rtsps|http|https)://", s.stream):
-        raise HTTPException(400, "stream URL must start with rtsp:// or http(s)://")
+    check_source(s.video, s.stream)
     running = [p for p in SITES.glob("*.yaml") if (c := container(p.stem)) is not None and c.status == "running"]
     if len(running) >= MAX_SITES:
         raise HTTPException(409, f"at most {MAX_SITES} sites can run at the same time; stop one first")
@@ -144,6 +190,54 @@ def _site(sid: str) -> Path:
     if not p.exists():
         raise HTTPException(404, "no such site")
     return p
+
+
+@app.get("/api/sites/{sid}")
+def get_site(sid: str):
+    return describe(_site(sid))
+
+
+@app.patch("/api/sites/{sid}")
+def update_site(sid: str, s: SitePatch):
+    """Changes the source, placement, lens or compute device; restarts the site if it was running.
+    A new source or camera position invalidates the calibration (it is removed)."""
+    p = _site(sid)
+    cfg = yaml.safe_load(p.read_text())
+    cam = cfg["camera"]
+    if s.video and s.stream:
+        raise HTTPException(400, "give either a video or a stream URL")
+    check_source(s.video, s.stream)
+    old_source, old_pos = cam["source"], dict(cam["position"])
+    if s.name:
+        cfg["site"]["name"] = s.name
+    if s.video:
+        cam["source"], cam["loop"] = f"file:///data/videos/{s.video}", True
+    if s.stream:
+        cam["source"], cam["loop"] = s.stream, False
+    if s.loop is not None and cam["source"].startswith("file://"):
+        cam["loop"] = s.loop
+    for k in ("lat", "lon", "height_m"):
+        if getattr(s, k) is not None:
+            cam["position"][k] = getattr(s, k)
+    if s.bearing_deg is not None:
+        cam["position"]["bearing_deg"] = s.bearing_deg % 360
+    if s.lens is not None:
+        if s.lens not in LENSES:
+            raise HTTPException(400, f"lens must be one of {sorted(LENSES)}")
+        cam["lens"] = s.lens
+    if s.device is not None:
+        cfg.setdefault("models", {})["backend"] = {"auto": "auto", "gpu": "tensorrt", "cpu": "cpu"}[s.device]
+    cfg.setdefault("preview", {"enabled": True, "port": 8081, "fps": 12, "width": 960})
+    moved = cam["source"] != old_source or any(abs(cam["position"][k] - old_pos[k]) > 1e-7 for k in ("lat", "lon"))
+    if moved:
+        (STATE / p.stem / "calibration.json").unlink(missing_ok=True)
+        if cam["source"] != old_source and old_source.startswith("file:///data/videos/"):
+            (VIDEOS / old_source.rsplit("/", 1)[1]).unlink(missing_ok=True)
+    p.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    c = container(p.stem)
+    if c is not None and c.status == "running":
+        start(p.stem)
+    return describe(p)
 
 
 @app.post("/api/sites/{sid}/start")
@@ -184,7 +278,8 @@ def logs(sid: str, lines: int = 80):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "image": IMAGE, "detector": DETECTOR, "sites": len(list(SITES.glob("*.yaml")))}
+    return {"ok": True, "image": IMAGE, "gpu": gpu_available(), "detector": DETECTOR,
+            "sites": len(list(SITES.glob("*.yaml"))), "max_sites": MAX_SITES}
 
 
 if __name__ == "__main__":

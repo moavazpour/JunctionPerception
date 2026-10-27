@@ -69,6 +69,10 @@ class CameraModel {
   // Small rotation correction (camera moved): R_new_old applied to the camera frame.
   CameraModel rotated(const Eigen::Matrix3d& R_new_old) const;
 
+  // Minimum keypoint confidence used by liftKeypoints (process-wide, adjustable at run time).
+  static void setKeypointConfidence(double c);
+  static double keypointConfidence();
+
   nlohmann::json toJson() const;
   static CameraModel fromJson(const nlohmann::json& j);
   bool valid() const { return width_ > 0; }

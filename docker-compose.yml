@@ -16,6 +16,10 @@ services:
     image: junction-perception:latest
     restart: unless-stopped
     depends_on: [mosquitto]
+    # The panel reaches the live camera view at /live/<site id>/ -> jp-site-<site id>:8081.
+    networks:
+      default:
+        aliases: [jp-site-muc-gbr-lerchenauer]
     command: ["--config", "/config/site.yaml"]
     volumes:
       - ./configs/sites/munich_gbr_lerchenauer.yaml:/config/site.yaml:ro

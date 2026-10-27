@@ -1,6 +1,7 @@
 #include "jp/geometry/camera.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <nlohmann/json.hpp>
 
@@ -87,15 +88,18 @@ double CameraModel::horizonRow(double u) const {
 }
 
 namespace {
-constexpr double kKpConf = 0.35;
+std::atomic<double> g_kp_conf{0.35};  // keypoints below this confidence are not used for the footprint
 }
+
+void CameraModel::setKeypointConfidence(double c) { g_kp_conf = std::clamp(c, 0.0, 1.0); }
+double CameraModel::keypointConfidence() { return g_kp_conf.load(); }
 
 // Footprint fit from projected cuboid keypoints (mirrors training/yolo3d/lift.py).
 std::optional<Detection3D> CameraModel::liftKeypoints(const ImageDetection& det, double pixel_sigma) const {
   const Eigen::Vector3d prior = classPriorDims(det.cls);
   std::array<std::optional<Eigen::Vector3d>, 9> g;
   for (int i = 0; i < 9; ++i)
-    if (det.kpts[i].z() >= kKpConf) g[i] = pixelToGround(det.kpts[i].head<2>(), 0.0);
+    if (det.kpts[i].z() >= g_kp_conf.load()) g[i] = pixelToGround(det.kpts[i].head<2>(), 0.0);
   enum { FL = 1, FR = 2, RR = 3, RL = 4 };
   const int order[4] = {FL, FR, RR, RL};
   int have = 0;
@@ -139,12 +143,12 @@ std::optional<Detection3D> CameraModel::liftKeypoints(const ImageDetection& det,
     static constexpr int sgn[4][2] = {{1, 1}, {1, -1}, {-1, -1}, {-1, 1}};
     double best_e = 1e18;
     bool any = false;
-    for (int j = 0; j < 4; ++j) any |= det.kpts[5 + j].z() >= kKpConf;
+    for (int j = 0; j < 4; ++j) any |= det.kpts[5 + j].z() >= g_kp_conf.load();
     if (any) {
       for (double hh = 0.3; hh <= 5.0; hh += 0.02) {
         double e = 0;
         for (int j = 0; j < 4; ++j) {
-          if (det.kpts[5 + j].z() < kKpConf) continue;
+          if (det.kpts[5 + j].z() < g_kp_conf.load()) continue;
           const Eigen::Vector3d p = bottom + sgn[j][0] * length / 2 * x + sgn[j][1] * width / 2 * y + Eigen::Vector3d(0, 0, hh);
           auto px = groundToPixel(p);
           if (px) e += (*px - det.kpts[5 + j].head<2>()).squaredNorm();

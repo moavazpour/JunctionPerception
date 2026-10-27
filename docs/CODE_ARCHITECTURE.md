@@ -58,7 +58,7 @@ Build targets:
 | Target | Sources | Depends on | GPU |
 |---|---|---|---|
 | `jp_core` (static lib) | geometry, tracking, scene, safety, health, calib, ingest, output | Eigen, OpenCV, nlohmann-json, spdlog, yaml-cpp, paho-mqtt (optional) | no |
-| `jp_infer` (static lib) | `infer/trt_engine.cpp`, `infer/detector.cpp`, `pipeline.cpp` | `jp_core`, TensorRT, CUDA | yes |
+| `jp_infer` (static lib) | `infer/engine.cpp`, `infer/trt_engine.cpp` (GPU), `infer/ort_engine.cpp` (CPU), `infer/detector.cpp`, `output/preview_server.cpp`, `pipeline.cpp` | `jp_core`, TensorRT + CUDA and/or ONNX Runtime | GPU optional |
 | `junction_perception` | `apps/junction_perception/main.cpp` | `jp_infer` | yes |
 | `jp_bench` | `apps/jp_bench/main.cpp` | `jp_infer` | yes |
 | `jp_tests` | `tests/*.cpp` | `jp_core`, GTest | no |
@@ -94,7 +94,7 @@ merged into trucks in the data, so the trained model emits no trailers; e-scoote
 ```mermaid
 flowchart TB
   ingest["ingest<br/>VideoSource"] --> pipeline
-  infer["infer<br/>TrtEngine · Letterbox · Detector3D · Segmenter"] --> pipeline
+  infer["infer<br/>InferenceEngine (TensorRT / ONNX Runtime) · Letterbox · Detector3D · Segmenter"] --> pipeline
   geometry["geometry<br/>CameraModel · bev"] --> calib & tracking & scene & safety & health & output
   calib["calib<br/>AutoCalibrator · calibrateFromCorrespondences"] --> pipeline
   tracking["tracking<br/>CtraEkf · Tracker"] --> pipeline
@@ -113,17 +113,22 @@ flowchart TB
 | geometry | `geometry/camera.hpp` | `CameraModel`, `GeoAnchor`, `geoToEnu`, `enuToGeo` | pinhole camera over a planar ground: pixel ↔ ground, box projection, keypoint lifting, JSON (de)serialisation, small-rotation correction |
 | | `geometry/bev.hpp` | `OrientedBox`, `Polyline` | oriented-rectangle overlap and distance (SAT), polylines for lanes and zones |
 | ingest | `ingest/video_source.hpp` | `VideoSource`, `VideoSourceConfig` | one interface for `file://`, `rtsp://`, `usb:`/`v4l2://`, `gst:` pipelines; real-time pacing, looping, reconnects |
-| infer | `infer/trt_engine.hpp` | `TrtEngine`, `TensorInfo` | TensorRT 10 wrapper: builds an engine from ONNX on first use and caches it next to the ONNX (per GPU and precision), owns device buffers and a CUDA stream |
+| infer | `infer/engine.hpp` | `InferenceEngine`, `EngineOptions`, `createEngine`, `TensorInfo` | backend-neutral model interface; `auto` picks TensorRT when a GPU is usable, else ONNX Runtime on the CPU |
+| | `infer/trt_engine.hpp` | `TrtEngine` | TensorRT 10 backend: builds an engine from ONNX on first use and caches it next to the ONNX (per GPU and precision), owns device buffers and a CUDA stream |
+| | `src/infer/ort_engine.cpp` | `OrtEngine` | ONNX Runtime CPU backend (all cores, full graph optimisation) |
 | | `infer/detector.hpp` | `Letterbox`, `Detector3D`, `Segmenter` | undistortion + letterbox in one remap; detector decoding for the YOLO26-pose layout `[K, 6+27]` (and the older `[K, 13]`); SegFormer semantic segmentation for static occlusion and visibility |
 | calib | `calib/auto_calibrator.hpp` | `AutoCalibrator`, `CalibrationPriors`, `CalibrationResult` | self-calibration from traffic (keypoint 4-DoF search or vanishing-point path), bearing from the map |
-| | `calib/manual_calibration.hpp` | `calibrateFromCorrespondences`, `GroundCorrespondence` | camera from ≥ 4 image ↔ map point pairs (homography focal estimate, PnP over a focal search, camera position solved) |
+| | `calib/manual_calibration.hpp` | `calibrateManual`, `ManualCalibrationInput`, `GroundCorrespondence`, `LineCorrespondence` | camera from installer input: point pairs, traced lines, verticals, height and lens priors (MAP estimate, multi-start LM), per-input residuals and expected accuracy |
+| | `calib/refiner.hpp` | `CalibrationRefiner` | traffic check of a manual calibration: path parallelism (and alignment with drawn lanes) → bounded pitch/roll/yaw/focal correction proposal |
 | tracking | `tracking/tracker.hpp` | `CtraEkf`, `Track`, `Tracker` | CTRA extended Kalman filter `[x, y, yaw, v, yaw_rate, a]`; two-stage (high/low score) association with Mahalanobis gating and Hungarian assignment; coasting through occlusions |
 | scene | `scene/site_map.hpp` | `Lane`, `Zone`, `SiteMap`, `LaneLearner` | site map (lanes, stop lines, zones, crosswalks); lane learning from traffic and stop lines from queue heads |
+| | `scene/user_map.hpp` | `UserMap` | installer-drawn layout in WGS84 (lanes in travel direction, stop lines, crosswalks, road area) → `SiteMap` with inbound/outbound lanes, `stop_s` and approaches |
 | | `scene/intersection.hpp` | `RoadUser`, `LaneState`, `ZoneState`, `StopLineCrossing`, `IntersectionModel` | lane assignment, distance and ETA to the stop line (with acceleration), queues, virtual detectors, stop-line crossings |
 | safety | `safety/near_miss.hpp` | `NearMissDetector`, `ConflictMetrics`, `NearMissEvent` | TTC (oriented footprints), MTTC (CTRA prediction), PET (grid of occupancy times), DRAC, hard braking; event lifecycle with severity |
 | health | `health/monitors.hpp` | `StabilityMonitor`, `VisibilityMonitor`, `CalibrationMonitor`, `OcclusionMap`, `HealthReport` | camera shake/drift/moved (feature tracking → per-frame rotation correction), image quality and weather conditions, calibration consistency, static/dynamic occlusion per lane, fused integrity level |
 | output | `output/messages.hpp` | `msg::objects`, `msg::cpm`, `msg::health`, … | JSON schema of every topic, ETSI CPM content |
 | | `output/sink.hpp` | `Sink`, `MqttSink`, `FileSink`, `MultiSink` | publishing (MQTT async with reconnect and offline queue, JSON-lines file) and operator command subscriptions |
+| | `output/preview_server.hpp` | `PreviewServer` | MJPEG live view (`/video.mjpg`, `/frame.jpg`) for the panel; encodes only while watched |
 | pipeline | `pipeline.hpp` | `PipelineConfig`, `Pipeline` | YAML config, orchestration of everything above, rates, self-healing, operator commands |
 
 ### 4.3 One frame through the runtime
@@ -211,9 +216,21 @@ when ready, solves:
   road bearing to fix the compass orientation.
 - **Vanishing-point path** (box-only models). Road vanishing point from straight tracks, then focal
   length, rotation about the road axis and height.
-- **Manual path** (operator). `calibrateFromCorrespondences`: ground homography → focal estimate, IPPE +
-  iterative PnP over a focal search, camera position solved, accepted when the reprojection error is
-  small. Triggered from the web panel through `…/calibration/manual`.
+- **Manual path** (operator, the default for the demo). `calibrateManual`: seven parameters (rotation,
+  camera centre, log focal length) by maximum a-posteriori estimation. Residuals: point pairs in pixels,
+  each with a sigma of click accuracy plus the map-reading error (0.35 m) seen at its distance, so near
+  points do not dominate; traced lines (pixel distance of every traced point to the projected map
+  line); verticals (direction to the vertical vanishing point); Huber reweighting against wrong pairs.
+  Priors: focal length from the lens hint (log-normal), mounting height, camera position. Starts: both
+  IPPE poses over a log grid of focal lengths plus look-at starts, Levenberg–Marquardt from the best
+  four. Reported: ground and pixel residual per input, warnings (too few, clustered or collinear points,
+  outlier pairs, focal or height far from the hints), expected position sigma by range from the
+  parameter covariance. Triggered from the web panel through `…/calibration/manual`.
+- **Traffic check** (after a manual calibration). `CalibrationRefiner` collects ground-contact paths of
+  moving vehicles; on a planar straight road they must be parallel (and parallel to drawn lanes). A
+  bounded Nelder–Mead search over pitch, roll, (yaw with lanes) and focal length minimises the path
+  spread while the installer points must keep fitting; a proposal needs 20 % improvement and is applied
+  only on the operator's approval.
 
 Calibrations are persisted to `calibration.file` and published (retained) on `calibration`.
 
@@ -224,13 +241,14 @@ Calibrations are persisted to `calibration.file` and published (retained) on `ca
 | Section | Keys |
 |---|---|
 | `site` | `id`, `name` |
-| `camera` | `id`, `source` URI, `realtime`, `loop`, `max_fps`, `position` (lat, lon, height_m, height_sigma, bearing_deg), optional `intrinsics` (focal_px, distortion) |
+| `camera` | `id`, `source` URI, `realtime`, `loop`, `max_fps`, `lens`, `position` (lat, lon, height_m, height_sigma, bearing_deg), optional `intrinsics` (focal_px, distortion) |
 | `calibration` | `file`, `force`, `min_duration_s`, `publish_snapshot`, `road_bearing_deg` (from `tools/osm_site.py`) |
-| `map` | `file` (hand-made map overrides learning), `learn_lanes`, `stop_line` (lat/lon), `crosswalks` |
-| `models` | `detector` (ONNX), `segmentation` (ONNX), `fp16`, `score_threshold`, `max_range_m` |
+| `map` | `file` (hand-made map overrides learning), `learn_lanes`, `roi_filter`, `stop_line` (lat/lon), `crosswalks` |
+| `models` | `detector` (ONNX), `segmentation` (ONNX), `backend` (auto, tensorrt, cpu), `cpu_threads`, `fp16`, `score_threshold`, `confidence`, `keypoint_confidence`, `classes`, `max_range_m` |
+| `preview` | `enabled`, `port` (8081), `fps`, `width`, `overlay` |
 | `output` | `topic_prefix`, `mqtt` (uri, credentials), `file`, `station_id`, `rates_hz` |
 | `health` | `target_fps` |
-| `state_dir` | calibration, learned map, recordings |
+| `state_dir` | calibration, learned map, drawn map (`user_map.json`), live settings (`settings.json`), last calibration inputs |
 
 ### 4.7 Applications
 
@@ -244,7 +262,8 @@ Calibrations are persisted to `calibration.file` and published (retained) on `ca
 
 - **MQTT topics** `<prefix>/<site>/<camera>/<leaf>`: `objects`, `cpm`, `detectors`, `detector/<zone>`,
   `events/safety`, `events/stopline`, `health`, `occlusion`, `calibration`, `map`, `snapshot`,
-  `calibration/manual/result`; subscribed: `calibration/manual` (operator commands). Full schemas in
+  `calibration/manual/result`, `calibration/inputs`, `calibration/refine`, `config`, `map/user`; subscribed:
+  `calibration/manual`, `map/user/set`, `config/set` (operator commands). HTTP: `/video.mjpg` live view. Full schemas in
   [INTERFACES.md](INTERFACES.md).
 - **Signal controllers** read the retained `detector/<zone>` presence topics (`"0"`/`"1"`), the
   simplest loop-detector emulation; richer consumers use `detectors` and `objects`.
@@ -252,16 +271,26 @@ Calibrations are persisted to `calibration.file` and published (retained) on `ca
 
 ## 6. Web panel (`web/`)
 
+React 18 + TypeScript + Tailwind (design tokens as CSS variables, light and dark theme), Three.js for
+the twin, Leaflet for maps, zustand for state. Two pages: **Live** and **Settings** (hash routes
+`#/live`, `#/settings/<section>`).
+
 | File | Role |
 |---|---|
-| `src/main.ts` | MQTT over WebSocket (`/mqtt` through nginx), message routing, side panels (road users, lanes, safety, coverage, calibration) |
-| `src/scene3d.ts` | Three.js scene: road, lanes, zones, occlusion overlay, animated road users, chase / top / camera views |
+| `src/mqtt.ts` | one MQTT-over-WebSocket connection (`/mqtt` through nginx); routes every topic of the selected site into the store; command helpers (`publish`, `calibrationCommand` awaiting the result) |
+| `src/store.ts` | application state (live data, retained topics, preferences in localStorage), class and lane colours |
+| `src/api.ts` | site manager REST client (sites, upload, patch, logs), address search |
+| `src/geo.ts` | ENU ↔ WGS84 and `GroundCamera` (the runtime's camera model in TypeScript: project / unproject) |
+| `src/components/` | `Header` (site picker, LIVE/REPLAY, GPU/CPU badge, theme), `LiveView`, `SceneView` (store → Three.js), `VideoPip` (MJPEG camera view), `Sidebar` (counts, speeds, lanes, road users, selected-object card, events), `leaflet.ts` |
+| `src/scene3d.ts` | Three.js twin: stylized OpenStreetMap base map or aerial imagery, drawn lanes in colour, zones, occlusion, animated road users, chase / top / camera views, theme palettes |
+| `src/osmroads.ts` | road map from OpenStreetMap (Overpass): asphalt by lane count, lane markings, kerbs, sidewalks, zebras, stop lines, traffic lights; dark and light palettes |
 | `src/models.ts` | low-poly vehicle, pedestrian and cyclist models |
-| `src/calib.ts` | calibration view: snapshot with range rings and learned lanes projected through the camera model |
-| `src/manual.ts` | manual calibration: click points in the snapshot and on an aerial map (Leaflet), solve, restart auto |
+| `src/calib/` | calibration wizard: `CalibrationSection` (steps, solve/apply, status), `LayoutEditor` (lanes, stop lines, crosswalks, road area on the map), `PairsEditor` + `ImageCanvas` (point pairs, lines, verticals with zoom, magnifier, drag, residuals), `Verify` (map features and grid projected into the image, image projected onto the map, accuracy, traffic check), `draft.ts` |
+| `src/settings/` | Video source, Detection (live thresholds), Compute, Display, Sites, System |
 | `src/types.ts` | TypeScript types of all messages |
 
-Built by `docker/Dockerfile.web` (Vite) and served by nginx, which also proxies the broker's WebSocket.
+Built by `docker/Dockerfile.web` (Vite) and served by nginx, which also proxies the broker's WebSocket,
+the manager API (`/api/`) and each site's live view (`/live/<site>/` → `jp-site-<site>:8081`).
 
 ## 7. Training and data (`training/`)
 
@@ -315,18 +344,21 @@ reports), `models/` (ONNX + cached TensorRT engines), `state/` (runtime state an
 
 ## 9. Deployment
 
-- `docker/Dockerfile`: TensorRT 24.08 base; build stage compiles and runs the unit tests, runtime stage
-  carries only the binaries and runtime libraries; entrypoint `junction_perception`.
+- `docker/Dockerfile`: TensorRT 24.08 base with the ONNX Runtime CPU backend; build stage compiles and runs
+  the unit tests, runtime stage carries only the binaries and runtime libraries; entrypoint
+  `junction_perception`. The same image runs on hosts without a GPU (CPU backend).
+- `docker/Dockerfile.cpu`: Ubuntu 22.04 without CUDA, ONNX Runtime only, for CPU-only servers.
 - `docker/Dockerfile.jetson`: the same for JetPack 6 on Jetson Orin (engines are rebuilt on the device).
 - `docker-compose.yml`: `mosquitto`, `perception-cam1` (one service per camera, each with its own site
   YAML), `web` on port 8080. Volumes: `/models`, `/data/state`, `/data/videos`, `/config`.
 
 ## 10. Tests
 
-`jp_tests` (GoogleTest, 22 tests, no GPU): camera geometry and lifting, BEV geometry, CTRA filter and
+`jp_tests` (GoogleTest, 27 tests, no GPU): camera geometry and lifting, BEV geometry, CTRA filter and
 tracker, near-miss metrics, auto-calibration on synthetic traffic (vanishing-point path and three
-keypoint scenarios: footbridge phone, gantry camera, wide-angle low mount) and manual calibration from
-map points. The Docker build runs them; `tools/deploy_model.sh` adds the end-to-end checks on real data.
+keypoint scenarios: footbridge phone, gantry camera, wide-angle low mount), manual calibration (map
+points; four clustered points with a height prior; traced lines; a wrong pair flagged), the drawn site
+layout (stop line, approach) and the traffic check (recovers a 1.2° pitch error). The Docker build runs them; `tools/deploy_model.sh` adds the end-to-end checks on real data.
 
 ## 11. Status and known limits
 

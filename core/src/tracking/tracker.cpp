@@ -228,6 +228,7 @@ void Tracker::applyMeasurement(Track& t, const Detection3D& d, double stamp) {
   t.last_update = stamp;
   t.score = 0.7f * t.score + 0.3f * d.img.score;
   t.last_box2d = d.img.box2d;
+  t.last_kp = d.img.kp;
   t.last_range = d.range;
   if (t.state != TrackState::Confirmed && t.hits >= cfg_.confirm_hits) t.state = TrackState::Confirmed;
   if (t.state == TrackState::Coasting) t.state = TrackState::Confirmed;
@@ -326,6 +327,7 @@ const std::vector<Track>& Tracker::update(double stamp, const std::vector<Detect
     t.first_seen = t.last_update = stamp;
     t.score = d.img.score;
     t.last_box2d = d.img.box2d;
+    t.last_kp = d.img.kp;
     t.last_range = d.range;
     tracks_.push_back(t);
   }

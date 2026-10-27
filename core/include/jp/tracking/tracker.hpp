@@ -52,6 +52,7 @@ struct Track {
   double first_seen = 0, last_update = 0;
   float score = 0;
   Eigen::Vector4d last_box2d = Eigen::Vector4d::Zero();
+  Eigen::Vector2d last_kp = Eigen::Vector2d::Zero();  // ground-contact keypoint of the last detection (px)
   double last_range = 0;
 
   Eigen::Vector2d position() const { return ekf.x.head<2>(); }
@@ -84,6 +85,8 @@ class Tracker {
   const std::vector<Track>& update(double stamp, const std::vector<Detection3D>& dets,
                                    const std::function<bool(const Eigen::Vector2d&)>& is_occluded = {});
   const std::vector<Track>& tracks() const { return tracks_; }
+  TrackerConfig& config() { return cfg_; }
+  const TrackerConfig& config() const { return cfg_; }
   void reset() { tracks_.clear(); }
 
   static CtraEkf::Noise noiseFor(ObjectClass c);

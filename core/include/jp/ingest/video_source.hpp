@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <opencv2/core.hpp>
@@ -31,6 +32,10 @@ class VideoSource {
   cv::Size size() const { return size_; }
   bool isFile() const { return is_file_; }
   std::string describe() const;
+  // Times a looping file restarted (consumers reset their tracks then).
+  std::uint64_t loops() const { return loops_.load(); }
+  void setMaxFps(double f) { max_fps_ = f; }
+  double maxFps() const { return max_fps_.load(); }
 
  private:
   bool open();
@@ -44,6 +49,8 @@ class VideoSource {
   std::chrono::steady_clock::time_point wall0_;
   double last_emit_ = -1;
   bool paced_ = false;
+  std::atomic<std::uint64_t> loops_{0};
+  std::atomic<double> max_fps_{0};
 };
 
 }  // namespace jp

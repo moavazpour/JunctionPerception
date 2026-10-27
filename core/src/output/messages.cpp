@@ -58,6 +58,9 @@ nlohmann::json roadUsers(const std::vector<RoadUser>& users, const SiteMap& map)
       if (l) o["approach"] = l->approach;
     }
     if (u.dist_to_stop) o["dist_to_stop"] = r2(*u.dist_to_stop);
+    // Constant deceleration needed to stop at the line (m/s^2); above ~3.5 a stop is no longer comfortable.
+    if (u.dist_to_stop && *u.dist_to_stop > 0.5 && u.speed > 0.5)
+      o["decel_required"] = r2(u.speed * u.speed / (2.0 * *u.dist_to_stop));
     if (u.eta) o["eta"] = r2(*u.eta);
     if (u.eta_cv) o["eta_cv"] = r2(*u.eta_cv);
     if (u.eta) o["eta_sigma"] = r2(u.eta_sigma);

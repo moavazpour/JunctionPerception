@@ -1,6 +1,5 @@
 #include "jp/infer/detector.hpp"
 
-#include <NvInfer.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -9,7 +8,7 @@
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
 
-#include "jp/infer/trt_engine.hpp"
+#include "jp/infer/engine.hpp"
 
 namespace jp {
 
@@ -64,9 +63,11 @@ constexpr float kStd[3] = {58.395f, 57.12f, 57.375f};
 }  // namespace
 
 Detector3D::Detector3D(const DetectorConfig& cfg) : cfg_(cfg) {
-  TrtEngine::Options opt;
+  EngineOptions opt;
   opt.fp16 = cfg.fp16;
-  engine_ = TrtEngine::fromOnnx(cfg.onnx, opt);
+  opt.backend = cfg.backend;
+  opt.threads = cfg.threads;
+  engine_ = createEngine(cfg.onnx, opt);
   const TensorInfo* inp = nullptr;
   const TensorInfo* outp = nullptr;
   for (const auto& t : engine_->tensors()) (t.is_input ? inp : outp) = &t;
@@ -80,7 +81,8 @@ Detector3D::Detector3D(const DetectorConfig& cfg) : cfg_(cfg) {
   if (fields_ != 13 && !yolo_) throw std::runtime_error("unexpected detector output layout");
   input_.resize(in.bytes / sizeof(float));
   output_.resize(out.bytes / sizeof(float));
-  spdlog::info("Detector3D: input {}x{}, top-{}", net_.width, net_.height, topk_);
+  spdlog::info("Detector3D: input {}x{}, top-{}, {} on {} ({})", net_.width, net_.height, topk_, engine_->backend(),
+               engine_->device(), engine_->precision());
 }
 
 Detector3D::~Detector3D() = default;
@@ -135,10 +137,8 @@ std::vector<ImageDetection> Detector3D::detect(const cv::Mat& net_bgr, const Let
   return dets;
 }
 
-Segmenter::Segmenter(const std::string& onnx, bool fp16) {
-  TrtEngine::Options opt;
-  opt.fp16 = fp16;
-  engine_ = TrtEngine::fromOnnx(onnx, opt);
+Segmenter::Segmenter(const std::string& onnx, const EngineOptions& opt) {
+  engine_ = createEngine(onnx, opt);
   const TensorInfo* in = nullptr;
   const TensorInfo* out = nullptr;
   for (const auto& t : engine_->tensors()) (t.is_input ? in : out) = &t;
@@ -146,7 +146,7 @@ Segmenter::Segmenter(const std::string& onnx, bool fp16) {
   input_.resize(in->bytes / sizeof(float));
   argmax_in_graph_ = out->shape.size() == 3;
   if (argmax_in_graph_) {
-    if (out->dtype == static_cast<int>(nvinfer1::DataType::kINT64)) {
+    if (out->dtype == DType::I64) {
       labels64_.resize(out->bytes / 8);
     } else {
       labels32_.resize(out->bytes / 4);

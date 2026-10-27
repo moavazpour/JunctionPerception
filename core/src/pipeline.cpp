@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -13,6 +14,8 @@
 
 #include "jp/calib/manual_calibration.hpp"
 #include "jp/infer/detector.hpp"
+#include "jp/infer/engine.hpp"
+#include "jp/output/preview_server.hpp"
 #include "jp/output/messages.hpp"
 
 namespace jp {
@@ -62,6 +65,7 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
     c.height_sigma = p["height_sigma"].as<double>(c.height_sigma);
     c.bearing_deg = p["bearing_deg"].as<double>(c.bearing_deg);
   }
+  c.lens = cam["lens"].as<std::string>(c.lens);
   if (auto i = cam["intrinsics"]) {
     c.focal_px = opt<double>(i["focal_px"]);
     if (i["distortion"]) c.distortion = i["distortion"].as<std::vector<double>>();
@@ -78,6 +82,7 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
   if (auto m = n["map"]) {
     c.map_file = m["file"].as<std::string>("");
     c.learn_lanes = m["learn_lanes"].as<bool>(true);
+    c.roi_filter = m["roi_filter"].as<bool>(c.roi_filter);
     if (auto s = m["stop_line"]) c.stop_line_point = GeoAnchor{s["lat"].as<double>(), s["lon"].as<double>(), 0, true};
     if (auto cw = m["crosswalks"]) {
       for (const auto& poly : cw) {
@@ -93,6 +98,18 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
   c.fp16 = md["fp16"].as<bool>(true);
   c.score_threshold = md["score_threshold"].as<float>(c.score_threshold);
   c.max_range = md["max_range_m"].as<double>(c.max_range);
+  c.backend = md["backend"].as<std::string>(c.backend);
+  c.cpu_threads = md["cpu_threads"].as<int>(c.cpu_threads);
+  c.confidence = opt<double>(md["confidence"]);
+  c.keypoint_confidence = opt<double>(md["keypoint_confidence"]);
+  if (md["classes"]) c.classes = md["classes"].as<std::vector<std::string>>();
+  if (auto p = n["preview"]) {
+    c.preview = p["enabled"].as<bool>(c.preview);
+    c.preview_port = p["port"].as<int>(c.preview_port);
+    c.preview_fps = p["fps"].as<double>(c.preview_fps);
+    c.preview_width = p["width"].as<int>(c.preview_width);
+    c.preview_overlay = p["overlay"].as<bool>(c.preview_overlay);
+  }
   if (auto o = n["output"]) {
     c.topic_prefix = o["topic_prefix"].as<std::string>(c.topic_prefix);
     if (auto q = o["mqtt"]) {
@@ -125,17 +142,59 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
   dc.onnx = cfg_.detector_onnx;
   dc.fp16 = cfg_.fp16;
   dc.score_threshold = std::min(cfg_.score_threshold, 0.15f);
+  dc.backend = cfg_.backend;
+  dc.threads = cfg_.cpu_threads;
   det_ = std::make_unique<Detector3D>(dc);
-  if (!cfg_.segmenter_onnx.empty()) seg_ = std::make_unique<Segmenter>(cfg_.segmenter_onnx, cfg_.fp16);
+  if (!cfg_.segmenter_onnx.empty()) {
+    // The segmenter follows the detector's backend (a CPU detector means there is no usable GPU).
+    EngineOptions so;
+    so.backend = det_->engine().backend();
+    so.fp16 = cfg_.fp16;
+    so.threads = cfg_.cpu_threads;
+    try {
+      seg_ = std::make_unique<Segmenter>(cfg_.segmenter_onnx, so);
+    } catch (const std::exception& e) {
+      spdlog::warn("Segmentation disabled: {}", e.what());
+    }
+  }
   sink_ = std::make_unique<MultiSink>();
   if (cfg_.mqtt) sink_->add(std::make_unique<MqttSink>(*cfg_.mqtt));
   if (!cfg_.metadata_file.empty()) sink_->add(std::make_unique<FileSink>(cfg_.metadata_file));
-  sink_->subscribe(topic("calibration/manual"), [this](const std::string&, const std::string& payload) {
-    auto j = nlohmann::json::parse(payload, nullptr, false);
-    if (j.is_discarded() || !j.is_object()) return;
-    std::lock_guard<std::mutex> lk(cmd_m_);
-    cmds_.push_back(std::move(j));
-  });
+  for (const std::string leaf : {"calibration/manual", "map/user/set", "config/set"}) {
+    sink_->subscribe(topic(leaf), [this, leaf](const std::string&, const std::string& payload) {
+      auto j = nlohmann::json::parse(payload, nullptr, false);
+      if (j.is_discarded() || !j.is_object()) return;
+      j["_topic"] = leaf;
+      std::lock_guard<std::mutex> lk(cmd_m_);
+      cmds_.push_back(std::move(j));
+    });
+  }
+  if (cfg_.preview) preview_ = std::make_unique<PreviewServer>(cfg_.preview_port);
+  // Persisted operator state: live settings, drawn map, last manual calibration inputs.
+  const std::filesystem::path sd(cfg_.state_dir);
+  {
+    class_enabled_.assign(kClassNames.size(), true);
+    nlohmann::json s = settings();
+    if (cfg_.confidence) s["confidence"] = *cfg_.confidence;
+    if (cfg_.keypoint_confidence) s["keypoint_confidence"] = *cfg_.keypoint_confidence;
+    if (!cfg_.classes.empty()) s["classes"] = cfg_.classes;
+    if (std::filesystem::exists(sd / "settings.json")) {
+      std::ifstream f(sd / "settings.json");
+      const auto j = nlohmann::json::parse(f, nullptr, false);
+      if (j.is_object()) s.update(j);
+    }
+    applySettings(s, false);
+  }
+  if (std::filesystem::exists(sd / "user_map.json")) {
+    std::ifstream f(sd / "user_map.json");
+    const auto j = nlohmann::json::parse(f, nullptr, false);
+    if (j.is_object()) user_map_ = UserMap::fromJson(j);
+  }
+  if (std::filesystem::exists(sd / "calibration_inputs.json")) {
+    std::ifstream f(sd / "calibration_inputs.json");
+    manual_inputs_ = nlohmann::json::parse(f, nullptr, false);
+    if (manual_inputs_.is_discarded()) manual_inputs_ = nullptr;
+  }
 
   const cv::Size fs = src_->size();
   cv::Matx33d K = cv::Matx33d::eye();
@@ -161,12 +220,25 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
     if (cam.width() == fs.width && cam.height() == fs.height) {
       camera_ = cam;
       // A stored manual calibration is trusted; a stored auto-calibration keeps its own estimate.
-      calib_confidence_ = j.value("source", "") == "manual" ? 1.0 : j.value("confidence", 0.0);
+      calib_confidence_ = j.value("source", "").rfind("manual", 0) == 0 ? 1.0 : j.value("confidence", 0.0);
+      if (j.contains("manual")) manual_result_ = j["manual"];
       onCalibrated(nullptr, "file");
     } else {
       spdlog::warn("Stored calibration is for a different resolution; recalibrating");
     }
   }
+  publishConfig();
+  {
+    auto h = msg::header("user_map", cfg_.site_id, cfg_.camera_id, 0);
+    h["map"] = user_map_.toJson();
+    emit("map/user", h, 1, true);
+  }
+  if (manual_inputs_.is_object()) {
+    auto h = msg::header("calibration_inputs", cfg_.site_id, cfg_.camera_id, 0);
+    h["inputs"] = manual_inputs_;
+    emit("calibration/inputs", h, 1, true);
+  }
+  publishRefine();
 }
 
 Pipeline::~Pipeline() = default;
@@ -227,12 +299,35 @@ void Pipeline::onCalibrated(const CalibrationResult* res, const std::string& sou
       map_.crosswalks.push_back(pts);
     }
   }
+  if (!user_map_.empty()) {
+    const SiteMap um = user_map_.build(cam.anchor, cfg_.site_name);
+    if (!um.lanes.empty()) {
+      map_.lanes = um.lanes;
+      map_.zones = um.zones;
+    }
+    if (!um.crosswalks.empty()) map_.crosswalks = um.crosswalks;
+    map_.roi = um.roi;
+  }
+  // Traffic check of a manual calibration (proposes a correction, the operator decides).
+  if (!cfg_.auto_calibration && source != "drift-compensated") {
+    std::vector<std::pair<Eigen::Vector2d, Eigen::Vector2d>> pts;
+    if (manual_inputs_.is_object())
+      for (const auto& p : manual_inputs_.value("points", nlohmann::json::array()))
+        pts.emplace_back(Eigen::Vector2d(p.value("u", 0.0), p.value("v", 0.0)),
+                         geoToEnu(cam.anchor, p.value("lat", 0.0), p.value("lon", 0.0)));
+    if (refine_future_.valid()) refine_future_.wait(), refine_future_ = {};
+    refiner_.reset(cam, pts, user_map_.lanes.empty() ? std::vector<Lane>{} : map_.lanes);
+    proposal_.reset();
+    refine_status_ = "collecting";
+    publishRefine();
+  }
   scene_->setMap(map_);
   occlusion_.configure(cam, map_, cfg_.max_range);
   if (res) calib_confidence_ = res->confidence;
   else if (source == "manual") calib_confidence_ = 1.0;  // "file" and "drift-compensated" keep the current value
   nlohmann::json cj = msg::calibration(cam, res, source);
   cj["confidence"] = calib_confidence_;
+  if (source.rfind("manual", 0) == 0 || (source == "file" && !manual_result_.is_null())) cj["manual"] = manual_result_;
   cj["road_axis_yaw"] = axis;
   if (!cfg_.calibration_file.empty() && source != "file") {
     std::ofstream(cfg_.calibration_file) << cj.dump(1);
@@ -287,7 +382,7 @@ void Pipeline::publishSnapshot(const cv::Mat& frame, const std::vector<ImageDete
 }
 
 void Pipeline::rebuildLanes(double stamp) {
-  if (map_from_file_ || !cfg_.learn_lanes || !camera_) return;
+  if (map_from_file_ || !cfg_.learn_lanes || !camera_ || !user_map_.lanes.empty()) return;
   auto lanes = learner_.build();
   if (lanes.empty()) return;
   // Extend inbound lanes to the configured stop line and set stop_s from it (unless learned).
@@ -326,8 +421,26 @@ void Pipeline::cancelCalibration() {
 }
 
 void Pipeline::handleCommand(const nlohmann::json& cmd) {
-  const std::string action = cmd.value("action", "solve");
-  nlohmann::json out = {{"action", action}};
+  const std::string from = cmd.value("_topic", "calibration/manual");
+  if (from == "config/set") {
+    applySettings(cmd.value("settings", nlohmann::json::object()), true);
+    publishConfig();
+    return;
+  }
+  if (from == "map/user/set") {
+    setUserMap(UserMap::fromJson(cmd.value("map", nlohmann::json::object())), true);
+    return;
+  }
+  nlohmann::json out = {{"action", cmd.value("action", "solve")}};
+  handleCalibration(cmd, out);
+  auto h = msg::header("calibration_command", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  h["result"] = out;
+  emit("calibration/manual/result", h, 1);
+}
+
+void Pipeline::handleCalibration(const nlohmann::json& cmd, nlohmann::json& out) {
+  const std::string action = out["action"];
+  using J = nlohmann::json;
   if (action == "snapshot") {
     snapshot_sent_ = false;
     out["ok"] = true;
@@ -337,35 +450,282 @@ void Pipeline::handleCommand(const nlohmann::json& cmd) {
     calibrator_ = makeCalibrator();
     if (!cfg_.calibration_file.empty()) std::filesystem::remove(cfg_.calibration_file);
     snapshot_sent_ = false;
+    manual_result_ = nullptr;
+    refiner_ = CalibrationRefiner();
+    proposal_.reset();
+    refine_status_ = "idle";
+    publishRefine();
     // Clear the retained calibration and map so viewers do not keep showing the discarded geometry.
     sink_->publish(topic("calibration"), "", 1, true);
     sink_->publish(topic("map"), "", 1, true);
+    sink_->publish(topic("detectors"), "", 1, true);
+    for (const auto& z : scene_->zones()) sink_->publish(topic("detector/" + z.id), "", 1, true);
     out["ok"] = true;
     out["message"] = cfg_.auto_calibration ? "calibration cleared; auto-calibration restarted"
                                            : "calibration cleared; waiting for a manual calibration";
     spdlog::info("Operator cleared the calibration");
   } else if (action == "solve") {
-    std::vector<GroundCorrespondence> pts;
-    for (const auto& p : cmd.value("points", nlohmann::json::array()))
-      pts.push_back({{p.at("u").get<double>(), p.at("v").get<double>()}, p.at("lat").get<double>(), p.at("lon").get<double>()});
-    const auto r = calibrateFromCorrespondences(src_->size().width, src_->size().height, pts, cfg_.anchor,
-                                                cfg_.focal_px, cfg_.distortion);
-    out["ok"] = r.ok;
-    out["message"] = r.message;
-    out["rms_px"] = r.rms_px;
-    out["max_px"] = r.max_px;
-    if (r.ok) {
+    ManualCalibrationInput in;
+    in.width = src_->size().width;
+    in.height = src_->size().height;
+    in.anchor = cfg_.anchor;
+    in.focal_px = cfg_.focal_px;
+    in.dist = cfg_.distortion;
+    auto px = [](const J& p) { return Eigen::Vector2d(p.at(0).get<double>(), p.at(1).get<double>()); };
+    for (const auto& p : cmd.value("points", J::array()))
+      in.points.push_back({{p.at("u").get<double>(), p.at("v").get<double>()}, p.at("lat").get<double>(), p.at("lon").get<double>()});
+    for (const auto& l : cmd.value("lines", J::array())) {
+      LineCorrespondence lc;
+      for (const auto& q : l.at("px")) lc.px.push_back(px(q));
+      const auto& g = l.at("geo");
+      if (g.size() < 2 || lc.px.size() < 2) continue;
+      lc.geo = {px(g.at(0)), px(g.at(1))};
+      in.lines.push_back(lc);
+    }
+    for (const auto& v : cmd.value("verticals", J::array()))
+      if (v.size() >= 2) in.verticals.push_back({px(v.at(0)), px(v.at(1))});
+    in.height_m = cmd.contains("height_m") && cmd["height_m"].is_number() ? cmd["height_m"].get<double>() : cfg_.height_m;
+    in.height_sigma = cmd.value("height_sigma", cfg_.height_sigma);
+    in.lens = cmd.value("lens", cfg_.lens);
+    const auto r = calibrateManual(in);
+    J rep = {{"ok", r.ok},
+             {"plausible", r.plausible},
+             {"message", r.message},
+             {"quality", r.quality},
+             {"rms_px", r.rms_px},
+             {"max_px", r.max_px},
+             {"ground_rms_m", r.ground_rms_m},
+             {"ground_max_m", r.ground_max_m},
+             {"focal_px", r.focal_px},
+             {"fov_deg", r.fov_deg},
+             {"warnings", r.warnings},
+             {"residuals", J::array()},
+             {"accuracy", J::array()}};
+    for (const auto& e : r.residuals) rep["residuals"].push_back({{"kind", e.kind}, {"index", e.index}, {"px", e.px}, {"m", e.m}});
+    for (const auto& a : r.accuracy) rep["accuracy"].push_back({{"range_m", a.range_m}, {"sigma_m", a.sigma_m}});
+    if (r.plausible) {
+      rep["pitch_deg"] = r.camera.pitch() * 180 / M_PI;
+      rep["roll_deg"] = r.camera.roll() * 180 / M_PI;
+      rep["height_m"] = r.camera.cameraHeight();
+      rep["bearing_deg"] = r.camera.bearingDeg();
+    }
+    out.update(rep);
+    // The solved camera even when not applied: the panel previews its fit before the operator applies it.
+    if (r.plausible) out["camera"] = r.camera.toJson();
+    manual_inputs_ = {{"points", cmd.value("points", J::array())},
+                      {"lines", cmd.value("lines", J::array())},
+                      {"verticals", cmd.value("verticals", J::array())},
+                      {"height_m", in.height_m ? J(*in.height_m) : J()},
+                      {"height_sigma", in.height_sigma},
+                      {"lens", in.lens}};
+    if (!cfg_.state_dir.empty()) std::ofstream(cfg_.state_dir + "/calibration_inputs.json") << manual_inputs_.dump(1);
+    {
+      auto h = msg::header("calibration_inputs", cfg_.site_id, cfg_.camera_id, last_stamp_);
+      h["inputs"] = manual_inputs_;
+      emit("calibration/inputs", h, 1, true);
+    }
+    const bool apply = cmd.value("apply", true) && (r.ok || (cmd.value("force", false) && r.plausible));
+    out["applied"] = apply;
+    if (apply) {
+      manual_result_ = rep;
       cancelCalibration();
       camera_ = r.camera;
       onCalibrated(nullptr, "manual");
     }
+  } else if (action == "refine_accept") {
+    if (proposal_ && camera_) {
+      const auto p = *proposal_;
+      camera_ = p.camera;
+      if (manual_result_.is_object())
+        manual_result_["refined"] = {{"spread_before_deg", p.spread_before_deg}, {"spread_after_deg", p.spread_after_deg},
+                                     {"d_pitch_deg", p.d_pitch_deg}, {"d_roll_deg", p.d_roll_deg},
+                                     {"d_yaw_deg", p.d_yaw_deg}, {"d_focal_rel", p.d_focal_rel}};
+      proposal_.reset();
+      onCalibrated(nullptr, "manual-refined");
+      out["ok"] = true;
+      out["message"] = "correction applied";
+    } else {
+      out["ok"] = false;
+      out["message"] = "no correction proposed";
+    }
+  } else if (action == "refine_reject") {
+    proposal_.reset();
+    refine_status_ = "rejected";
+    publishRefine();
+    out["ok"] = true;
   } else {
     out["ok"] = false;
     out["message"] = "unknown action";
   }
-  auto h = msg::header("calibration_command", cfg_.site_id, cfg_.camera_id, last_stamp_);
-  h["result"] = out;
-  emit("calibration/manual/result", h, 1);
+}
+
+nlohmann::json Pipeline::settings() const {
+  nlohmann::json classes = nlohmann::json::array();
+  for (size_t i = 0; i < kClassNames.size(); ++i)
+    if (class_enabled_.size() != kClassNames.size() || class_enabled_[i]) classes.push_back(std::string(kClassNames[i]));
+  return {{"confidence", tracker_.config().new_track_score},
+          {"keypoint_confidence", CameraModel::keypointConfidence()},
+          {"max_range_m", cfg_.max_range},
+          {"max_fps", src_->maxFps()},
+          {"classes", classes},
+          {"roi_filter", cfg_.roi_filter},
+          {"preview_overlay", cfg_.preview_overlay},
+          {"preview_fps", cfg_.preview_fps}};
+}
+
+void Pipeline::applySettings(const nlohmann::json& s, bool persist) {
+  auto num = [&](const char* k, double lo, double hi) -> std::optional<double> {
+    if (!s.contains(k) || !s[k].is_number()) return std::nullopt;
+    return std::clamp(s[k].get<double>(), lo, hi);
+  };
+  if (auto v = num("confidence", 0.05, 0.95)) {
+    auto& tc = tracker_.config();
+    tc.new_track_score = static_cast<float>(*v);
+    tc.high_score = static_cast<float>(std::max(0.1, *v - 0.05));
+    det_->setScoreThreshold(static_cast<float>(std::min(0.15, *v)));
+  }
+  if (auto v = num("keypoint_confidence", 0.0, 1.0)) CameraModel::setKeypointConfidence(*v);
+  if (auto v = num("max_range_m", 20, 1000)) cfg_.max_range = *v;
+  if (auto v = num("max_fps", 0, 60)) src_->setMaxFps(*v);
+  if (auto v = num("preview_fps", 1, 30)) cfg_.preview_fps = *v;
+  if (s.contains("roi_filter") && s["roi_filter"].is_boolean()) cfg_.roi_filter = s["roi_filter"];
+  if (s.contains("preview_overlay") && s["preview_overlay"].is_boolean()) cfg_.preview_overlay = s["preview_overlay"];
+  if (class_enabled_.size() != kClassNames.size()) class_enabled_.assign(kClassNames.size(), true);
+  if (s.contains("classes") && s["classes"].is_array()) {
+    class_enabled_.assign(kClassNames.size(), false);
+    for (const auto& c : s["classes"])
+      for (size_t i = 0; i < kClassNames.size(); ++i)
+        if (c.is_string() && c.get<std::string>() == kClassNames[i]) class_enabled_[i] = true;
+  }
+  if (persist) {
+    if (!cfg_.state_dir.empty()) std::ofstream(cfg_.state_dir + "/settings.json") << settings().dump(1);
+    spdlog::info("Settings changed: {}", s.dump());
+  }
+}
+
+nlohmann::json Pipeline::computeInfo() const {
+  const auto& e = det_->engine();
+  return {{"backend", e.backend()},
+          {"device", e.device()},
+          {"precision", e.precision()},
+          {"model", std::filesystem::path(cfg_.detector_onnx).filename().string()},
+          {"input", {det_->inputSize().width, det_->inputSize().height}},
+          {"available", availableBackends()},
+          {"segmentation", seg_ != nullptr}};
+}
+
+void Pipeline::publishConfig() {
+  auto h = msg::header("config", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  h["site_name"] = cfg_.site_name;
+  h["settings"] = settings();
+  h["compute"] = computeInfo();
+  h["source"] = {{"uri", src_->describe()},
+                 {"live", !src_->isFile()},
+                 {"loop", src_->isFile() && cfg_.source.loop},
+                 {"fps", src_->fps()},
+                 {"width", src_->size().width},
+                 {"height", src_->size().height}};
+  h["placement"] = {{"lat", cfg_.anchor.lat},   {"lon", cfg_.anchor.lon},        {"height_m", cfg_.height_m},
+                 {"height_sigma", cfg_.height_sigma}, {"bearing_deg", cfg_.bearing_deg}, {"lens", cfg_.lens}};
+  h["preview"] = {{"enabled", preview_ != nullptr}, {"port", cfg_.preview_port}};
+  h["calibration_mode"] = cfg_.auto_calibration ? "auto" : "manual";
+  emit("config", h, 1, true);
+}
+
+void Pipeline::setUserMap(const UserMap& m, bool persist) {
+  user_map_ = m;
+  if (persist && !cfg_.state_dir.empty()) std::ofstream(cfg_.state_dir + "/user_map.json") << user_map_.toJson().dump(1);
+  auto h = msg::header("user_map", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  h["map"] = user_map_.toJson();
+  emit("map/user", h, 1, true);
+  spdlog::info("Site layout: {} lanes, {} stop lines, {} crosswalks, road area {}", m.lanes.size(), m.stop_lines.size(),
+               m.crosswalks.size(), m.roi.empty() ? "none" : "set");
+  applyUserMap();
+}
+
+void Pipeline::applyUserMap() {
+  if (!camera_) return;
+  const SiteMap um = user_map_.build(camera_->anchor, cfg_.site_name);
+  if (!um.lanes.empty()) {
+    map_.lanes = um.lanes;
+    map_.zones = um.zones;
+  } else if (std::any_of(map_.lanes.begin(), map_.lanes.end(), [](const Lane& l) { return l.source == "user"; })) {
+    map_.lanes.clear();  // drawn lanes removed: learn them from traffic again
+    map_.zones.clear();
+  }
+  if (!um.crosswalks.empty()) map_.crosswalks = um.crosswalks;
+  map_.roi = um.roi;
+  scene_->setMap(map_);
+  occlusion_.configure(*camera_, map_, cfg_.max_range);
+  refiner_.setLanes(um.lanes.empty() ? std::vector<Lane>{} : map_.lanes);
+  publishMap();
+}
+
+void Pipeline::publishRefine() {
+  auto h = msg::header("calibration_refine", cfg_.site_id, cfg_.camera_id, last_stamp_);
+  nlohmann::json r = {{"status", refine_status_},
+                      {"progress", refiner_.active() ? refiner_.progress() : 0.0},
+                      {"tracks", refiner_.active() ? refiner_.usableTracks() : 0},
+                      {"spread_deg", refine_spread_}};
+  if (proposal_) {
+    const auto& p = *proposal_;
+    r["proposal"] = {{"spread_before_deg", p.spread_before_deg}, {"spread_after_deg", p.spread_after_deg},
+                     {"points_before_m", p.points_before_m},     {"points_after_m", p.points_after_m},
+                     {"d_pitch_deg", p.d_pitch_deg},             {"d_roll_deg", p.d_roll_deg},
+                     {"d_yaw_deg", p.d_yaw_deg},                 {"d_focal_rel", p.d_focal_rel},
+                     {"tracks", p.tracks},                       {"camera", p.camera.toJson()}};
+  }
+  h["refine"] = r;
+  emit("calibration/refine", h, 1, true);
+}
+
+void Pipeline::renderPreview(const cv::Mat& frame, const std::vector<ImageDetection>& dets) {
+  if (!preview_ || !preview_->wanted()) return;
+  const double now = wallNow();
+  if (t_preview_ >= 0 && now - t_preview_ < 1.0 / cfg_.preview_fps) return;
+  t_preview_ = now;
+  cv::Mat img;
+  const double s = std::min(1.0, static_cast<double>(cfg_.preview_width) / frame.cols);
+  cv::resize(frame, img, cv::Size(), s, s, cv::INTER_AREA);
+  if (cfg_.preview_overlay) {
+    // Colours match the panel (BGR).
+    static const cv::Scalar colours[] = {{255, 141, 76}, {59, 212, 255}, {67, 159, 255}, {128, 160, 192},
+                                         {102, 207, 81}, {252, 151, 177}, {230, 200, 60}, {149, 101, 240}};
+    const int lw = std::max(1, static_cast<int>(std::round(img.cols / 640.0)));
+    const double fs = 0.4 * img.cols / 960.0 + 0.1;
+    if (camera_) {
+      static const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+      for (const auto& u : scene_->users()) {
+        if (u.state != TrackState::Confirmed) continue;
+        const auto c = frame_cam_.projectBox({u.pos.x(), u.pos.y(), 0}, u.yaw, u.dims);
+        if (!c) continue;
+        const cv::Scalar col = colours[static_cast<size_t>(u.cls) % 8];
+        std::array<cv::Point, 8> p;
+        for (int k = 0; k < 8; ++k) p[k] = cv::Point(static_cast<int>((*c)[k].x() * s), static_cast<int>((*c)[k].y() * s));
+        for (const auto& e : edges) cv::line(img, p[e[0]], p[e[1]], col, lw, cv::LINE_AA);
+        int top = img.rows;
+        int left = img.cols;
+        for (const auto& q : p) top = std::min(top, q.y), left = std::min(left, q.x);
+        char label[64];
+        std::snprintf(label, sizeof(label), "%u %.0f km/h", u.id, std::abs(u.speed) * 3.6);
+        int base = 0;
+        const cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, fs, 1, &base);
+        const cv::Point o(std::max(0, left), std::max(ts.height + 2, top - 3));
+        cv::rectangle(img, o + cv::Point(-1, -ts.height - 2), o + cv::Point(ts.width + 2, base), col, cv::FILLED);
+        cv::putText(img, label, o, cv::FONT_HERSHEY_SIMPLEX, fs, cv::Scalar(20, 20, 20), 1, cv::LINE_AA);
+      }
+    } else {
+      for (const auto& d : dets) {
+        if (d.score < tracker_.config().new_track_score) continue;
+        const cv::Scalar col = colours[static_cast<size_t>(d.cls) % 8];
+        cv::rectangle(img, cv::Point(static_cast<int>(d.box2d[0] * s), static_cast<int>(d.box2d[1] * s)),
+                      cv::Point(static_cast<int>(d.box2d[2] * s), static_cast<int>(d.box2d[3] * s)), col, lw, cv::LINE_AA);
+      }
+    }
+  }
+  std::vector<uchar> buf;
+  cv::imencode(".jpg", img, buf, {cv::IMWRITE_JPEG_QUALITY, 72});
+  preview_->push(std::move(buf));
 }
 
 void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) {
@@ -384,7 +744,16 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   }
   cv::Mat net;
   lb_->apply(frame, net);
-  const auto dets = det_->detect(net, *lb_);
+  auto dets = det_->detect(net, *lb_);
+  dets.erase(std::remove_if(dets.begin(), dets.end(),
+                            [this](const ImageDetection& d) { return !class_enabled_[static_cast<size_t>(d.cls)]; }),
+             dets.end());
+  if (src_->loops() != loops_seen_) {
+    // A looping file jumped back to its start: old tracks would teleport.
+    loops_seen_ = src_->loops();
+    tracker_.reset();
+    spdlog::info("Video restarted (loop {}): tracks reset", loops_seen_);
+  }
 
   if (!camera_) {
     // The calibration view is also needed before any calibration exists (manual calibration).
@@ -416,9 +785,12 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
                      {"reasons", {cfg_.auto_calibration
                                       ? "auto-calibration in progress " + std::to_string(int(calibrator_->progress() * 100)) + "%"
                                       : std::string("waiting for manual calibration (Calibration tab)")}},
-                     {"pipeline", {{"fps", fps_}, {"detector_ms", det_->lastLatencyMs()}}}};
+                     {"pipeline", {{"fps", fps_}, {"detector_ms", det_->lastLatencyMs()}}},
+                     {"compute", computeInfo()},
+                     {"source", {{"live", !src_->isFile()}, {"loop", src_->isFile() && cfg_.source.loop}}}};
       emit("health", h);
     }
+    renderPreview(frame, dets);
     return;
   }
 
@@ -447,11 +819,37 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   std::vector<Detection3D> d3;
   for (const auto& d : dets) {
     auto x = frame_cam_.lift(d);
-    if (x && x->range < cfg_.max_range) d3.push_back(*x);
+    if (!x || x->range >= cfg_.max_range) continue;
+    if (cfg_.roi_filter && map_.roi.size() >= 3 && !insidePolygon(map_.roi, x->bottom.head<2>())) continue;
+    d3.push_back(*x);
   }
   // 3. Track.
   auto occ_fn = [this](const Eigen::Vector2d& p) { return occlusion_.occluded(p); };
   const auto& tracks = tracker_.update(stamp, d3, occ_fn);
+  // Paths of moving vehicles for the traffic check of the calibration.
+  if (refine_status_ == "collecting") {
+    for (const auto& t : tracks)
+      if (t.state == TrackState::Confirmed && isVehicle(t.cls) && t.last_update == stamp && t.speed() > 2.0)
+        refiner_.add(t.id, stamp, t.last_kp);
+    if (refiner_.ready() && !refine_future_.valid()) {
+      refine_status_ = "solving";
+      refine_future_ = std::async(std::launch::async, [r = refiner_] { return r.solve(); });
+      publishRefine();
+    } else if (t_refine_pub_ < 0 || stamp - t_refine_pub_ > 5.0) {
+      t_refine_pub_ = stamp;
+      publishRefine();
+    }
+  } else if (refine_future_.valid() && refine_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    proposal_ = refine_future_.get();
+    refine_spread_ = refiner_.currentSpread();
+    refine_status_ = proposal_ ? "proposal" : "consistent";
+    if (proposal_)
+      spdlog::info("Calibration check: correction proposed (path spread {:.2f} -> {:.2f} deg)", proposal_->spread_before_deg,
+                   proposal_->spread_after_deg);
+    else
+      spdlog::info("Calibration check: consistent with the traffic (path spread {:.2f} deg)", refine_spread_);
+    publishRefine();
+  }
 
   // 4. Lane learning from moving vehicles.
   for (const auto& t : tracks) {
@@ -476,9 +874,14 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
 
   // 6. Self-monitoring.
   calmon_.update(stamp, frame_cam_, d3, scene_->users(), map_);
-  if (seg_ && (t_seg_ < 0 || stamp - t_seg_ > 2.0)) {
-    t_seg_ = stamp;
-    occlusion_.updateStatic(seg_->segment(frame), frame_cam_);
+  if (seg_) {
+    // Segmentation runs off the frame loop (slow on CPU); its result is applied when ready.
+    if (seg_future_.valid() && seg_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      occlusion_.updateStatic(seg_future_.get(), frame_cam_);
+    } else if (!seg_future_.valid() && (t_seg_ < 0 || stamp - t_seg_ > 2.0)) {
+      t_seg_ = stamp;
+      seg_future_ = std::async(std::launch::async, [this, f = frame.clone()] { return seg_->segment(f); });
+    }
   }
   if (t_dyn_ < 0 || stamp - t_dyn_ > 0.2) {
     t_dyn_ = stamp;
@@ -505,6 +908,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   }
 
   // 7. Outputs.
+  renderPreview(frame, dets);
   latency_ms_ = (wallNow() - capture_wall) * 1000.0;
   if (cfg_.publish_snapshot && !snapshot_sent_) publishSnapshot(frame, dets);
   if (t_objects_ < 0 || stamp - t_objects_ >= 1.0 / cfg_.objects_hz - 1e-3) {
@@ -557,6 +961,9 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     h["health"]["pipeline"]["frames"] = frames_;
     h["health"]["pipeline"]["dropped"] = dropped_;
     h["health"]["calibration_confidence"] = calib_confidence_;
+    h["health"]["compute"] = computeInfo();
+    h["health"]["source"] = {{"live", !src_->isFile()}, {"loop", src_->isFile() && cfg_.source.loop}};
+    h["health"]["preview_clients"] = preview_ ? preview_->clients() : 0;
     if (!safety_ok)
       h["health"]["reasons"].push_back("near-miss events suppressed: calibration confidence " +
                                          std::to_string(int(calib_confidence_ * 100)) + " %");

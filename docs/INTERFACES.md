@@ -1,8 +1,8 @@
 # Interfaces
 
 JunctionPerception is one module per camera. It takes a video stream plus a small YAML site
-configuration and emits metadata only. Images never leave the device, with one exception: a pixelated
-calibration snapshot, which is optional.
+configuration and emits metadata. Images leave the device only in two optional forms: a pixelated
+calibration snapshot (MQTT) and the live camera view for the panel (HTTP MJPEG, `preview.enabled`).
 
 ## Input
 
@@ -41,19 +41,39 @@ All timestamps are stream time (UNIX seconds).
 | `map` | on change | yes | lanes, stop lines, zones, crosswalks (local ENU metres) + camera |
 | `snapshot` | calibration mode | yes | optional pixelated JPEG for the calibration view (also before any calibration exists), with the frame size and the configured camera position |
 | `calibration/manual/result` | on command | no | outcome of an operator command (below) |
+| `calibration/inputs` | on solve | yes | the last manual-calibration inputs (points, lines, verticals, height, lens), so the panel can reload them |
+| `calibration/refine` | 0.2 Hz while collecting | yes | traffic check of a manual calibration: `status` (`collecting`, `solving`, `proposal`, `consistent`, `rejected`), `progress`, `tracks`, `spread_deg`, optional `proposal` (before/after path spread and point fit, pitch/roll/yaw/focal correction, camera) |
+| `config` | on change | yes | live settings, compute (`backend` `tensorrt`/`cpu`, `device`, `precision`, `model`, `input`), source (`live`, `loop`, size, fps), camera `placement`, live-view port |
+| `map/user` | on change | yes | installer-drawn layout (WGS84): `lanes` (`id`, `points` in travel direction, `width`), `stop_lines`, `crosswalks`, `roi` |
 
-### Operator commands (`calibration/manual`, subscribed)
+### Operator commands (subscribed)
 
 The web panel publishes JSON commands to `<prefix>/<site>/<camera>/calibration/manual`:
 
 | `action` | Fields | Effect |
 |---|---|---|
-| `solve` | `points: [{u, v, lat, lon}, …]` (≥ 4; frame pixels) | manual calibration from ground correspondences: focal length (unless configured), pose and camera position are solved and the result replaces the current calibration (persisted like an auto-calibration) |
-| `auto` | – | discard the calibration and restart auto-calibration |
+| `solve` | `points: [{u, v, lat, lon}, …]` (≥ 4; frame pixels), optional `lines: [{px: [[u, v], …], geo: [[lat, lon], [lat, lon]]}]`, `verticals: [[[u, v], [u, v]]]`, `height_m`, `height_sigma`, `lens` (`unknown`, `phone_wide`, `phone_2x`, `phone_3x`, `cctv`), `apply` (default true), `force` | manual calibration (maximum a-posteriori: points and lines weighted by click and map accuracy at their distance, robust loss, priors on focal length, height and position). Applied when the fit is acceptable (or `force` and physically plausible) |
+| `auto` | – | discard the calibration (manual mode: wait for a new one) |
 | `snapshot` | – | publish a fresh calibration snapshot |
+| `refine_accept` / `refine_reject` | – | apply or dismiss the traffic-check proposal |
 
-Every command is answered on `calibration/manual/result` with `ok`, `message` and, for `solve`, the
-reprojection error (`rms_px`, `max_px`). Enable MQTT authentication before exposing this channel.
+`solve` is answered on `calibration/manual/result` with `ok`, `plausible`, `applied`, `quality` (`good`
+≤ 0.5 m, `fair` ≤ 1.25 m, `poor`), `ground_rms_m`/`ground_max_m`, `rms_px`/`max_px`, `focal_px`,
+`fov_deg`, `pitch_deg`, `roll_deg`, `height_m`, `bearing_deg`, `warnings`, per-input `residuals`
+(`kind`, `index`, `px`, `m`), `accuracy` (expected position sigma by range) and the solved `camera`.
+
+`<prefix>/<site>/<camera>/map/user/set` takes `{"map": {lanes, stop_lines, crosswalks, roi}}` (as
+`map/user`); drawn lanes replace the learned ones. `<prefix>/<site>/<camera>/config/set` takes
+`{"settings": {…}}` with any of `confidence`, `keypoint_confidence`, `max_range_m`, `max_fps`, `classes`,
+`roi_filter`, `preview_overlay`, `preview_fps`; applied within a frame and persisted in
+`state_dir/settings.json`. Enable MQTT authentication before exposing these channels.
+
+### Live camera view (HTTP)
+
+Each runtime serves `GET /video.mjpg` (MJPEG, `preview.fps`, `preview.width`, optional boxes) and
+`GET /frame.jpg` on `preview.port` (default 8081); frames are only encoded while someone watches. The
+panel proxies them at `/live/<site>/`. Unlike the calibration snapshot, this view is not pixelated:
+disable it (`preview.enabled: false`) where video may not leave the device.
 
 ### Road user (`objects[]`)
 
@@ -72,6 +92,7 @@ reprojection error (`rms_px`, `max_px`). Enable MQTT authentication before expos
 | `sigma.pos/speed/accel` | m, m/s, m/s² | 1-σ uncertainty from the filter |
 | `lane`, `approach`, `lane_s`, `lateral` | –, –, m, m | lane assignment and position along/across it |
 | `dist_to_stop` | m | front bumper to stop line (positive before the line) |
+| `decel_required` | m/s² | constant deceleration needed to stop at the line (v²/2d); above about 3.5 a comfortable stop is no longer possible |
 | `eta` | s | time to reach the stop line, using speed and acceleration |
 | `eta_cv` | s | the same at constant speed |
 | `eta_sigma` | s | 1-σ uncertainty of `eta` |

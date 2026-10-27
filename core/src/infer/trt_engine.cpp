@@ -30,6 +30,26 @@ void check(cudaError_t e, const char* what) {
   if (e != cudaSuccess) throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(e));
 }
 
+DType toDType(nvinfer1::DataType t) {
+  switch (t) {
+    case nvinfer1::DataType::kHALF: return DType::F16;
+    case nvinfer1::DataType::kINT32: return DType::I32;
+    case nvinfer1::DataType::kINT64: return DType::I64;
+    case nvinfer1::DataType::kINT8:
+    case nvinfer1::DataType::kUINT8: return DType::U8;
+    case nvinfer1::DataType::kBOOL: return DType::Bool;
+    default: return DType::F32;
+  }
+}
+
+std::string gpuName() {
+  cudaDeviceProp p{};
+  int dev = 0;
+  cudaGetDevice(&dev);
+  cudaGetDeviceProperties(&p, dev);
+  return p.name;
+}
+
 size_t elementSize(nvinfer1::DataType t) {
   switch (t) {
     case nvinfer1::DataType::kFLOAT: return 4;
@@ -67,8 +87,11 @@ std::unique_ptr<TrtEngine> TrtEngine::fromOnnx(const std::string& onnx_path, con
   namespace fs = std::filesystem;
   const std::string engine_path = onnx_path + "." + gpuTag() + (opt.int8 ? ".int8" : opt.fp16 ? ".fp16" : ".fp32") +
                                   ".engine";
+  const std::string precision = opt.int8 ? "int8" : opt.fp16 ? "fp16" : "fp32";
   if (fs::exists(engine_path) && fs::last_write_time(engine_path) >= fs::last_write_time(onnx_path)) {
-    return fromEngine(engine_path);
+    auto e = fromEngine(engine_path);
+    e->precision_ = precision;
+    return e;
   }
   spdlog::info("Building TensorRT engine from {} (this can take a few minutes)", onnx_path);
   std::unique_ptr<nvinfer1::IBuilder> builder(nvinfer1::createInferBuilder(g_logger));
@@ -84,7 +107,15 @@ std::unique_ptr<TrtEngine> TrtEngine::fromOnnx(const std::string& onnx_path, con
   if (!plan) throw std::runtime_error("TensorRT engine build failed for " + onnx_path);
   std::ofstream(engine_path, std::ios::binary).write(static_cast<const char*>(plan->data()), plan->size());
   spdlog::info("Cached engine at {}", engine_path);
-  return fromEngine(engine_path);
+  auto e = fromEngine(engine_path);
+  e->precision_ = precision;
+  return e;
+}
+
+int TrtEngine::deviceCount() {
+  int n = 0;
+  if (cudaGetDeviceCount(&n) != cudaSuccess) return 0;
+  return n;
 }
 
 std::unique_ptr<TrtEngine> TrtEngine::fromEngine(const std::string& engine_path) {
@@ -99,6 +130,7 @@ std::unique_ptr<TrtEngine> TrtEngine::fromEngine(const std::string& engine_path)
   e->impl_->ctx.reset(e->impl_->engine->createExecutionContext());
   check(cudaStreamCreate(&e->impl_->stream), "cudaStreamCreate");
   e->setup();
+  e->device_name_ = gpuName();
   return e;
 }
 
@@ -110,7 +142,7 @@ void TrtEngine::setup() {
     t.is_input = eng.getTensorIOMode(t.name.c_str()) == nvinfer1::TensorIOMode::kINPUT;
     const auto dims = eng.getTensorShape(t.name.c_str());
     const auto dt = eng.getTensorDataType(t.name.c_str());
-    t.dtype = static_cast<int>(dt);
+    t.dtype = toDType(dt);
     size_t n = 1;
     for (int d = 0; d < dims.nbDims; ++d) {
       t.shape.push_back(dims.d[d]);

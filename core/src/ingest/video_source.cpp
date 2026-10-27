@@ -14,6 +14,7 @@ bool startsWith(const std::string& s, const std::string& p) { return s.rfind(p, 
 }  // namespace
 
 VideoSource::VideoSource(VideoSourceConfig cfg) : cfg_(std::move(cfg)) {
+  max_fps_ = cfg_.max_fps;
   if (!open()) throw std::runtime_error("cannot open video source " + cfg_.uri);
 }
 
@@ -65,6 +66,7 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
         file_t0_ += frames_ / fps_;
         wall0_ = std::chrono::steady_clock::now();
         frames_ = 0;
+        loops_++;
         continue;
       }
       if (is_file_) return false;
@@ -90,7 +92,8 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
       stamp = nowSeconds();
       frames_++;
     }
-    if (cfg_.max_fps > 0 && last_emit_ >= 0 && stamp - last_emit_ < 1.0 / cfg_.max_fps - 1e-3) continue;
+    const double mf = max_fps_.load();
+    if (mf > 0 && last_emit_ >= 0 && stamp - last_emit_ < 1.0 / mf - 1e-3) continue;
     last_emit_ = stamp;
     return true;
   }

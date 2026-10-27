@@ -3,6 +3,8 @@ set(JP_CORE_SOURCES
   src/tracking/tracker.cpp
   src/scene/site_map.cpp
   src/scene/intersection.cpp
+  src/scene/user_map.cpp
+  src/calib/refiner.cpp
   src/safety/near_miss.cpp
   src/health/monitors.cpp
   src/calib/auto_calibrator.cpp
@@ -22,7 +24,18 @@ if(JP_WITH_MQTT)
   target_compile_definitions(jp_core PUBLIC JP_HAVE_MQTT)
 endif()
 
-if(JP_WITH_TENSORRT)
-  add_library(jp_infer src/infer/trt_engine.cpp src/infer/detector.cpp src/pipeline.cpp)
-  target_link_libraries(jp_infer PUBLIC jp_core jp_tensorrt)
+# Inference (TensorRT and/or ONNX Runtime) and the pipeline.
+if(JP_WITH_TENSORRT OR JP_WITH_ONNXRUNTIME)
+  add_library(jp_infer src/infer/engine.cpp src/infer/detector.cpp src/output/preview_server.cpp src/pipeline.cpp)
+  target_link_libraries(jp_infer PUBLIC jp_core)
+  if(JP_WITH_TENSORRT)
+    target_sources(jp_infer PRIVATE src/infer/trt_engine.cpp)
+    target_link_libraries(jp_infer PUBLIC jp_tensorrt)
+    target_compile_definitions(jp_infer PUBLIC JP_HAVE_TENSORRT)
+  endif()
+  if(JP_WITH_ONNXRUNTIME)
+    target_sources(jp_infer PRIVATE src/infer/ort_engine.cpp)
+    target_link_libraries(jp_infer PUBLIC jp_onnxruntime)
+    target_compile_definitions(jp_infer PUBLIC JP_HAVE_ORT)
+  endif()
 endif()

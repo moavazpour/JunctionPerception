@@ -1,4 +1,4 @@
-if(JP_WITH_TENSORRT)
+if(JP_WITH_TENSORRT OR JP_WITH_ONNXRUNTIME)
   add_executable(junction_perception junction_perception/main.cpp)
   target_link_libraries(junction_perception PRIVATE jp_infer)
 

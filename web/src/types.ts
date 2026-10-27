@@ -39,6 +39,7 @@ export interface RoadUser {
   eta?: number;
   eta_cv?: number;
   eta_sigma?: number;
+  decel_required?: number;
   stopping?: boolean;
   queued?: boolean;
 }
@@ -145,6 +146,10 @@ export interface Health {
     speed_p95: number;
     samples: number;
   };
+  compute?: ComputeInfo;
+  source?: { live: boolean; loop: boolean };
+  preview_clients?: number;
+  calibration_confidence?: number;
   coverage?: { zone: string; visible: number; static_occluded: number; dynamic_occluded: number; unobservable: number }[];
 }
 
@@ -207,5 +212,122 @@ export interface SnapshotMsg extends Header {
 }
 
 export interface ManualResultMsg extends Header {
-  result: { action: string; ok: boolean; message?: string; rms_px?: number; max_px?: number };
+  result: SolveReport;
+}
+
+// ------------------------------------------------------------------ operator topics (panel <-> runtime)
+
+export interface Settings {
+  confidence: number;
+  keypoint_confidence: number;
+  max_range_m: number;
+  max_fps: number;
+  classes: ObjectClass[];
+  roi_filter: boolean;
+  preview_overlay: boolean;
+  preview_fps: number;
+}
+
+export interface ComputeInfo {
+  backend: "tensorrt" | "cpu";
+  device: string;
+  precision: string;
+  model: string;
+  input: [number, number];
+  available: string[];
+  segmentation: boolean;
+}
+
+export interface ConfigMsg extends Header {
+  site_name: string;
+  settings: Settings;
+  compute: ComputeInfo;
+  source: { uri: string; live: boolean; loop: boolean; fps: number; width: number; height: number };
+  placement: { lat: number; lon: number; height_m: number; height_sigma: number; bearing_deg: number; lens: string };
+  preview: { enabled: boolean; port: number };
+  calibration_mode: "manual" | "auto";
+}
+
+// Installer-drawn layout (WGS84 [lat, lon]).
+export interface UserLane {
+  id: string;
+  name?: string;
+  points: [number, number][];
+  width: number;
+}
+export interface UserMap {
+  lanes: UserLane[];
+  stop_lines: [number, number][][];
+  crosswalks: [number, number][][];
+  roi: [number, number][];
+}
+export interface UserMapMsg extends Header {
+  map: UserMap;
+}
+
+export interface CalibPoint {
+  u: number;
+  v: number;
+  lat: number;
+  lon: number;
+}
+export interface CalibLine {
+  px: [number, number][];
+  geo: [number, number][];
+}
+export interface CalibInputs {
+  points: CalibPoint[];
+  lines: CalibLine[];
+  verticals: [number, number][][];
+  height_m?: number | null;
+  height_sigma?: number;
+  lens?: string;
+}
+export interface CalibInputsMsg extends Header {
+  inputs: CalibInputs;
+}
+
+export interface SolveReport {
+  action: string;
+  ok: boolean;
+  plausible?: boolean;
+  applied?: boolean;
+  message?: string;
+  quality?: "good" | "fair" | "poor";
+  rms_px?: number;
+  max_px?: number;
+  ground_rms_m?: number;
+  ground_max_m?: number;
+  focal_px?: number;
+  fov_deg?: number;
+  pitch_deg?: number;
+  roll_deg?: number;
+  height_m?: number;
+  bearing_deg?: number;
+  warnings?: string[];
+  residuals?: { kind: "point" | "line" | "vertical"; index: number; px: number; m: number }[];
+  accuracy?: { range_m: number; sigma_m: number }[];
+  camera?: CameraJson;
+}
+
+export interface RefineState {
+  status: "idle" | "collecting" | "solving" | "proposal" | "consistent" | "rejected";
+  progress: number;
+  tracks: number;
+  spread_deg: number;
+  proposal?: {
+    spread_before_deg: number;
+    spread_after_deg: number;
+    points_before_m: number;
+    points_after_m: number;
+    d_pitch_deg: number;
+    d_roll_deg: number;
+    d_yaw_deg: number;
+    d_focal_rel: number;
+    tracks: number;
+    camera: CameraJson;
+  };
+}
+export interface RefineMsg extends Header {
+  refine: RefineState;
 }

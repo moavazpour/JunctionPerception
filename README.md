@@ -13,8 +13,10 @@ be trusted.
   on JP-Unified, a merge of TUMTraf, A9, LUMPI, KITTI and DAIR-V2X with one label format.
 - Automatic calibration from traffic: focal length, pitch, roll and height from the predicted car boxes
   (re-projection of fitted boxes, size priors, speed consistency), OpenStreetMap-aligned
-  geo-registration, and a manual fallback in the web panel (click points in the camera view and on an
-  aerial map).
+  geo-registration. The deployed path is manual calibration in the web panel: point pairs and traced
+  lane lines between the camera image and the aerial map, with height and lens priors, per-point errors,
+  a visual check (lanes and a 5 m grid drawn into the image) and a traffic check that proposes small
+  corrections.
 - 3D tracking with a CTRA Kalman filter: speed, acceleration and turn rate, each with uncertainty.
 - Intersection model:
   - lanes and stop lines (learned from traffic or configured)
@@ -27,16 +29,18 @@ be trusted.
   - weather and visibility (fog, night, glare, blur, lens obstruction, frozen stream) and effective detection range
   - static and dynamic occlusion of every lane
   - a fused integrity level and confidence
-- Privacy by design: frames never leave process memory and only metadata is published.
+- Privacy by design: only metadata is published. The live camera view for the panel (MJPEG) can be
+  switched off (`preview.enabled: false`); the calibration snapshot pixelates road users.
 - Outputs:
   - MQTT JSON
   - ETSI CPM content
   - presence topics per virtual detector for signal controllers
-  - a live Three.js 3D web panel
+  - a web panel (React + Three.js): live 3D twin on an OpenStreetMap-drawn road map, live camera view,
+    per-object class, speed and acceleration, statistics, light and dark theme, settings and calibration
 
-**Stack.** C++20 runtime with TensorRT 10 and OpenCV, and a paho MQTT client; it ships as Docker
-images for x86/dGPU and Jetson Orin. Models are trained in PyTorch and exported to ONNX. The web panel
-uses TypeScript, Three.js and Vite.
+**Stack.** C++20 runtime with TensorRT 10 (GPU) or ONNX Runtime (CPU) and OpenCV, and a paho MQTT client;
+it ships as Docker images for x86/dGPU, CPU-only hosts and Jetson Orin. Models are trained in PyTorch and
+exported to ONNX. The web panel uses React, TypeScript, Tailwind, Three.js, Leaflet and Vite.
 
 | Document | Content |
 |---|---|
@@ -55,7 +59,7 @@ core/       C++20 library: geometry, inference, calibration, tracking, scene, sa
 apps/       junction_perception (runtime), jp_bench (benchmark runner)
 tests/      GoogleTest unit tests (geometry, tracking, safety, auto-calibration)
 training/   jpdata (one converter per dataset, merge), yolo3d (YOLO export, training, ONNX export), evaluation
-web/        Three.js panel
+web/        React + Three.js panel
 tools/      site setup from OpenStreetMap, training and post-training deployment scripts
 configs/    site configurations
 docker/     Dockerfiles (x86, Jetson, web), broker and proxy config

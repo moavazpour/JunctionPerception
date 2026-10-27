@@ -6,14 +6,20 @@ import * as THREE from "three";
 const R = 6378137.0;
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 
-export const STYLE = {
-  background: 0x24272c,
-  ground: 0x2c2f35,
-  road: 0x141619,
-  sidewalk: 0x3b3f46,
-  curb: 0x8e959e,
-  marking: 0xe9ecef,
-  stopLine: 0xffffff,
+export interface MapStyle {
+  background: number;
+  ground: number;
+  road: number;
+  sidewalk: number;
+  curb: number;
+  marking: number;
+  stopLine: number;
+}
+
+// In-car visualisation palettes: dark (night) and light (day).
+export const PALETTES: Record<"dark" | "light", MapStyle> = {
+  dark: { background: 0x24272c, ground: 0x2c2f35, road: 0x141619, sidewalk: 0x3b3f46, curb: 0x8e959e, marking: 0xe9ecef, stopLine: 0xffffff },
+  light: { background: 0xe9ebee, ground: 0xf2f3f5, road: 0xb9bec6, sidewalk: 0xdde0e5, curb: 0x8f969f, marking: 0xffffff, stopLine: 0xffffff },
 };
 
 type V2 = [number, number];
@@ -150,7 +156,7 @@ function trafficLight(): THREE.Group {
 
 // ---------------------------------------------------------------- build
 
-export async function buildStylizedMap(lat: number, lon: number, radius = 350): Promise<THREE.Group | null> {
+export async function buildStylizedMap(lat: number, lon: number, STYLE: MapStyle, radius = 350): Promise<THREE.Group | null> {
   const osm = await fetchOsm(lat, lon, radius);
   if (!osm) return null;
   const kx = (R * Math.PI * Math.cos((lat * Math.PI) / 180)) / 180, ky = (R * Math.PI) / 180;

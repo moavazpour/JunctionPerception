@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (RGB triplets so Tailwind can apply opacity). Light: day in-car UI; dark: night. */
+:root {
+  --bg: 241 242 245;
+  --panel: 255 255 255;
+  --panel2: 246 247 249;
+  --line: 226 229 234;
+  --fg: 22 25 30;
+  --muted: 107 114 128;
+  --accent: 62 106 225;
+  --ok: 22 163 74;
+  --warn: 217 119 6;
+  --bad: 220 38 38;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: 15 17 20;
+  --panel: 23 26 31;
+  --panel2: 30 34 40;
+  --line: 42 47 55;
+  --fg: 232 234 237;
+  --muted: 139 146 156;
+  --accent: 88 132 255;
+  --ok: 52 199 89;
+  --warn: 255 176 32;
+  --bad: 255 69 58;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  @apply bg-bg font-sans text-fg antialiased;
+  margin: 0;
+  font-size: 14px;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-panel shadow-card;
+  }
+  .card-title {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-muted;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-panel px-3 py-1.5 text-sm font-medium
+      text-fg transition hover:bg-panel2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn border-transparent bg-accent text-white hover:bg-accent/90;
+  }
+  .btn-danger {
+    @apply btn border-bad/40 text-bad hover:bg-bad/10;
+  }
+  .btn-ghost {
+    @apply btn border-transparent bg-transparent hover:bg-panel2;
+  }
+  .seg {
+    @apply inline-flex rounded-lg border border-line bg-panel2 p-0.5;
+  }
+  .seg > button {
+    @apply rounded-md px-2.5 py-1 text-xs font-medium text-muted transition hover:text-fg;
+  }
+  .seg > button[data-on="true"] {
+    @apply bg-panel text-fg shadow-sm;
+  }
+  .input {
+    @apply w-full rounded-lg border border-line bg-panel px-3 py-1.5 text-sm text-fg outline-none placeholder:text-muted/70
+      focus:border-accent focus:ring-2 focus:ring-accent/20;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-muted;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-panel2 px-2 py-0.5 text-[11px] font-medium text-muted;
+  }
+  .kbd {
+    @apply rounded border border-line bg-panel2 px-1 font-mono text-[11px];
+  }
+}
+
+/* Floating labels in the 3D view. */
+.labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.tag {
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(var(--fg));
+  background: rgb(var(--panel) / 0.85);
+  border: 1px solid rgb(var(--line));
+  white-space: nowrap;
+  transform: translateY(-4px);
+}
+.tag.sel {
+  background: rgb(var(--accent));
+  border-color: rgb(var(--accent));
+  color: white;
+}
+
+/* Leaflet inside the panel. */
+.leaflet-container {
+  font: inherit;
+  background: rgb(var(--panel2));
+}
+.leaflet-tooltip.jp-tip {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+}
+.cursor-crosshair .leaflet-container,
+.cursor-crosshair.leaflet-container {
+  cursor: crosshair;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+input[type="range"] {
+  accent-color: rgb(var(--accent));
+}

@@ -1,20 +1,30 @@
 # x86_64 + NVIDIA dGPU. TensorRT 10.3 / CUDA 12.6 to match JetPack 6.1 on Jetson Orin.
+# Also contains the ONNX Runtime CPU backend: the same image runs on hosts without a GPU (models.backend: cpu,
+# or auto-detected when no GPU is visible).
 ARG BASE=nvcr.io/nvidia/tensorrt:24.08-py3
+ARG ORT_VERSION=1.20.1
 
-FROM ${BASE} AS build
+FROM ${BASE} AS deps
+ARG ORT_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake ninja-build pkg-config \
+      build-essential cmake ninja-build pkg-config curl ca-certificates \
       libopencv-dev libeigen3-dev libyaml-cpp-dev nlohmann-json3-dev libspdlog-dev libgtest-dev \
       libpaho-mqtt-dev \
     && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/onnxruntime \
+ && curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz \
+    | tar -xz -C /opt/onnxruntime --strip-components=1
+
+FROM deps AS build
 WORKDIR /src
 COPY CMakeLists.txt ./
 COPY cmake cmake
 COPY core core
 COPY apps apps
 COPY tests tests
-RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp \
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp -DJP_WITH_ONNXRUNTIME=ON \
+      -DCMAKE_INSTALL_RPATH=/opt/onnxruntime/lib \
  && cmake --build build -j"$(nproc)" \
  && ctest --test-dir build --output-on-failure \
  && cmake --install build
@@ -26,9 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libopencv-features2d4.5d libopencv-calib3d4.5d libyaml-cpp0.7 libspdlog1 libpaho-mqtt1.3 \
       gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=build /opt/onnxruntime/lib /opt/onnxruntime/lib
 COPY --from=build /opt/jp /opt/jp
-ENV PATH=/opt/jp/bin:$PATH
+ENV PATH=/opt/jp/bin:$PATH LD_LIBRARY_PATH=/opt/onnxruntime/lib:$LD_LIBRARY_PATH
 # Engines are cached next to the ONNX files in /models; state (calibration, learned map) in /data/state.
+# 8081: live camera view (MJPEG) for the web panel.
+EXPOSE 8081
 VOLUME ["/models", "/data/state", "/config"]
 ENTRYPOINT ["junction_perception"]
 CMD ["--config", "/config/site.yaml"]
