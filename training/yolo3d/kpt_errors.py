@@ -16,6 +16,9 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
+# Corner relabellings of one cuboid: identity, heading flipped 180 deg, mirrored left/right, mirrored front/back.
+PERMS = {"same": [0, 1, 2, 3, 4, 5, 6, 7, 8], "flipped 180": [0, 3, 4, 1, 2, 7, 8, 5, 6],
+         "mirror L/R": [0, 2, 1, 4, 3, 6, 5, 8, 7], "mirror F/B": [0, 4, 3, 2, 1, 8, 7, 6, 5]}
 NAMES = ["bottom centre", "bottom FL", "bottom FR", "bottom RR", "bottom RL", "top FL", "top FR", "top RR", "top RL"]
 
 
@@ -35,6 +38,7 @@ def main():
     ap.add_argument("--imgsz", type=int, default=960)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--symmetric", action="store_true", help="ignore which corner is which (heading label)")
     a = ap.parse_args()
     torch.set_num_threads(a.threads)
     model = YOLO(a.weights)
@@ -43,6 +47,7 @@ def main():
     abs_err = [[] for _ in range(9)]
     rel_err = [[] for _ in range(9)]
     matched = total = 0
+    perm_count = {}
     for p in imgs[: a.n]:
         lab = a.data / "labels" / a.split / (p.stem + ".txt")
         if not lab.exists():
@@ -72,6 +77,17 @@ def main():
             used.add(bi)
             matched += 1
             kg = np.array(g[5:], float).reshape(9, 3)
+            if a.symmetric:
+                # The same cuboid with its corners relabelled (heading flipped by 180 deg, or mirrored):
+                # position, footprint and size are unchanged, only the heading label differs.
+                def err(perm):
+                    m = kg[perm, 2] > 0
+                    d = np.hypot(pk[bi, :, 0] - kg[perm, 0] * W, pk[bi, :, 1] - kg[perm, 1] * H)
+                    return float(d[m].mean()) if m.any() else 0.0
+                best_p = min(PERMS.values(), key=err)
+                kind = next(n for n, p in PERMS.items() if p == best_p)
+                perm_count[kind] = perm_count.get(kind, 0) + 1
+                kg = kg[best_p]
             for k in range(9):
                 if kg[k, 2] == 0:  # outside the image
                     continue
@@ -79,6 +95,8 @@ def main():
                 abs_err[k].append(e)
                 rel_err[k].append(e / max(bh, 1.0))
     print(f"{matched}/{total} ground-truth objects matched (IoU >= 0.5)")
+    if perm_count:
+        print("best corner labelling:", {k: f"{100 * v / matched:.1f} %" for k, v in perm_count.items()})
     print(f"{'keypoint':14s} {'median px':>9s} {'p90 px':>8s} {'median %h':>9s} {'p90 %h':>8s}")
     for k in range(9):
         e, rel = np.array(abs_err[k]), np.array(rel_err[k]) * 100
