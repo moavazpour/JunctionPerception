@@ -69,6 +69,8 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
   if (auto k = n["calibration"]) {
     c.calibration_file = k["file"].as<std::string>("");
     c.force_recalibration = k["force"].as<bool>(false);
+    c.auto_calibration = k["mode"].as<std::string>("auto") != "manual";
+    c.min_safety_confidence = k["min_safety_confidence"].as<double>(c.min_safety_confidence);
     c.road_bearing_deg = opt<double>(k["road_bearing_deg"]);
     c.calibration_min_s = k["min_duration_s"].as<double>(c.calibration_min_s);
     c.publish_snapshot = k["publish_snapshot"].as<bool>(false);
@@ -158,6 +160,8 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
     CameraModel cam = CameraModel::fromJson(j);
     if (cam.width() == fs.width && cam.height() == fs.height) {
       camera_ = cam;
+      // A stored manual calibration is trusted; a stored auto-calibration keeps its own estimate.
+      calib_confidence_ = j.value("source", "") == "manual" ? 1.0 : j.value("confidence", 0.0);
       onCalibrated(nullptr, "file");
     } else {
       spdlog::warn("Stored calibration is for a different resolution; recalibrating");
@@ -225,7 +229,10 @@ void Pipeline::onCalibrated(const CalibrationResult* res, const std::string& sou
   }
   scene_->setMap(map_);
   occlusion_.configure(cam, map_, cfg_.max_range);
+  if (res) calib_confidence_ = res->confidence;
+  else if (source == "manual") calib_confidence_ = 1.0;  // "file" and "drift-compensated" keep the current value
   nlohmann::json cj = msg::calibration(cam, res, source);
+  cj["confidence"] = calib_confidence_;
   cj["road_axis_yaw"] = axis;
   if (!cfg_.calibration_file.empty() && source != "file") {
     std::ofstream(cfg_.calibration_file) << cj.dump(1);
@@ -378,7 +385,9 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   if (!camera_) {
     // The calibration view is also needed before any calibration exists (manual calibration).
     if (cfg_.publish_snapshot && !snapshot_sent_ && frames_ > 30) publishSnapshot(frame, dets);
-    if (!calib_future_.valid()) {
+    if (!cfg_.auto_calibration) {
+      // Manual mode: wait for the operator's calibration (web panel).
+    } else if (!calib_future_.valid()) {
       calibrator_->add(stamp, dets);
       if (calibrator_->ready()) {
         spdlog::info("Solving the auto-calibration ({} s of traffic)", cfg_.calibration_min_s);
@@ -400,7 +409,9 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
       h["health"] = {{"level", "degraded"},
                      {"confidence", 0.0},
                      {"calibrated", false},
-                     {"reasons", {"auto-calibration in progress " + std::to_string(int(calibrator_->progress() * 100)) + "%"}},
+                     {"reasons", {cfg_.auto_calibration
+                                      ? "auto-calibration in progress " + std::to_string(int(calibrator_->progress() * 100)) + "%"
+                                      : std::string("waiting for manual calibration (Calibration tab)")}},
                      {"pipeline", {{"fps", fps_}, {"detector_ms", det_->lastLatencyMs()}}}};
       emit("health", h);
     }
@@ -474,7 +485,8 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     visibility_.update(stamp, frame, tracks);
   }
   // Self-healing: a calibration that stays invalid (or a camera that moved) triggers recalibration.
-  const bool bad = calmon_.state().status == "invalid" || stab.status == "moved";
+  // Manual calibrations are kept: the health topic reports the problem and the operator recalibrates.
+  const bool bad = cfg_.auto_calibration && (calmon_.state().status == "invalid" || stab.status == "moved");
   if (bad) {
     if (t_invalid_ < 0) t_invalid_ = stamp;
     if (stamp - t_invalid_ > 60.0) {
@@ -523,7 +535,9 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     h["crossing"] = msg::stopLineCrossing(c);
     emit("events/stopline", h, 1);
   }
-  for (const auto& e : events) {
+  // Near-miss events are only as good as the geometry: suppressed under a low-confidence calibration.
+  const bool safety_ok = calib_confidence_ >= cfg_.min_safety_confidence;
+  for (const auto& e : safety_ok ? events : std::vector<NearMissEvent>{}) {
     auto h = msg::header("near_miss", cfg_.site_id, cfg_.camera_id, stamp);
     h["event"] = msg::nearMiss(e);
     emit("events/safety", h, 1);
@@ -538,6 +552,10 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     h["health"] = msg::health(hr);
     h["health"]["pipeline"]["frames"] = frames_;
     h["health"]["pipeline"]["dropped"] = dropped_;
+    h["health"]["calibration_confidence"] = calib_confidence_;
+    if (!safety_ok)
+      h["health"]["reasons"].push_back("near-miss events suppressed: calibration confidence " +
+                                         std::to_string(int(calib_confidence_ * 100)) + " %");
     emit("health", h, 1, true);
   }
   if (t_occ_ < 0 || stamp - t_occ_ >= 1.0 / cfg_.occlusion_hz) {

@@ -36,6 +36,8 @@ struct PipelineConfig {
   // Calibration.
   std::string calibration_file;
   bool force_recalibration = false;
+  bool auto_calibration = true;          // calibration.mode: auto | manual (manual: wait for the web panel)
+  double min_safety_confidence = 0.5;    // near-miss events need at least this calibration confidence
   std::optional<double> road_bearing_deg;
   double calibration_min_s = 45.0;
   bool publish_snapshot = false;
@@ -90,6 +92,7 @@ class Pipeline {
   std::unique_ptr<MultiSink> sink_;
   std::unique_ptr<AutoCalibrator> calibrator_;
   std::future<CalibrationResult> calib_future_;  // solve() runs off the frame loop (tens of seconds)
+  double calib_confidence_ = 0;                 // of the current calibration (manual: 1, auto: solver estimate)
   void cancelCalibration();
   std::optional<CameraModel> camera_;   // calibrated camera
   CameraModel frame_cam_;               // camera corrected for current shake/drift

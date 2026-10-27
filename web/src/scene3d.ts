@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { aerialGround } from "./aerial";
 import { buildModel, glowTexture } from "./models";
 import type { CameraJson, DetectorsMsg, NearMiss, ObjectClass, OcclusionMsg, RoadUser, SiteMap } from "./types";
 
@@ -33,6 +34,8 @@ export class Scene3D {
   private sensor = new THREE.Group();
   private glowTex = glowTexture();
   private cam?: CameraJson;
+  private aerial?: THREE.Mesh;
+  private aerialKey = "";
   private clock = new THREE.Clock();
   selected: number | null = null;
   showAllLabels = false;
@@ -89,11 +92,28 @@ export class Scene3D {
 
   // ------------------------------------------------------------------ map
 
+  // Aerial imagery under the scene, centred on the camera's ground point (loaded once per position).
+  private setAerial(cam: CameraJson) {
+    const a = cam.anchor;
+    if (!a) return;
+    const key = `${a.lat.toFixed(6)},${a.lon.toFixed(6)}`;
+    if (key === this.aerialKey) return;
+    this.aerialKey = key;
+    aerialGround(a.lat, a.lon).then((m) => {
+      if (!m || key !== this.aerialKey) return;
+      if (this.aerial) this.scene.remove(this.aerial);
+      this.aerial = m;
+      this.scene.add(m);
+    });
+  }
+
   setMap(map: SiteMap, cam: CameraJson) {
+    this.setAerial(cam);
     this.cam = cam;
     this.mapGroup.clear();
     this.zoneMeshes.clear();
-    const asphalt = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.95 });
+    // Over aerial imagery the lanes are a light overlay, so the real road stays visible.
+    const asphalt = new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.95, transparent: true, opacity: cam.anchor ? 0.35 : 1 });
     const lineMat = new THREE.LineDashedMaterial({ color: 0xc9ced6, dashSize: 3, gapSize: 6 });
     const solidMat = new THREE.LineBasicMaterial({ color: 0xc9ced6 });
     for (const lane of map.lanes) {

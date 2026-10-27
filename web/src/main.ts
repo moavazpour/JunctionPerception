@@ -3,6 +3,7 @@ import "./style.css";
 import { Scene3D } from "./scene3d";
 import { renderCalibration } from "./calib";
 import { ManualCalibration } from "./manual";
+import { SitesPanel, listSites, managerAvailable } from "./sites";
 import type {
   CalibrationMsg, DetectorsMsg, HealthMsg, ManualResultMsg, MapMsg, NearMiss, ObjectsMsg, OcclusionMsg, RoadUser, SafetyMsg,
   SnapshotMsg,
@@ -14,6 +15,8 @@ const params = new URLSearchParams(location.search);
 const wsUrl =
   params.get("mqtt") ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/mqtt`;
 const prefix = params.get("prefix") ?? "jp";
+// Multi-site stack: the panel shows one site at a time (?site=<id>).
+const wantSite = params.get("site");
 
 const scene = new Scene3D($("#view"));
 let users: RoadUser[] = [];
@@ -42,6 +45,7 @@ client.on("close", () => setConn(false));
 client.on("message", (topic, payload) => {
   const parts = topic.split("/");
   const leaf = parts.slice(3).join("/");
+  if (wantSite && parts[1] !== wantSite) return;
   if (!site && parts.length > 3) {
     site = parts[1];
     cameraId = parts[2];
@@ -265,3 +269,19 @@ setInterval(() => {
   $("#clock").textContent = new Date().toLocaleTimeString();
   $("#cam").textContent = site ? `${site} / ${cameraId}` : "";
 }, 500);
+
+// ------------------------------------------------------------------ sites (multi-site stack)
+
+managerAvailable().then(async (ok) => {
+  if (!ok) return;
+  const panel = new SitesPanel(wantSite);
+  const btn = $("#sites-btn");
+  btn.classList.remove("hidden");
+  btn.addEventListener("click", () => panel.show());
+  if (!wantSite) {
+    const sites = await listSites().catch(() => []);
+    const running = sites.find((s) => s.status === "running") ?? sites[0];
+    if (running) location.search = `?site=${encodeURIComponent(running.id)}`;
+    else panel.show();
+  }
+});

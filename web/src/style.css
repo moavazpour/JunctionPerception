@@ -105,3 +105,16 @@ code { color: #c9d6ff; }
 .mc-ok { color: var(--ok); }
 .mc-bad { color: var(--bad); }
 .mc-tip { font-weight: 700; padding: 0 4px; }
+.hidden { display: none !important; }
+.hdr-btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+.hdr-btn:hover { border-color: var(--blue); }
+.sites-modal { position: fixed; inset: 0; background: rgba(5, 7, 10, 0.7); z-index: 50; display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 30px 12px; }
+.sites-box { width: min(960px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.sites-head { display: flex; justify-content: space-between; align-items: center; margin: 0 4px 6px; font-size: 16px; }
+.sites-head button, .row-btns button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; cursor: pointer; }
+.row-btns { white-space: nowrap; }
+.form { display: grid; gap: 8px; margin: 8px 0; font-size: 13px; }
+.form input[type="text"], .form input:not([type]), .form input[type="number"] {
+  background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; margin-left: 6px; min-width: 260px;
+}
+.ns-map { height: 360px; border-radius: 8px; border: 1px solid var(--line); margin: 6px 0; cursor: crosshair; }
