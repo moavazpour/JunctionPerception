@@ -11,6 +11,7 @@ endif()
 
 option(JP_WITH_TENSORRT "Build TensorRT inference backend (NVIDIA GPU)" ON)
 option(JP_WITH_ONNXRUNTIME "Build ONNX Runtime inference backend (CPU)" OFF)
+option(JP_ORT_CUDA "The ONNX Runtime package has the CUDA execution provider (GPU, FP32)" OFF)
 option(JP_WITH_MQTT "Build MQTT output adapter" ON)
 option(JP_BUILD_TESTS "Build unit tests" ON)
 

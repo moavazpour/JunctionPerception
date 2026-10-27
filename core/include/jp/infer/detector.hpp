@@ -16,16 +16,20 @@ struct EngineOptions;
 class Letterbox {
  public:
   Letterbox() = default;
-  // K/dist describe the raw frame; empty dist means the frame is already undistorted.
+  // K/dist describe the raw frame; empty dist means the frame is already undistorted. A non-empty crop
+  // (frame pixels, undistorted frames only) feeds only that region to the network, at a higher scale.
   Letterbox(cv::Size frame, cv::Size net, const cv::Matx33d& K = cv::Matx33d::eye(),
-            const std::vector<double>& dist = {});
+            const std::vector<double>& dist = {}, cv::Rect crop = {});
   void apply(const cv::Mat& frame_bgr, cv::Mat& out_bgr) const;
   // Network-input pixel -> undistorted frame pixel.
-  cv::Point2d toFrame(cv::Point2d p) const { return {(p.x - ox_) / s_, (p.y - oy_) / s_}; }
+  cv::Point2d toFrame(cv::Point2d p) const { return {(p.x - ox_) / s_ + crop_.x, (p.y - oy_) / s_ + crop_.y}; }
   double scale() const { return s_; }
+  cv::Size netSize() const { return net_; }
+  cv::Rect crop() const { return crop_; }
 
  private:
   cv::Size frame_, net_;
+  cv::Rect crop_;
   double s_ = 1, ox_ = 0, oy_ = 0;
   bool remap_ = false;
   cv::Mat map1_, map2_;
@@ -35,8 +39,10 @@ struct DetectorConfig {
   std::string onnx;
   float score_threshold = 0.15f;
   bool fp16 = true;
-  std::string backend = "auto";  // auto | tensorrt | cpu
+  std::string backend = "auto";  // auto | cuda | tensorrt | cpu
   int threads = 0;
+  int imgsz = 0;        // network input (long side) for models with a dynamic input size; 0 = as exported
+  int max_det = 300;    // detections kept per frame (highest scores)
 };
 
 // Ground-aware mono-3D detector (calibration-free outputs).
@@ -45,10 +51,16 @@ class Detector3D {
   explicit Detector3D(const DetectorConfig& cfg);
   ~Detector3D();
   cv::Size inputSize() const { return net_; }
-  // frame_bgr must already be letterboxed to inputSize() by the caller's Letterbox.
+  // Network input for an image region: the exported size, or (dynamic models) imgsz on the long side with the
+  // region's aspect ratio, both sides multiples of 32.
+  cv::Size inputSizeFor(cv::Size region) const;
+  bool dynamicInput() const;
+  // frame_bgr must already be letterboxed by the caller's Letterbox (to inputSizeFor(...)).
   std::vector<ImageDetection> detect(const cv::Mat& net_bgr, const Letterbox& lb);
   double lastLatencyMs() const;
   void setScoreThreshold(float t) { cfg_.score_threshold = t; }
+  void setMaxDet(int n) { cfg_.max_det = n; }
+  const DetectorConfig& config() const { return cfg_; }
   const InferenceEngine& engine() const { return *engine_; }
 
  private:

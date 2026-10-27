@@ -105,8 +105,10 @@ void CtraEkf::update(const Eigen::Vector2d& p, const Eigen::Matrix2d& pos_cov, d
 }
 
 void CtraEkf::normalize() {
-  // Keep speed non-negative: a negative speed means the heading is reversed.
-  if (x[3] < -0.3) {
+  // A clearly negative speed means the heading is reversed. Only clear evidence flips it: with noisy far
+  // measurements the speed of a slow vehicle wanders around zero and must not turn it around.
+  const double sv = std::sqrt(std::max(P(3, 3), 0.0));
+  if (x[3] < -std::max(1.5, 2.5 * sv)) {
     x[2] += M_PI;
     x[3] = -x[3];
     x[5] = -x[5];
@@ -179,13 +181,14 @@ std::vector<int> hungarian(const std::vector<std::vector<double>>& cost, double 
 
 CtraEkf::Noise Tracker::noiseFor(ObjectClass c) {
   switch (c) {
+    // Vehicles change acceleration and turn smoothly: low jerk and yaw acceleration keep speed and heading steady.
     case ObjectClass::Pedestrian: return {1.5, 1.5, 0.3};
     case ObjectClass::Bicycle:
-    case ObjectClass::EScooter: return {2.0, 1.0, 0.2};
+    case ObjectClass::EScooter: return {1.5, 0.8, 0.15};
     case ObjectClass::Bus:
     case ObjectClass::Truck:
-    case ObjectClass::Trailer: return {1.5, 0.3, 0.05};
-    default: return {2.5, 0.6, 0.08};
+    case ObjectClass::Trailer: return {0.8, 0.15, 0.04};
+    default: return {1.2, 0.3, 0.05};
   }
 }
 
@@ -214,9 +217,15 @@ double yawSigmaFor(const Detection3D& d) {
 
 void Tracker::applyMeasurement(Track& t, const Detection3D& d, double stamp) {
   const bool vru = isVulnerable(d.img.cls);
-  // Pedestrian orientation is weakly observable; rely on motion instead.
-  const bool use_yaw = !(d.img.cls == ObjectClass::Pedestrian);
-  t.ekf.update(d.bottom.head<2>(), d.pos_cov, d.yaw, yawSigmaFor(d), use_yaw);
+  // The box orientation helps only where the box is big enough to show it; pedestrians and far or small
+  // objects are steered by their motion alone.
+  const double box_h = d.img.box2d[3] - d.img.box2d[1];
+  const bool use_yaw = d.img.cls != ObjectClass::Pedestrian && box_h > 40.0;
+  const Eigen::Matrix2d R = d.pos_cov * t.r_scale;
+  const double m2 = t.ekf.mahalanobis2(d.bottom.head<2>(), R);
+  t.nis = 0.85 * t.nis + 0.15 * (m2 / 2.0);
+  t.r_scale = std::clamp(t.r_scale * (t.nis > 1.5 ? 1.15 : t.nis < 0.7 ? 0.95 : 1.0), 1.0, 30.0);
+  t.ekf.update(d.bottom.head<2>(), R, d.yaw, yawSigmaFor(d), use_yaw);
   const double w = std::clamp(static_cast<double>(d.img.score), 0.05, 1.0);
   t.class_votes[static_cast<size_t>(d.img.cls)] += static_cast<float>(w);
   const auto best = std::max_element(t.class_votes.begin(), t.class_votes.end());
@@ -249,7 +258,7 @@ void Tracker::associate(std::vector<int>& track_idx, const std::vector<int>& det
       // Far objects carry larger range noise: scale the hard gate with the measurement covariance.
       const double gate = max_jump + 3.0 * std::sqrt(d.pos_cov.trace());
       if (jump > gate) continue;
-      const double m2 = t.ekf.mahalanobis2(d.bottom.head<2>(), d.pos_cov);
+      const double m2 = t.ekf.mahalanobis2(d.bottom.head<2>(), d.pos_cov * t.r_scale);
       if (m2 > cfg_.gate_chi2) continue;
       cost[i][j] = m2 + (t.cls == d.img.cls ? 0.0 : 2.0);
     }
@@ -306,6 +315,19 @@ const std::vector<Track>& Tracker::update(double stamp, const std::vector<Detect
     t.misses++;
     if (t.state == TrackState::Confirmed) t.state = TrackState::Coasting;
   }
+  // Vehicles do not spin: bound the turn rate (keeps noisy far tracks from swinging round).
+  for (auto& t : tracks_)
+    if (isVehicle(t.cls)) t.ekf.x[4] = std::clamp(t.ekf.x[4], -0.6, 0.6);
+  // Duplicates: two confirmed tracks on the same vehicle (a box split, a re-detection) keep the older one.
+  for (size_t i = 0; i < tracks_.size(); ++i)
+    for (size_t j = i + 1; j < tracks_.size(); ++j) {
+      Track &a = tracks_[i], &b = tracks_[j];
+      if (a.state == TrackState::Tentative || b.state == TrackState::Tentative || !isVehicle(a.cls) || !isVehicle(b.cls)) continue;
+      const double lim = std::max(1.5, 0.45 * std::min(a.dims[0], b.dims[0]));
+      if ((a.position() - b.position()).norm() > lim || (a.velocity() - b.velocity()).norm() > 3.0) continue;
+      Track& drop = a.hits >= b.hits ? b : a;
+      drop.last_update = -1e18;  // removed below
+    }
   // Remove dead tracks.
   std::erase_if(tracks_, [&](const Track& t) {
     const double age = stamp - t.last_update;

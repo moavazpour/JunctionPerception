@@ -1,9 +1,10 @@
-# x86_64 + NVIDIA dGPU. TensorRT 10.3 / CUDA 12.6 to match JetPack 6.1 on Jetson Orin.
-# Also contains the ONNX Runtime CPU backend: the same image runs on hosts without a GPU (models.backend: cpu,
-# or auto-detected when no GPU is visible).
+# x86_64 + NVIDIA dGPU. Default inference: ONNX Runtime on the GPU (CUDA, FP32: the exported model as
+# trained). TensorRT 10.3 / CUDA 12.6 stays available (models.backend: tensorrt). The CPU provider is included
+# too: the same image runs on hosts without a GPU (models.backend: cpu, or auto-detected).
 ARG BASE=nvcr.io/nvidia/tensorrt:24.08-py3
 ARG ORT_VERSION=1.20.1
 
+# ONNX Runtime GPU package (CUDA 12 + cuDNN 9, both in the base image); it also contains the CPU provider.
 FROM ${BASE} AS deps
 ARG ORT_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpaho-mqtt-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /opt/onnxruntime \
- && curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz \
+ && curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz \
     | tar -xz -C /opt/onnxruntime --strip-components=1
 
 FROM deps AS build
@@ -23,7 +24,7 @@ COPY cmake cmake
 COPY core core
 COPY apps apps
 COPY tests tests
-RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp -DJP_WITH_ONNXRUNTIME=ON \
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp -DJP_WITH_ONNXRUNTIME=ON -DJP_ORT_CUDA=ON \
       -DCMAKE_INSTALL_RPATH=/opt/onnxruntime/lib \
  && cmake --build build -j"$(nproc)" \
  && ctest --test-dir build --output-on-failure \

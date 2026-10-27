@@ -395,3 +395,19 @@ TEST(CalibrationRefiner, ProposesTheMissingPitch) {
   EXPECT_LT(p->spread_after_deg, 0.5 * p->spread_before_deg);
   EXPECT_NEAR(p->camera.pitch() * 180 / M_PI, 9.0, 0.5);
 }
+
+#include <opencv2/imgproc.hpp>
+
+#include "jp/scene/signals.hpp"
+
+TEST(Signals, ReadsTheLitLamp) {
+  auto head = [](cv::Scalar bgr, int lamp) {
+    cv::Mat m(60, 24, CV_8UC3, cv::Scalar(25, 25, 25));
+    cv::circle(m, cv::Point(12, 10 + lamp * 20), 7, bgr, cv::FILLED);
+    return m;
+  };
+  EXPECT_EQ(SignalReader::classify(head({40, 40, 255}, 0)).state, "red");
+  EXPECT_EQ(SignalReader::classify(head({0, 190, 255}, 1)).state, "amber");
+  EXPECT_EQ(SignalReader::classify(head({120, 230, 40}, 2)).state, "green");
+  EXPECT_EQ(SignalReader::classify(cv::Mat(60, 24, CV_8UC3, cv::Scalar(20, 20, 20))).state, "off");
+}

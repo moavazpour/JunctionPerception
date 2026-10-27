@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "jp/geometry/camera.hpp"
+#include "jp/scene/signals.hpp"
 #include "jp/scene/site_map.hpp"
 
 namespace jp {
@@ -26,8 +27,9 @@ struct UserMap {
   std::vector<std::array<Eigen::Vector2d, 2>> stop_lines;
   std::vector<std::vector<Eigen::Vector2d>> crosswalks;
   std::vector<Eigen::Vector2d> roi;
+  std::vector<SignalHead> signals;  // traffic lights (image boxes) and the stop line each controls
 
-  bool empty() const { return lanes.empty() && stop_lines.empty() && crosswalks.empty() && roi.empty(); }
+  bool empty() const { return lanes.empty() && stop_lines.empty() && crosswalks.empty() && roi.empty() && signals.empty(); }
   nlohmann::json toJson() const;
   static UserMap fromJson(const nlohmann::json& j);
   // Lanes, stop lines (stop_s), approaches, crosswalks and roi in the local frame of `anchor`.

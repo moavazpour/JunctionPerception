@@ -53,8 +53,11 @@ struct PipelineConfig {
   // Models.
   std::string detector_onnx, segmenter_onnx;
   bool fp16 = true;
-  std::string backend = "auto";          // auto | tensorrt | cpu
+  std::string backend = "auto";          // auto (GPU via ONNX Runtime CUDA, FP32) | cuda | tensorrt | cpu
   int cpu_threads = 0;
+  int imgsz = 0;                         // network input long side (dynamic-size models); 0 = as exported
+  int max_det = 300;
+  bool crop_to_roi = true;               // run the detector only on the image region of the drawn road area
   float score_threshold = 0.2f;
   double max_range = 250.0;
   // Live settings (changeable from the panel, persisted in state_dir/settings.json).
@@ -110,6 +113,11 @@ class Pipeline {
   void republishRetained(double stamp);
   void renderPreview(const cv::Mat& frame, const std::vector<ImageDetection>& dets);
   nlohmann::json computeInfo() const;
+  // Detector (re)load and the network input region (whole frame or the road area's image box).
+  void loadDetector();
+  void updateLetterbox();
+  cv::Rect computeCrop() const;
+  nlohmann::json modelList() const;
   std::string topic(const std::string& leaf) const;
   void emit(const std::string& leaf, const nlohmann::json& body, int qos = 0, bool retain = false);
 
@@ -150,6 +158,13 @@ class Pipeline {
   nlohmann::json calib_msg_;  // last calibration message (republished with the other retained topics)
   std::future<cv::Mat> seg_future_;      // segmentation runs off the frame loop
   std::vector<bool> class_enabled_;
+  cv::Rect crop_;
+  SignalReader signal_reader_;
+  std::vector<SignalState> signals_;
+  std::string signals_key_;
+  double t_signals_ = -1;
+  void updateSignals(const cv::Mat& frame, double stamp);
+  std::string models_dir_, model_error_;
 
   std::uint64_t frames_ = 0, dropped_ = 0;
   double fps_ = 0, latency_ms_ = 0, last_stamp_ = -1;

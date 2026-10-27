@@ -12,12 +12,13 @@
 
 namespace jp {
 
-Letterbox::Letterbox(cv::Size frame, cv::Size net, const cv::Matx33d& K, const std::vector<double>& dist)
+Letterbox::Letterbox(cv::Size frame, cv::Size net, const cv::Matx33d& K, const std::vector<double>& dist, cv::Rect crop)
     : frame_(frame), net_(net) {
-  s_ = std::min(static_cast<double>(net.width) / frame.width, static_cast<double>(net.height) / frame.height);
-  ox_ = (net.width - frame.width * s_) / 2.0;
-  oy_ = (net.height - frame.height * s_) / 2.0;
   remap_ = !dist.empty() && std::any_of(dist.begin(), dist.end(), [](double d) { return std::abs(d) > 1e-9; });
+  crop_ = remap_ || crop.area() <= 0 ? cv::Rect(0, 0, frame.width, frame.height) : (crop & cv::Rect(0, 0, frame.width, frame.height));
+  s_ = std::min(static_cast<double>(net.width) / crop_.width, static_cast<double>(net.height) / crop_.height);
+  ox_ = (net.width - crop_.width * s_) / 2.0;
+  oy_ = (net.height - crop_.height * s_) / 2.0;
   if (remap_) {
     cv::Matx33d Kn = K;
     Kn(0, 0) *= s_;
@@ -35,10 +36,11 @@ void Letterbox::apply(const cv::Mat& frame, cv::Mat& out) const {
   }
   out.create(net_, CV_8UC3);
   out.setTo(cv::Scalar(114, 114, 114));
-  const int w = static_cast<int>(std::round(frame.cols * s_)), h = static_cast<int>(std::round(frame.rows * s_));
+  const cv::Mat src = frame(crop_);
+  const int w = static_cast<int>(std::round(src.cols * s_)), h = static_cast<int>(std::round(src.rows * s_));
   cv::Mat roi = out(cv::Rect(static_cast<int>(std::round(ox_)), static_cast<int>(std::round(oy_)),
                              std::min(w, net_.width), std::min(h, net_.height)));
-  cv::resize(frame, roi, roi.size(), 0, 0, cv::INTER_LINEAR);
+  cv::resize(src, roi, roi.size(), 0, 0, cv::INTER_LINEAR);
 }
 
 void bgrToNchwNormalized(const cv::Mat& bgr, float* dst, const float mean[3], const float std[3]) {
@@ -68,6 +70,7 @@ Detector3D::Detector3D(const DetectorConfig& cfg) : cfg_(cfg) {
   opt.backend = cfg.backend;
   opt.threads = cfg.threads;
   engine_ = createEngine(cfg.onnx, opt);
+  if (engine_->dynamicInput() && cfg_.imgsz > 0) engine_->setInputSize(cfg_.imgsz, cfg_.imgsz);
   const TensorInfo* inp = nullptr;
   const TensorInfo* outp = nullptr;
   for (const auto& t : engine_->tensors()) (t.is_input ? inp : outp) = &t;
@@ -89,8 +92,25 @@ Detector3D::~Detector3D() = default;
 
 double Detector3D::lastLatencyMs() const { return engine_->lastLatencyMs(); }
 
+bool Detector3D::dynamicInput() const { return engine_->dynamicInput(); }
+
+cv::Size Detector3D::inputSizeFor(cv::Size region) const {
+  if (!engine_->dynamicInput() || region.area() <= 0) return net_;
+  const int L = cfg_.imgsz > 0 ? cfg_.imgsz : std::max(net_.width, net_.height);
+  const double s = static_cast<double>(L) / std::max(region.width, region.height);
+  auto up32 = [](double v) { return std::max(32, static_cast<int>(std::ceil(v / 32.0)) * 32); };
+  return {up32(region.width * s), up32(region.height * s)};
+}
+
 std::vector<ImageDetection> Detector3D::detect(const cv::Mat& net_bgr, const Letterbox& lb) {
   static constexpr float kZero[3] = {0.f, 0.f, 0.f}, k255[3] = {255.f, 255.f, 255.f};
+  if (net_bgr.size() != net_) {
+    // Dynamic-size model fed a new input size (other input size or crop).
+    if (!engine_->dynamicInput()) throw std::runtime_error("network input size mismatch");
+    net_ = net_bgr.size();
+    engine_->setInputSize(net_.width, net_.height);
+    input_.assign(static_cast<size_t>(3) * net_.area(), 0.f);
+  }
   bgrToNchwNormalized(net_bgr, input_.data(), yolo_ ? kZero : kMean, yolo_ ? k255 : kStd);
   engine_->infer({input_.data()}, {output_.data()});
   std::vector<ImageDetection> dets;
@@ -116,6 +136,7 @@ std::vector<ImageDetection> Detector3D::detect(const cv::Mat& net_bgr, const Let
       dets.push_back(det);
     }
     std::sort(dets.begin(), dets.end(), [](const auto& a, const auto& b) { return a.score > b.score; });
+    if (cfg_.max_det > 0 && static_cast<int>(dets.size()) > cfg_.max_det) dets.resize(cfg_.max_det);
     return dets;
   }
   for (int k = 0; k < topk_; ++k) {

@@ -54,6 +54,8 @@ struct Track {
   Eigen::Vector4d last_box2d = Eigen::Vector4d::Zero();
   Eigen::Vector2d last_kp = Eigen::Vector2d::Zero();  // ground-contact keypoint of the last detection (px)
   double last_range = 0;
+  // Adaptive measurement noise: measurements that keep jumping more than their covariance says are trusted less.
+  double nis = 1.0, r_scale = 1.0;
 
   Eigen::Vector2d position() const { return ekf.x.head<2>(); }
   double yaw() const { return ekf.x[2]; }

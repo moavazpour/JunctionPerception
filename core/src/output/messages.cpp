@@ -49,6 +49,9 @@ nlohmann::json roadUsers(const std::vector<RoadUser>& users, const SiteMap& map)
         {"range", r2(u.range)},
         {"age", r2(u.age)},
         {"occluded", u.occluded},
+        {"speed_valid", u.speed_valid},
+        {"heading_valid", u.heading_valid},
+        {"heading_source", u.heading_source},
     };
     if (!u.lane.empty()) {
       o["lane"] = u.lane;

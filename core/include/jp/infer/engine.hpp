@@ -28,10 +28,15 @@ class InferenceEngine {
   virtual std::string backend() const = 0;    // "tensorrt" | "cpu"
   virtual std::string device() const = 0;     // e.g. "NVIDIA GeForce RTX 4090" or "CPU (16 threads)"
   virtual std::string precision() const = 0;  // "fp16" | "fp32"
+  // Models exported with dynamic height/width take any input size (multiples of 32 for YOLO).
+  virtual bool dynamicInput() const { return false; }
+  virtual void setInputSize(int /*width*/, int /*height*/) {}
 };
 
 struct EngineOptions {
-  std::string backend = "auto";  // auto (GPU if available, else CPU) | tensorrt | cpu
+  // auto: ONNX Runtime on the GPU (CUDA, FP32: the trained model as is) when available, else on the CPU.
+  // tensorrt: TensorRT engine (faster, FP16 by default, slightly different numerics).
+  std::string backend = "auto";  // auto | cuda | tensorrt | cpu
   bool fp16 = true;              // TensorRT only
   int threads = 0;               // CPU only; 0 = all cores
   size_t workspace_mb = 2048;

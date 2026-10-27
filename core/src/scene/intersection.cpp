@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
 
 namespace jp {
@@ -38,6 +39,68 @@ RoadUser IntersectionModel::describe(const Track& t, double stamp) const {
   u.range = u.pos.norm();
   if (cam_ && cam_->anchor.valid) std::tie(u.lat, u.lon) = enuToGeo(cam_->anchor, u.pos);
   return u;
+}
+
+void IntersectionModel::stabilize(RoadUser& u, const Track& t, double stamp) {
+  Motion& m = motion_[u.id];
+  const double dt = m.last < 0 ? 0.0 : std::clamp(stamp - m.last, 0.0, 1.0);
+  m.last = stamp;
+  const bool vehicle = isVehicle(u.cls);
+  // Direction of motion (sign of the filtered speed), only when the speed is clearly above its noise.
+  const double v = t.speed(), sv = t.speedSigma();
+  const double vmin = std::max(vehicle ? 1.5 : 0.7, 2.0 * sv);
+  std::optional<double> motion;
+  if (std::abs(v) > vmin) motion = wrapAngle(v >= 0 ? t.yaw() : t.yaw() + M_PI);
+  // Direction of the lane the vehicle is on (drawn or learned): the lane closest in direction.
+  std::optional<double> lane_dir;
+  if (vehicle) {
+    const std::optional<double> ref = motion ? motion : (m.init ? std::optional<double>(m.heading) : std::nullopt);
+    double best = 1e9;
+    for (const auto& l : map_.lanes) {
+      const auto p = l.centerline.project(u.pos);
+      if (std::abs(p.lateral) > l.width / 2 + 0.6 || (p.s <= 0.01 && p.dist > 1.0)) continue;
+      const double c = ref ? std::abs(wrapAngle(p.heading - *ref)) : std::abs(p.lateral);
+      if (c < best) best = c, lane_dir = p.heading;
+    }
+  }
+  double target;
+  std::string src;
+  if (lane_dir && (!motion || std::abs(wrapAngle(*motion - *lane_dir)) < M_PI / 2)) {
+    target = *lane_dir;
+    src = "lane";
+  } else if (motion) {
+    target = *motion;
+    src = "motion";
+  } else {
+    target = m.init ? m.heading : t.yaw();  // standing, unknown: hold (first sight: box orientation)
+    src = "hold";
+  }
+  if (!m.init) {
+    m.heading = target;
+    m.init = true;
+  } else {
+    double d = wrapAngle(target - m.heading);
+    if (std::abs(d) > 2.0) {
+      // A reversal needs persistent evidence; a single noisy update is ignored.
+      if (m.reverse_since < 0) m.reverse_since = stamp;
+      if (stamp - m.reverse_since >= 1.5) m.heading = target, m.reverse_since = -1;
+    } else {
+      m.reverse_since = -1;
+      const double rate = vehicle ? 0.8 : 3.0;  // rad/s
+      m.heading = wrapAngle(m.heading + std::clamp(d, -rate * dt, rate * dt));
+    }
+  }
+  // Speed and acceleration along the heading, smoothed (0.5 s and 1 s time constants).
+  const double vabs = std::abs(v), a = (v >= 0 ? 1.0 : -1.0) * t.accel();
+  const double ks = dt > 0 ? 1 - std::exp(-dt / 0.5) : 1.0, ka = dt > 0 ? 1 - std::exp(-dt / 1.0) : 1.0;
+  m.speed += ks * (vabs - m.speed);
+  m.accel += ka * (a - m.accel);
+  u.yaw = m.heading;
+  u.speed = m.speed;
+  u.accel = m.accel;
+  u.speed_valid = u.age >= 1.0 && sv < std::max(1.0, 0.25 * vabs);
+  u.heading_valid = src == "lane" || (src == "motion" && u.speed_valid);
+  u.heading_source = src;
 }
 
 void IntersectionModel::assignLane(RoadUser& u, const Track& t) {
@@ -100,6 +163,7 @@ void IntersectionModel::update(double stamp, const std::vector<Track>& tracks,
   for (const auto& t : tracks) {
     if (t.state == TrackState::Tentative) continue;
     RoadUser u = describe(t, stamp);
+    stabilize(u, t, stamp);
     u.occluded = t.state == TrackState::Coasting && is_occluded && is_occluded(u.pos);
     assignLane(u, t);
     alive.insert(u.id);
@@ -116,6 +180,7 @@ void IntersectionModel::update(double stamp, const std::vector<Track>& tracks,
   }
   std::erase_if(prev_dist_, [&](const auto& kv) { return !alive.count(kv.first); });
   std::erase_if(lane_memory_, [&](const auto& kv) { return !alive.count(kv.first); });
+  std::erase_if(motion_, [&](const auto& kv) { return !alive.count(kv.first); });
 
   // Queues: slow vehicles contiguous from the stop line.
   lane_states_.clear();

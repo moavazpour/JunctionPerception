@@ -4,6 +4,7 @@ set(JP_CORE_SOURCES
   src/scene/site_map.cpp
   src/scene/intersection.cpp
   src/scene/user_map.cpp
+  src/scene/signals.cpp
   src/calib/refiner.cpp
   src/safety/near_miss.cpp
   src/health/monitors.cpp
@@ -37,5 +38,10 @@ if(JP_WITH_TENSORRT OR JP_WITH_ONNXRUNTIME)
     target_sources(jp_infer PRIVATE src/infer/ort_engine.cpp)
     target_link_libraries(jp_infer PUBLIC jp_onnxruntime)
     target_compile_definitions(jp_infer PUBLIC JP_HAVE_ORT)
+    if(JP_ORT_CUDA)
+      find_package(CUDAToolkit REQUIRED)
+      target_link_libraries(jp_infer PUBLIC CUDA::cudart)
+      target_compile_definitions(jp_infer PUBLIC JP_HAVE_ORT_CUDA)
+    endif()
   endif()
 endif()

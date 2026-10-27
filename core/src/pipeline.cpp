@@ -100,6 +100,9 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
   c.max_range = md["max_range_m"].as<double>(c.max_range);
   c.backend = md["backend"].as<std::string>(c.backend);
   c.cpu_threads = md["cpu_threads"].as<int>(c.cpu_threads);
+  c.imgsz = md["imgsz"].as<int>(c.imgsz);
+  c.max_det = md["max_det"].as<int>(c.max_det);
+  c.crop_to_roi = md["crop_to_roi"].as<bool>(c.crop_to_roi);
   c.confidence = opt<double>(md["confidence"]);
   c.keypoint_confidence = opt<double>(md["keypoint_confidence"]);
   if (md["classes"]) c.classes = md["classes"].as<std::vector<std::string>>();
@@ -138,13 +141,23 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
 Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
   std::filesystem::create_directories(cfg_.state_dir);
   src_ = std::make_unique<VideoSource>(cfg_.source);
-  DetectorConfig dc;
-  dc.onnx = cfg_.detector_onnx;
-  dc.fp16 = cfg_.fp16;
-  dc.score_threshold = std::min(cfg_.score_threshold, 0.15f);
-  dc.backend = cfg_.backend;
-  dc.threads = cfg_.cpu_threads;
-  det_ = std::make_unique<Detector3D>(dc);
+  models_dir_ = std::filesystem::path(cfg_.detector_onnx).parent_path().string();
+  // Inference choices made in the panel (model, input size, backend) apply before the first load.
+  if (std::filesystem::exists(std::filesystem::path(cfg_.state_dir) / "settings.json")) {
+    std::ifstream f(std::filesystem::path(cfg_.state_dir) / "settings.json");
+    const auto j = nlohmann::json::parse(f, nullptr, false);
+    if (j.is_object()) {
+      if (j.contains("model") && j["model"].is_string()) {
+        const auto p = std::filesystem::path(models_dir_) / j["model"].get<std::string>();
+        if (std::filesystem::exists(p)) cfg_.detector_onnx = p.string();
+      }
+      cfg_.imgsz = j.value("imgsz", cfg_.imgsz);
+      cfg_.backend = j.value("backend", cfg_.backend);
+      cfg_.max_det = j.value("max_det", cfg_.max_det);
+      cfg_.crop_to_roi = j.value("crop_to_roi", cfg_.crop_to_roi);
+    }
+  }
+  loadDetector();
   if (!cfg_.segmenter_onnx.empty()) {
     // The segmenter follows the detector's backend (a CPU detector means there is no usable GPU).
     EngineOptions so;
@@ -197,9 +210,6 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
   }
 
   const cv::Size fs = src_->size();
-  cv::Matx33d K = cv::Matx33d::eye();
-  if (cfg_.focal_px) K = {*cfg_.focal_px, 0, (fs.width - 1) / 2.0, 0, *cfg_.focal_px, (fs.height - 1) / 2.0, 0, 0, 1};
-  lb_ = std::make_unique<Letterbox>(fs, det_->inputSize(), K, cfg_.distortion);
 
   if (!cfg_.map_file.empty() && std::filesystem::exists(cfg_.map_file)) {
     std::ifstream f(cfg_.map_file);
@@ -323,6 +333,7 @@ void Pipeline::onCalibrated(const CalibrationResult* res, const std::string& sou
   }
   scene_->setMap(map_);
   occlusion_.configure(cam, map_, cfg_.max_range);
+  updateLetterbox();
   if (res) calib_confidence_ = res->confidence;
   else if (source == "manual") calib_confidence_ = 1.0;  // "file" and "drift-compensated" keep the current value
   nlohmann::json cj = msg::calibration(cam, res, source);
@@ -445,6 +456,7 @@ void Pipeline::handleCalibration(const nlohmann::json& cmd, nlohmann::json& out)
   } else if (action == "auto") {
     cancelCalibration();
     camera_.reset();
+    updateLetterbox();
     calibrator_ = makeCalibrator();
     if (!cfg_.calibration_file.empty()) std::filesystem::remove(cfg_.calibration_file);
     snapshot_sent_ = false;
@@ -570,7 +582,12 @@ nlohmann::json Pipeline::settings() const {
           {"classes", classes},
           {"roi_filter", cfg_.roi_filter},
           {"preview_overlay", cfg_.preview_overlay},
-          {"preview_fps", cfg_.preview_fps}};
+          {"preview_fps", cfg_.preview_fps},
+          {"model", std::filesystem::relative(cfg_.detector_onnx, models_dir_).string()},
+          {"imgsz", cfg_.imgsz > 0 ? cfg_.imgsz : std::max(det_->inputSize().width, det_->inputSize().height)},
+          {"backend", cfg_.backend},
+          {"max_det", cfg_.max_det},
+          {"crop_to_roi", cfg_.crop_to_roi}};
 }
 
 void Pipeline::applySettings(const nlohmann::json& s, bool persist) {
@@ -590,6 +607,42 @@ void Pipeline::applySettings(const nlohmann::json& s, bool persist) {
   if (auto v = num("preview_fps", 1, 30)) cfg_.preview_fps = *v;
   if (s.contains("roi_filter") && s["roi_filter"].is_boolean()) cfg_.roi_filter = s["roi_filter"];
   if (s.contains("preview_overlay") && s["preview_overlay"].is_boolean()) cfg_.preview_overlay = s["preview_overlay"];
+  if (auto v = num("max_det", 1, 1000)) {
+    cfg_.max_det = static_cast<int>(*v);
+    det_->setMaxDet(cfg_.max_det);
+  }
+  // Model, input size or backend: reload the detector (a second or two); on failure keep the old one.
+  {
+    const std::string old_model = cfg_.detector_onnx, old_backend = cfg_.backend;
+    const int old_imgsz = cfg_.imgsz;
+    bool reload = false;
+    if (s.contains("model") && s["model"].is_string()) {
+      const auto p = (std::filesystem::path(models_dir_) / s["model"].get<std::string>()).lexically_normal();
+      if (p.string() != old_model && std::filesystem::exists(p) && p.string().rfind(models_dir_, 0) == 0) cfg_.detector_onnx = p.string(), reload = true;
+    }
+    if (auto v = num("imgsz", 320, 2560)) {
+      const int sz = static_cast<int>(std::round(*v / 32.0)) * 32;
+      const int current = cfg_.imgsz > 0 ? cfg_.imgsz : std::max(det_->inputSize().width, det_->inputSize().height);
+      if (sz != current) cfg_.imgsz = sz, reload = true;
+    }
+    if (s.contains("backend") && s["backend"].is_string() && s["backend"] != old_backend) cfg_.backend = s["backend"], reload = true;
+    if (reload && persist) {
+      try {
+        loadDetector();
+        model_error_.clear();
+        spdlog::info("Detector reloaded: {} ({}, input {})", cfg_.detector_onnx, det_->engine().backend(), cfg_.imgsz);
+      } catch (const std::exception& e) {
+        model_error_ = e.what();
+        spdlog::error("Detector reload failed ({}); keeping the previous model", e.what());
+        cfg_.detector_onnx = old_model, cfg_.backend = old_backend, cfg_.imgsz = old_imgsz;
+        loadDetector();
+      }
+    }
+  }
+  if (s.contains("crop_to_roi") && s["crop_to_roi"].is_boolean() && s["crop_to_roi"] != cfg_.crop_to_roi) {
+    cfg_.crop_to_roi = s["crop_to_roi"];
+    updateLetterbox();
+  }
   if (class_enabled_.size() != kClassNames.size()) class_enabled_.assign(kClassNames.size(), true);
   if (s.contains("classes") && s["classes"].is_array()) {
     class_enabled_.assign(kClassNames.size(), false);
@@ -609,9 +662,80 @@ nlohmann::json Pipeline::computeInfo() const {
           {"device", e.device()},
           {"precision", e.precision()},
           {"model", std::filesystem::path(cfg_.detector_onnx).filename().string()},
-          {"input", {det_->inputSize().width, det_->inputSize().height}},
+          {"input", {lb_ ? lb_->netSize().width : det_->inputSize().width, lb_ ? lb_->netSize().height : det_->inputSize().height}},
+          {"dynamic_input", det_->dynamicInput()},
+          {"crop", crop_.area() > 0 ? nlohmann::json{crop_.x, crop_.y, crop_.width, crop_.height} : nlohmann::json()},
           {"available", availableBackends()},
+          {"models", modelList()},
+          {"error", model_error_},
           {"segmentation", seg_ != nullptr}};
+}
+
+void Pipeline::loadDetector() {
+  DetectorConfig dc;
+  dc.onnx = cfg_.detector_onnx;
+  dc.fp16 = cfg_.fp16;
+  dc.score_threshold = std::min(cfg_.score_threshold, 0.15f);
+  dc.backend = cfg_.backend;
+  dc.threads = cfg_.cpu_threads;
+  dc.imgsz = cfg_.imgsz;
+  dc.max_det = cfg_.max_det;
+  det_ = std::make_unique<Detector3D>(dc);
+  if (tracker_.config().new_track_score < 0.15f) det_->setScoreThreshold(tracker_.config().new_track_score);
+  updateLetterbox();
+}
+
+// Image box of the drawn road area (ground and 3.5 m above it, so vehicle roofs are included), with a margin.
+cv::Rect Pipeline::computeCrop() const {
+  if (!cfg_.crop_to_roi || !camera_ || map_.roi.size() < 3) return {};
+  const cv::Size fs = src_->size();
+  double x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  int n = 0;
+  for (size_t i = 0; i < map_.roi.size(); ++i) {
+    const Eigen::Vector2d a = map_.roi[i], b = map_.roi[(i + 1) % map_.roi.size()];
+    const int steps = std::max(1, static_cast<int>((b - a).norm()));
+    for (int k = 0; k <= steps; ++k) {
+      const Eigen::Vector2d p = a + (b - a) * (static_cast<double>(k) / steps);
+      for (double z : {0.0, 3.5}) {
+        const auto px = camera_->groundToPixel({p.x(), p.y(), z});
+        if (!px || px->x() < -fs.width || px->x() > 2 * fs.width || px->y() < -fs.height || px->y() > 2 * fs.height) continue;
+        x0 = std::min(x0, px->x()), x1 = std::max(x1, px->x()), y0 = std::min(y0, px->y()), y1 = std::max(y1, px->y());
+        ++n;
+      }
+    }
+  }
+  if (n < 3) return {};
+  const double m = 0.03 * fs.width + 24;
+  cv::Rect r(cv::Point(static_cast<int>(x0 - m), static_cast<int>(y0 - m)), cv::Point(static_cast<int>(x1 + m), static_cast<int>(y1 + m)));
+  r &= cv::Rect(0, 0, fs.width, fs.height);
+  if (r.area() < 64 * 64 || r.area() > 0.85 * fs.area()) return {};
+  return r;
+}
+
+void Pipeline::updateLetterbox() {
+  const cv::Size fs = src_->size();
+  cv::Matx33d K = cv::Matx33d::eye();
+  if (cfg_.focal_px) K = {*cfg_.focal_px, 0, (fs.width - 1) / 2.0, 0, *cfg_.focal_px, (fs.height - 1) / 2.0, 0, 0, 1};
+  crop_ = computeCrop();
+  const cv::Size region = crop_.area() > 0 ? crop_.size() : fs;
+  lb_ = std::make_unique<Letterbox>(fs, det_->inputSizeFor(region), K, cfg_.distortion, crop_);
+  spdlog::info("Detector input {}x{} from {} ({}x{} px, scale {:.2f})", lb_->netSize().width, lb_->netSize().height,
+               crop_.area() > 0 ? "the road area" : "the whole frame", region.width, region.height, lb_->scale());
+}
+
+// Detector models next to the configured one (ONNX files; segmentation models excluded).
+nlohmann::json Pipeline::modelList() const {
+  namespace fs = std::filesystem;
+  std::vector<std::string> out;
+  std::error_code ec;
+  for (auto it = fs::recursive_directory_iterator(models_dir_, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+    if (it.depth() > 1) it.disable_recursion_pending();
+    const auto& p = it->path();
+    if (p.extension() != ".onnx" || p.filename().string().find("segformer") != std::string::npos) continue;
+    out.push_back(fs::relative(p, models_dir_).string());
+  }
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
 void Pipeline::publishConfig() {
@@ -657,6 +781,7 @@ void Pipeline::applyUserMap() {
   map_.roi = um.roi;
   scene_->setMap(map_);
   occlusion_.configure(*camera_, map_, cfg_.max_range);
+  updateLetterbox();
   refiner_.setLanes(um.lanes.empty() ? std::vector<Lane>{} : map_.lanes);
   publishMap();
 }
@@ -702,6 +827,32 @@ void Pipeline::publishRefine() {
   emit("calibration/refine", h, 1, true);
 }
 
+// Traffic lights: read every other frame, published on change and twice a second (retained).
+void Pipeline::updateSignals(const cv::Mat& frame, double stamp) {
+  if (user_map_.signals.empty()) {
+    if (!signals_.empty()) {
+      signals_.clear();
+      sink_->publish(topic("signals"), "", 1, true);
+    }
+    return;
+  }
+  if (frames_ % 2) return;
+  signals_ = signal_reader_.update(frame, user_map_.signals);
+  std::string key;
+  for (const auto& s : signals_) key += s.id + "=" + s.state + ";";
+  if (key == signals_key_ && t_signals_ >= 0 && stamp - t_signals_ < 0.5) return;
+  signals_key_ = key;
+  t_signals_ = stamp;
+  auto h = msg::header("signals", cfg_.site_id, cfg_.camera_id, stamp);
+  h["signals"] = nlohmann::json::array();
+  for (size_t i = 0; i < signals_.size(); ++i) {
+    const auto& s = signals_[i];
+    h["signals"].push_back({{"id", s.id}, {"state", s.state}, {"confidence", std::round(s.confidence * 100) / 100},
+                            {"stop_line", user_map_.signals[i].stop_line}});
+  }
+  emit("signals", h, 1, true);
+}
+
 void Pipeline::renderPreview(const cv::Mat& frame, const std::vector<ImageDetection>& dets) {
   if (!preview_ || !preview_->wanted()) return;
   const double now = wallNow();
@@ -710,6 +861,23 @@ void Pipeline::renderPreview(const cv::Mat& frame, const std::vector<ImageDetect
   cv::Mat img;
   const double s = std::min(1.0, static_cast<double>(cfg_.preview_width) / frame.cols);
   cv::resize(frame, img, cv::Size(), s, s, cv::INTER_AREA);
+  // Traffic lights: their box in the colour they show.
+  for (size_t i = 0; i < signals_.size() && i < user_map_.signals.size(); ++i) {
+    const auto& b = user_map_.signals[i].box;
+    const std::string& st = signals_[i].state;
+    const cv::Scalar col = st == "red" ? cv::Scalar(60, 60, 255) : st == "green" ? cv::Scalar(90, 220, 60)
+                         : st == "amber" || st == "red_amber" ? cv::Scalar(30, 180, 255) : cv::Scalar(200, 200, 200);
+    cv::rectangle(img, cv::Point(static_cast<int>(b[0] * s), static_cast<int>(b[1] * s)),
+                  cv::Point(static_cast<int>(b[2] * s), static_cast<int>(b[3] * s)), col, 2, cv::LINE_AA);
+    cv::putText(img, signals_[i].id + " " + st, cv::Point(static_cast<int>(b[0] * s), std::max(10, static_cast<int>(b[1] * s) - 4)),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv::LINE_AA);
+  }
+  if (cfg_.preview_overlay && crop_.area() > 0) {
+    // The region the detector sees.
+    cv::rectangle(img, cv::Rect(cv::Point(static_cast<int>(crop_.x * s), static_cast<int>(crop_.y * s)),
+                                cv::Point(static_cast<int>((crop_.x + crop_.width) * s), static_cast<int>((crop_.y + crop_.height) * s))),
+                  cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+  }
   if (cfg_.preview_overlay) {
     // Colours match the panel (BGR).
     static const cv::Scalar colours[] = {{255, 141, 76}, {59, 212, 255}, {67, 159, 255}, {128, 160, 192},
@@ -768,6 +936,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   cv::Mat net;
   lb_->apply(frame, net);
   auto dets = det_->detect(net, *lb_);
+  updateSignals(frame, stamp);
   dets.erase(std::remove_if(dets.begin(), dets.end(),
                             [this](const ImageDetection& d) { return !class_enabled_[static_cast<size_t>(d.cls)]; }),
              dets.end());
@@ -842,7 +1011,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   // 2. Lift to 3D.
   std::vector<Detection3D> d3;
   for (const auto& d : dets) {
-    auto x = frame_cam_.lift(d);
+    auto x = frame_cam_.lift(d, 2.5);  // keypoints jitter by a few pixels
     if (!x || x->range >= cfg_.max_range) continue;
     if (cfg_.roi_filter && map_.roi.size() >= 3 && !insidePolygon(map_.roi, x->bottom.head<2>())) continue;
     d3.push_back(*x);
@@ -894,7 +1063,11 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
       if (v.id != u.id && v.lane == u.lane && v.lane_s > u.lane_s && v.lane_s - u.lane_s < 12.0) leader = false;
     if (leader) learner_.addStoppedFront(u.lane, u.lane_s + u.dims[0] / 2);
   }
-  const auto events = safety_->update(stamp, scene_->users());
+  // Safety events only from road users whose speed and heading are trustworthy (no jumpy far tracks).
+  std::vector<RoadUser> trusted;
+  for (const auto& u : scene_->users())
+    if (u.speed_valid && u.heading_valid) trusted.push_back(u);
+  const auto events = safety_->update(stamp, trusted);
 
   // 6. Self-monitoring.
   calmon_.update(stamp, frame_cam_, d3, scene_->users(), map_);

@@ -56,6 +56,8 @@ nlohmann::json UserMap::toJson() const {
   j["crosswalks"] = nlohmann::json::array();
   for (const auto& c : crosswalks) j["crosswalks"].push_back(pts(c));
   j["roi"] = pts(roi);
+  j["signals"] = nlohmann::json::array();
+  for (const auto& s : signals) j["signals"].push_back({{"id", s.id}, {"box", s.box}, {"stop_line", s.stop_line}});
   return j;
 }
 
@@ -83,6 +85,18 @@ UserMap UserMap::fromJson(const nlohmann::json& j) {
   if (j.contains("roi")) {
     m.roi = pts(j["roi"]);
     if (m.roi.size() < 3) m.roi.clear();
+  }
+  int n = 1;
+  for (const auto& s : j.value("signals", nlohmann::json::array())) {
+    SignalHead h;
+    h.id = s.value("id", "");
+    if (h.id.empty()) h.id = "S" + std::to_string(n);
+    ++n;
+    const auto b = s.value("box", std::vector<double>{});
+    if (b.size() != 4) continue;
+    h.box = {b[0], b[1], b[2], b[3]};
+    h.stop_line = s.value("stop_line", -1);
+    m.signals.push_back(h);
   }
   return m;
 }

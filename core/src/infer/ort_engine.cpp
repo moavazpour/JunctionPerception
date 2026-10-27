@@ -1,4 +1,5 @@
-// ONNX Runtime CPU backend: runs the same ONNX models as TensorRT on machines without an NVIDIA GPU.
+// ONNX Runtime backend: the exported ONNX model as trained (FP32), on the GPU (CUDA execution provider)
+// or on the CPU.
 #include <onnxruntime_cxx_api.h>
 #include <spdlog/spdlog.h>
 
@@ -9,6 +10,10 @@
 #include <thread>
 
 #include "jp/infer/engine.hpp"
+
+#ifdef JP_HAVE_ORT_CUDA
+#include <cuda_runtime_api.h>
+#endif
 
 namespace jp {
 namespace {
@@ -44,11 +49,26 @@ size_t elementSize(ONNXTensorElementDataType t) {
 
 class OrtEngine : public InferenceEngine {
  public:
-  OrtEngine(const std::string& onnx, int threads) {
+  OrtEngine(const std::string& onnx, int threads, bool cuda) : cuda_(cuda) {
     threads_ = threads > 0 ? threads : std::max(1u, std::thread::hardware_concurrency());
     Ort::SessionOptions so;
-    so.SetIntraOpNumThreads(threads_);
+    so.SetIntraOpNumThreads(cuda ? std::min(threads_, 4) : threads_);
     so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    if (cuda) {
+#ifdef JP_HAVE_ORT_CUDA
+      // Plain FP32 (no TF32), so results match the trained model.
+      const auto& api = Ort::GetApi();
+      OrtCUDAProviderOptionsV2* o = nullptr;
+      Ort::ThrowOnError(api.CreateCUDAProviderOptions(&o));
+      const char* keys[] = {"device_id", "use_tf32", "cudnn_conv_algo_search"};
+      const char* vals[] = {"0", "0", "HEURISTIC"};
+      Ort::ThrowOnError(api.UpdateCUDAProviderOptions(o, keys, vals, 3));
+      so.AppendExecutionProvider_CUDA_V2(*o);
+      api.ReleaseCUDAProviderOptions(o);
+#else
+      throw std::runtime_error("this build has no ONNX Runtime CUDA provider");
+#endif
+    }
     session_ = std::make_unique<Ort::Session>(env(), onnx.c_str(), so);
     Ort::AllocatorWithDefaultOptions alloc;
     auto add = [&](bool input, size_t i) {
@@ -59,7 +79,12 @@ class OrtEngine : public InferenceEngine {
       t.name = name.get();
       t.is_input = input;
       t.shape = ts.GetShape();
-      for (auto& d : t.shape) d = std::max<int64_t>(d, 1);  // dynamic dims run with batch 1
+      if (input && t.shape.size() == 4 && (t.shape[2] < 0 || t.shape[3] < 0)) {
+        dynamic_ = true;
+        t.shape[2] = t.shape[2] < 0 ? 960 : t.shape[2];
+        t.shape[3] = t.shape[3] < 0 ? 960 : t.shape[3];
+      }
+      for (auto& d : t.shape) d = std::max<int64_t>(d, 1);  // dynamic batch runs with 1
       t.dtype = toDType(ts.GetElementType());
       size_t n = 1;
       for (auto d : t.shape) n *= static_cast<size_t>(d);
@@ -70,14 +95,29 @@ class OrtEngine : public InferenceEngine {
     for (size_t i = 0; i < session_->GetInputCount(); ++i) add(true, i);
     for (size_t i = 0; i < session_->GetOutputCount(); ++i) add(false, i);
     for (const auto& t : tensors_) (t.is_input ? in_names_ : out_names_).push_back(t.name);
-    spdlog::info("ONNX Runtime CPU engine for {} ({} threads)", onnx, threads_);
+    if (cuda) {
+      cudaName();
+      spdlog::info("ONNX Runtime CUDA engine (FP32) for {} on {}{}", onnx, gpu_, dynamic_ ? ", dynamic input size" : "");
+    } else {
+      spdlog::info("ONNX Runtime CPU engine for {} ({} threads){}", onnx, threads_, dynamic_ ? ", dynamic input size" : "");
+    }
   }
 
   const std::vector<TensorInfo>& tensors() const override { return tensors_; }
   double lastLatencyMs() const override { return last_ms_; }
-  std::string backend() const override { return "cpu"; }
-  std::string device() const override { return "CPU (" + std::to_string(threads_) + " threads)"; }
+  std::string backend() const override { return cuda_ ? "cuda" : "cpu"; }
+  std::string device() const override { return cuda_ ? gpu_ : "CPU (" + std::to_string(threads_) + " threads)"; }
   std::string precision() const override { return "fp32"; }
+  bool dynamicInput() const override { return dynamic_; }
+  void setInputSize(int w, int h) override {
+    for (size_t i = 0; i < tensors_.size(); ++i) {
+      auto& t = tensors_[i];
+      if (!t.is_input || t.shape.size() != 4) continue;
+      t.shape[2] = h;
+      t.shape[3] = w;
+      t.bytes = static_cast<size_t>(t.shape[0]) * t.shape[1] * h * w * elementSize(types_[i]);
+    }
+  }
 
   void infer(const std::vector<const void*>& host_inputs, const std::vector<void*>& host_outputs) override {
     const auto t0 = std::chrono::steady_clock::now();
@@ -114,11 +154,21 @@ class OrtEngine : public InferenceEngine {
   std::vector<std::string> in_names_, out_names_;
   int threads_ = 1;
   double last_ms_ = 0;
+  bool cuda_ = false, dynamic_ = false;
+  std::string gpu_ = "GPU";
+  void cudaName();
 };
+
+void OrtEngine::cudaName() {
+#ifdef JP_HAVE_ORT_CUDA
+  cudaDeviceProp p{};
+  if (cudaGetDeviceProperties(&p, 0) == cudaSuccess) gpu_ = p.name;
+#endif
+}
 }  // namespace
 
-std::unique_ptr<InferenceEngine> createOrtEngine(const std::string& onnx, int threads) {
-  return std::make_unique<OrtEngine>(onnx, threads);
+std::unique_ptr<InferenceEngine> createOrtEngine(const std::string& onnx, int threads, bool cuda) {
+  return std::make_unique<OrtEngine>(onnx, threads, cuda);
 }
 
 }  // namespace jp

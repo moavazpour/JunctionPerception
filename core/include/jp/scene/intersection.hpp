@@ -35,6 +35,11 @@ struct RoadUser {
   std::optional<double> stop_position_s;
   bool queued = false;
   bool occluded = false;
+  // Whether speed and heading are trustworthy (enough track history, small uncertainty). Untrusted values
+  // are still reported but must not drive decisions (safety events, ETAs).
+  bool speed_valid = false;
+  bool heading_valid = false;
+  std::string heading_source;  // lane | motion | hold
 };
 
 struct ZoneState {
@@ -83,6 +88,14 @@ class IntersectionModel {
 
  private:
   RoadUser describe(const Track& t, double stamp) const;
+  // Output layer between the filter and everything downstream: heading from the drawn lane direction or the
+  // motion (never the box alone), no sudden reversals, a bounded turn rate, smoothed speed and acceleration.
+  void stabilize(RoadUser& u, const Track& t, double stamp);
+  struct Motion {
+    double heading = 0, speed = 0, accel = 0, last = -1, reverse_since = -1;
+    bool init = false;
+  };
+  std::map<std::uint32_t, Motion> motion_;
   void assignLane(RoadUser& u, const Track& t);
 
   SiteMap map_;
