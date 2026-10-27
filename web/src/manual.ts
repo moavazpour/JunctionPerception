@@ -26,12 +26,12 @@ export class ManualCalibration {
   constructor(private host: HTMLElement, private send: (cmd: object) => void) {
     host.innerHTML = `
       <div class="card">
-        <b>Manual calibration</b>
+        <div class="mc-title"><b>Manual calibration</b><button id="mc-full">Full screen</button></div>
         <div class="muted small">Click a point on the road surface in the camera view (lane-marking corners,
           stop-line ends, kerb corners), then the same point on the map. Use at least 4 pairs (6+ is better),
           spread from near to far and across the road.</div>
-        <canvas id="mc-img" class="mc-img"></canvas>
-        <div id="mc-map" class="mc-map"></div>
+        <div class="mc-views"><canvas id="mc-img" class="mc-img"></canvas>
+        <div id="mc-map" class="mc-map"></div></div>
         <table class="mc-pairs"><thead><tr><th>#</th><th>image (px)</th><th>map</th><th></th></tr></thead><tbody></tbody></table>
         <div class="mc-buttons">
           <button id="mc-solve" disabled>Solve</button>
@@ -43,6 +43,12 @@ export class ManualCalibration {
       </div>`;
     this.canvas = host.querySelector("#mc-img")!;
     this.canvas.addEventListener("click", (e) => this.onImageClick(e));
+    host.querySelector("#mc-full")!.addEventListener("click", (e) => {
+      const card = host.querySelector(".card")!;
+      card.classList.toggle("mc-fullscreen");
+      (e.target as HTMLButtonElement).textContent = card.classList.contains("mc-fullscreen") ? "Close full screen" : "Full screen";
+      setTimeout(() => this.map?.invalidateSize(), 50);
+    });
     host.querySelector("#mc-solve")!.addEventListener("click", () => this.solve());
     host.querySelector("#mc-clear")!.addEventListener("click", () => {
       this.pairs = [];

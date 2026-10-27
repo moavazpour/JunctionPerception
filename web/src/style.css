@@ -118,3 +118,8 @@ code { color: #c9d6ff; }
   background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; margin-left: 6px; min-width: 260px;
 }
 .ns-map { height: 360px; border-radius: 8px; border: 1px solid var(--line); margin: 6px 0; cursor: crosshair; }
+.mc-title { display: flex; justify-content: space-between; align-items: center; }
+.mc-title button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; cursor: pointer; }
+.mc-fullscreen { position: fixed; inset: 10px; z-index: 40; margin: 0; overflow: auto; background: var(--panel2); }
+.mc-fullscreen .mc-views { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+.mc-fullscreen .mc-map { height: calc(100vh - 260px); min-height: 400px; margin-top: 8px; }
