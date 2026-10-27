@@ -50,7 +50,8 @@ struct ManualCalibrationResult {
   double rms_px = 0;  // reprojection error of the point correspondences
   double max_px = 0;
   double ground_rms_m = 0, ground_max_m = 0;  // the same points measured on the ground
-  std::string quality;                         // good | fair | poor
+  double fit = 0;      // RMS of the normalised residuals: about 1 when the clicks are as precise as expected
+  std::string quality;  // good (fit <= 1.5) | fair (<= 3) | poor
   std::string message;
   std::vector<std::string> warnings;
   struct Residual {
@@ -58,6 +59,7 @@ struct ManualCalibrationResult {
     int index = 0;
     double px = 0;  // image error
     double m = 0;   // ground error (points and lines)
+    double norm = 0;  // image error relative to the expected click + map accuracy at that distance
   };
   std::vector<Residual> residuals;
   // Expected ground-position error from the calibration alone, along the viewing direction.

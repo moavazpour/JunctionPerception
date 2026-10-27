@@ -15,16 +15,17 @@ constexpr double kDeg = M_PI / 180.0;
 constexpr int kN = 7;  // rvec (3), camera centre (3), log focal
 using Vec7 = Eigen::Matrix<double, kN, 1>;
 
-// Field of view along the long image side for each lens hint: centre (deg) and log-focal sigma.
+// Field of view along the long image side for each lens hint (deg), with log-focal sigmas: tight towards a
+// wider view than the lens has (impossible), loose towards a narrower one (phones zoom digitally on top).
 struct LensPrior {
-  double fov_deg, log_sigma;
+  double fov_deg, sigma_wider, sigma_narrower;
 };
 LensPrior lensPrior(const std::string& lens) {
-  if (lens == "phone_wide") return {66.0, 0.12};
-  if (lens == "phone_2x") return {37.0, 0.15};
-  if (lens == "phone_3x") return {25.0, 0.18};
-  if (lens == "cctv") return {55.0, 0.45};
-  return {55.0, 0.70};  // unknown: only rules out absurd focal lengths
+  if (lens == "phone_wide") return {66.0, 0.12, 0.6};
+  if (lens == "phone_2x") return {37.0, 0.15, 0.6};
+  if (lens == "phone_3x") return {25.0, 0.18, 0.6};
+  if (lens == "cctv") return {55.0, 0.45, 0.6};
+  return {55.0, 0.70, 0.9};  // unknown: only rules out absurd focal lengths
 }
 
 double focalFromFov(double long_side, double fov_deg) { return long_side / 2.0 / std::tan(fov_deg * kDeg / 2.0); }
@@ -77,7 +78,7 @@ struct Problem {
   std::vector<std::array<Eigen::Vector2d, 2>> line_world;
   std::vector<VerticalLine> verts;
   double click = 1.5;
-  double logf0 = 0, logf_sigma = 1;
+  double logf0 = 0, logf_sigma = 1, logf_sigma_narrow = 1;
   double h0 = 8, h_sigma = 8;
   // Per-measurement sigma (px) and robust weight, refreshed between rounds.
   std::vector<double> pt_sigma, pt_w, ln_sigma, ln_w;
@@ -133,7 +134,7 @@ struct Problem {
         r.push_back(0.5 * L * sin_a / (2.0 * click));
       }
     }
-    r.push_back((x[6] - logf0) / logf_sigma);
+    r.push_back((x[6] - logf0) / (x[6] > logf0 ? logf_sigma_narrow : logf_sigma));
     r.push_back((x[5] - h0) / h_sigma);
     r.push_back(x[3] / in.anchor_sigma_m);
     r.push_back(x[4] / in.anchor_sigma_m);
@@ -317,10 +318,11 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
   const LensPrior lens = lensPrior(in.lens);
   if (in.focal_px) {
     P.logf0 = std::log(*in.focal_px);
-    P.logf_sigma = 1e-4;
+    P.logf_sigma = P.logf_sigma_narrow = 1e-4;
   } else {
     P.logf0 = std::log(focalFromFov(P.long_side, lens.fov_deg));
-    P.logf_sigma = lens.log_sigma;
+    P.logf_sigma = lens.sigma_wider;
+    P.logf_sigma_narrow = lens.sigma_narrower;
   }
   if (in.height_m) {
     P.h0 = *in.height_m;
@@ -332,7 +334,7 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
   if (in.focal_px) {
     focals.push_back(*in.focal_px);
   } else {
-    for (int i = 0; i <= 27; ++i) focals.push_back(focalFromFov(P.long_side, 10.0 + i * 105.0 / 27));
+    for (int i = 0; i <= 27; ++i) focals.push_back(focalFromFov(P.long_side, 4.0 + i * 111.0 / 27));
     if (auto f0 = focalFromHomography(P.world, P.img, P.cx, P.cy); f0 && *f0 > 0.2 * P.long_side && *f0 < 12 * P.long_side)
       focals.push_back(*f0);
   }
@@ -416,7 +418,7 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
     sum_px += epx * epx;
     res.max_px = std::max(res.max_px, epx);
     ground_err.push_back(em);
-    res.residuals.push_back({"point", static_cast<int>(i), epx, em});
+    res.residuals.push_back({"point", static_cast<int>(i), epx, em, epx / P.pt_sigma[i]});
   }
   res.rms_px = std::sqrt(sum_px / P.img.size());
   for (size_t j = 0; j < P.line_px.size(); ++j) {
@@ -431,7 +433,7 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
       sm += m * m;
     }
     const double n = static_cast<double>(P.line_px[j].size());
-    res.residuals.push_back({"line", static_cast<int>(j), std::sqrt(spx / n), std::sqrt(sm / n)});
+    res.residuals.push_back({"line", static_cast<int>(j), std::sqrt(spx / n), std::sqrt(sm / n), std::sqrt(spx / n) / P.ln_sigma[j]});
   }
   for (size_t j = 0; j < P.verts.size(); ++j) {
     const Eigen::Vector3d v = cam.R * Eigen::Vector3d::UnitZ();
@@ -442,7 +444,7 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
       Eigen::Vector2d dir = Eigen::Vector2d(cam.f * v.x() / v.z() + P.cx, cam.f * v.y() / v.z() + P.cy) - m;
       e = 0.5 * d.norm() * std::abs(d.x() * dir.y() - d.y() * dir.x()) / (d.norm() * dir.norm() + 1e-12);
     }
-    res.residuals.push_back({"vertical", static_cast<int>(j), e, 0});
+    res.residuals.push_back({"vertical", static_cast<int>(j), e, 0, e / (2.0 * P.click)});
   }
   {
     std::vector<double> sq;
@@ -511,18 +513,29 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
     if (*mx < 1.8 * *mn) res.warnings.push_back("all points are at a similar distance: add points nearer and farther away");
     if (es.eigenvalues()[0] < 0.02 * es.eigenvalues()[1]) res.warnings.push_back("the points lie almost on one line: add points across the road");
   }
-  if (!in.focal_px && std::abs(best[6] - P.logf0) > 2.0 * P.logf_sigma)
+  if (!in.focal_px && P.logf0 - best[6] > 2.0 * P.logf_sigma)
     res.warnings.push_back("the solved field of view (" + std::to_string(int(std::round(res.fov_deg))) +
                            " deg) does not match the lens setting");
   if (in.height_m && std::abs(cam.C.z() - *in.height_m) > 2.5 * P.h_sigma)
     res.warnings.push_back("the solved height differs from the estimate by " +
                            std::to_string(int(std::round(std::abs(cam.C.z() - *in.height_m)))) + " m");
   {
-    std::vector<double> s = ground_err;
+    // Fit relative to what clicking can achieve at each point's distance (1 = as expected).
+    std::vector<double> nr;
+    double s2 = 0;
+    int n = 0;
+    for (const auto& e : res.residuals) {
+      if (e.kind == "vertical") continue;
+      s2 += e.norm * e.norm;
+      ++n;
+      if (e.kind == "point") nr.push_back(e.norm);
+    }
+    res.fit = std::sqrt(s2 / std::max(n, 1));
+    std::vector<double> s = nr;
     std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end());
     const double med = s[s.size() / 2];
-    for (size_t i = 0; i < ground_err.size(); ++i)
-      if (ground_err[i] > std::max(1.0, 3.0 * med)) {
+    for (size_t i = 0; i < nr.size(); ++i)
+      if (nr[i] > std::max(3.0, 2.5 * med)) {
         char w[160];
         std::snprintf(w, sizeof(w), "point %zu is off by %.1f m: check that both clicks show the same spot", i + 1,
                       ground_err[i]);
@@ -532,14 +545,14 @@ ManualCalibrationResult calibrateManual(const ManualCalibrationInput& in) {
 
   const bool plausible = all_front && cam.C.z() > 0.5 && cam.C.z() < 150.0;
   res.plausible = plausible;
-  res.quality = res.ground_rms_m <= 0.5 ? "good" : res.ground_rms_m <= 1.25 ? "fair" : "poor";
-  res.ok = plausible && res.ground_rms_m < 3.0;
+  res.quality = res.fit <= 1.5 ? "good" : res.fit <= 3.0 ? "fair" : "poor";
+  res.ok = plausible && res.fit <= 4.0;
   char buf[320];
   std::snprintf(buf, sizeof(buf),
                 "f=%.0f px (%.0f deg), pitch=%.2f deg, roll=%.2f deg, height=%.2f m, bearing=%.1f deg, camera %.1f m from "
-                "the configured position; points: %.2f m rms on the ground (max %.2f), %.1f px in the image",
+                "the configured position; points: %.2f m rms on the ground (max %.2f), %.1f px in the image, fit %.1f",
                 cam.f, res.fov_deg, res.camera.pitch() / kDeg, res.camera.roll() / kDeg, cam.C.z(), bearing,
-                cam.C.head<2>().norm(), res.ground_rms_m, res.ground_max_m, res.rms_px);
+                cam.C.head<2>().norm(), res.ground_rms_m, res.ground_max_m, res.rms_px, res.fit);
   res.message = buf;
   if (!plausible) res.message = std::string("no physically plausible camera (") + buf + ")";
   else if (!res.ok) res.message = std::string("points are inconsistent (") + buf + "); check the pairs with the largest error";
