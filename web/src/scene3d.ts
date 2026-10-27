@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { aerialGround } from "./aerial";
+import { STYLE, buildStylizedMap } from "./osmroads";
 import { buildModel, glowTexture } from "./models";
 import type { CameraJson, DetectorsMsg, NearMiss, ObjectClass, OcclusionMsg, RoadUser, SiteMap } from "./types";
 
@@ -36,6 +37,13 @@ export class Scene3D {
   private cam?: CameraJson;
   private aerial?: THREE.Mesh;
   private aerialKey = "";
+  private stylized?: THREE.Group;
+  private stylizedKey = "";
+  private ground!: THREE.Mesh;
+  private grid!: THREE.GridHelper;
+  private anchor?: { lat: number; lon: number };
+  // "stylized": roads drawn from OpenStreetMap (default); "aerial": satellite imagery.
+  mapMode: "stylized" | "aerial" = "stylized";
   private clock = new THREE.Clock();
   selected: number | null = null;
   showAllLabels = false;
@@ -64,14 +72,14 @@ export class Scene3D {
     key.position.set(-60, 120, 40);
     this.scene.add(key);
 
-    const ground = new THREE.Mesh(
+    const ground = (this.ground = new THREE.Mesh(
       new THREE.PlaneGeometry(4000, 4000),
       new THREE.MeshStandardMaterial({ color: 0x15181d, roughness: 1 }),
-    );
+    ));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.02;
     this.scene.add(ground);
-    const grid = new THREE.GridHelper(1200, 120, 0x1f242b, 0x1a1e24);
+    const grid = (this.grid = new THREE.GridHelper(1200, 120, 0x1f242b, 0x1a1e24));
     grid.position.y = -0.01;
     this.scene.add(grid);
     this.scene.add(this.mapGroup, this.eventsGroup, this.sensor);
@@ -94,17 +102,58 @@ export class Scene3D {
 
   // Aerial imagery under the scene, centred on the camera's ground point (loaded once per position).
   private setAerial(cam: CameraJson) {
-    const a = cam.anchor;
+    if (cam.anchor) this.anchor = cam.anchor;
+    this.updateBaseMap();
+  }
+
+  // Camera ground position known before calibration (from the snapshot): lets the base map load early.
+  setAnchor(lat: number, lon: number) {
+    if (!this.anchor) {
+      this.anchor = { lat, lon };
+      this.updateBaseMap();
+    }
+  }
+
+  setMapMode(mode: "stylized" | "aerial") {
+    this.mapMode = mode;
+    this.updateBaseMap();
+  }
+
+  // Base map under the scene: the stylized OpenStreetMap roads or the aerial imagery (loaded on demand,
+  // once per camera position).
+  private updateBaseMap() {
+    const stylized = this.mapMode === "stylized";
+    const bg = stylized ? STYLE.background : 0x0c0e12;
+    this.scene.background = new THREE.Color(bg);
+    (this.scene.fog as THREE.Fog).color.setHex(bg);
+    (this.ground.material as THREE.MeshStandardMaterial).color.setHex(stylized ? STYLE.ground : 0x15181d);
+    this.grid.visible = !stylized && !this.aerial;
+    if (this.stylized) this.stylized.visible = stylized;
+    if (this.aerial) this.aerial.visible = !stylized;
+    const a = this.anchor;
     if (!a) return;
     const key = `${a.lat.toFixed(6)},${a.lon.toFixed(6)}`;
-    if (key === this.aerialKey) return;
-    this.aerialKey = key;
-    aerialGround(a.lat, a.lon).then((m) => {
-      if (!m || key !== this.aerialKey) return;
-      if (this.aerial) this.scene.remove(this.aerial);
-      this.aerial = m;
-      this.scene.add(m);
-    });
+    if (stylized && key !== this.stylizedKey) {
+      this.stylizedKey = key;
+      buildStylizedMap(a.lat, a.lon).then((g) => {
+        if (!g || key !== this.stylizedKey) return;
+        if (this.stylized) this.scene.remove(this.stylized);
+        this.stylized = g;
+        g.visible = this.mapMode === "stylized";
+        this.scene.add(g);
+      });
+    }
+    if (!stylized && key !== this.aerialKey) {
+      this.aerialKey = key;
+      aerialGround(a.lat, a.lon).then((m) => {
+        if (!m || key !== this.aerialKey) return;
+        if (this.aerial) this.scene.remove(this.aerial);
+        this.aerial = m;
+        m.visible = this.mapMode === "aerial";
+        this.grid.visible = false;
+        this.scene.add(m);
+      });
+    }
   }
 
   setMap(map: SiteMap, cam: CameraJson) {

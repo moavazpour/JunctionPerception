@@ -108,6 +108,7 @@ client.on("message", (topic, payload) => {
     case "snapshot":
       snapshot = msg as SnapshotMsg;
       manual.setSnapshot(snapshot);
+      if (snapshot.anchor) scene.setAnchor(snapshot.anchor.lat, snapshot.anchor.lon);
       renderCalib();
       break;
     case "calibration/manual/result":
@@ -285,3 +286,29 @@ managerAvailable().then(async (ok) => {
     else panel.show();
   }
 });
+
+// ------------------------------------------------------------------ base map mode
+
+{
+  const btn = $("#mapmode") as HTMLButtonElement;
+  let mode: "stylized" | "aerial" = "stylized";
+  try {
+    if (localStorage.getItem("jp-mapmode") === "aerial") mode = "aerial";
+  } catch {
+    /* storage unavailable */
+  }
+  const apply = () => {
+    scene.setMapMode(mode);
+    btn.textContent = mode === "stylized" ? "Aerial" : "Map";
+  };
+  btn.addEventListener("click", () => {
+    mode = mode === "stylized" ? "aerial" : "stylized";
+    try {
+      localStorage.setItem("jp-mapmode", mode);
+    } catch {
+      /* storage unavailable */
+    }
+    apply();
+  });
+  apply();
+}
