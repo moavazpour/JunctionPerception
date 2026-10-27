@@ -40,6 +40,7 @@ uses TypeScript, Three.js and Vite.
 
 | Document | Content |
 |---|---|
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | using the web demo: add a site, calibrate, the digital twin |
 | [docs/CODE_ARCHITECTURE.md](docs/CODE_ARCHITECTURE.md) | complete code architecture: modules, files, data flow, threads, training and deployment |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | design and algorithms |
 | [docs/INTERFACES.md](docs/INTERFACES.md) | inputs, MQTT topics and message schema |
@@ -64,5 +65,6 @@ docker/     Dockerfiles (x86, Jetson, web), broker and proxy config
 
 ```bash
 cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build   # CPU-only: -DJP_WITH_TENSORRT=OFF
-JP_MODELS=$PWD/models JP_DATA=$PWD/data docker compose up -d --build              # full stack, panel on :8080
+JP_MODELS=$PWD/models JP_DATA=$PWD/data docker compose up -d --build              # one configured camera, panel on :8080
+JP_MODELS=$PWD/models JP_DATA=$PWD/demo docker compose -f docker-compose.demo.yml up -d --build   # web demo: sites from the browser
 ```
