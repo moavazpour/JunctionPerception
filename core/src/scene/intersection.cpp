@@ -98,7 +98,7 @@ void IntersectionModel::stabilize(RoadUser& u, const Track& t, double stamp) {
   u.yaw = m.heading;
   u.speed = m.speed;
   u.accel = m.accel;
-  u.speed_valid = u.age >= 1.0 && sv < std::max(1.0, 0.25 * vabs);
+  u.speed_valid = u.age >= 1.0 && sv < std::max(1.5, 0.3 * vabs);
   u.heading_valid = src == "lane" || (src == "motion" && u.speed_valid);
   u.heading_source = src;
 }
