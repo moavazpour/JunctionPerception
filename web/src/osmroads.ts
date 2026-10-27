@@ -61,6 +61,21 @@ async function fetchOsm(lat: number, lon: number, radius: number): Promise<{ way
   } catch {
     /* storage unavailable */
   }
+  // Through the site manager first: it caches the area on disk and tries several Overpass mirrors.
+  try {
+    const r = await fetch(`/api/osm?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&r=${radius}`);
+    if (r.ok) {
+      const out = await r.json();
+      try {
+        localStorage.setItem(key, JSON.stringify(out));
+      } catch {
+        /* too large or unavailable: fine */
+      }
+      return out;
+    }
+  } catch {
+    /* no manager (single-camera stack): ask Overpass directly */
+  }
   const q = `[out:json][timeout:25];(way["highway"](around:${radius},${lat},${lon});` +
     `node["highway"~"traffic_signals|crossing|stop"](around:${radius},${lat},${lon}););out body geom;`;
   for (const url of OVERPASS) {
@@ -139,12 +154,11 @@ class Batch {
 }
 
 function trafficLight(): THREE.Group {
+  // Floating head, no pole (as in the in-car view).
   const g = new THREE.Group();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.2, 8), new THREE.MeshStandardMaterial({ color: 0x9aa1aa }));
-  pole.position.y = 2.1;
   const box = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.2, 0.35), new THREE.MeshStandardMaterial({ color: 0x2a2d33 }));
   box.position.y = 4.5;
-  g.add(pole, box);
+  g.add(box);
   [0xff3b30, 0xffb020, 0x34c759].forEach((c, i) => {
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8),
       new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.35 }));

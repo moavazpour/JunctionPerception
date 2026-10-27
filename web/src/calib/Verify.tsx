@@ -50,12 +50,9 @@ export function overlayPolys(cam: GroundCamera, m: UserMap | undefined, grid: bo
       const rib = laneRibbon(l.points, l.width);
       const n = rib.length / 2;
       const c = LANE_COLORS[i % LANE_COLORS.length];
-      for (const edge of [rib.slice(0, n), rib.slice(n)]) for (const seg of projectPath(cam, edge.map(enu))) polys.push({ pts: seg, color: c, width: 2.5 });
-      for (const seg of projectPath(cam, l.points.map(enu))) polys.push({ pts: seg, color: c, width: 1, dashed: true });
+      for (const edge of [rib.slice(0, n), rib.slice(n)]) for (const seg of projectPath(cam, edge.map(enu))) polys.push({ pts: seg, color: c, width: 1.5, dashed: true });
     });
-    for (const s of m.stop_lines) for (const seg of projectPath(cam, s.map((p) => enu(p as [number, number])), 0.25)) polys.push({ pts: seg, color: "#ffffff", width: 4 });
-    for (const cw of m.crosswalks) for (const seg of projectPath(cam, [...cw, cw[0]].map(enu), 0.5)) polys.push({ pts: seg, color: "#ffffff", width: 1.5, dashed: true });
-    if (m.roi.length >= 3) for (const seg of projectPath(cam, [...m.roi, m.roi[0]].map(enu))) polys.push({ pts: seg, color: "#5884ff", width: 2, dashed: true });
+    // Stop lines, crosswalks and the road area are drawn through their draggable dots (handlePolys).
   }
   return polys;
 }
@@ -198,6 +195,7 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
   // Drag-to-align: moving a drawn vertex in the image pairs its map position with that pixel and re-solves.
   const align = useDraft((s) => s.align);
   const handles = useMemo(() => (camera && layout ? alignHandles(camera, userMap, align) : []), [camera, userMap, align, layout]);
+  const allPolys = useMemo(() => [...polys, ...handlePolys(handles)], [polys, handles]);
   const [solving, setSolving] = useState(false);
   const [msg, setMsg] = useState("");
   const timer = useRef<number>();
@@ -281,7 +279,7 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
       </div>
       {!camera && <div className="card p-6 text-sm text-muted">Solve the calibration first (step 3).</div>}
       <div className="grid gap-3 lg:grid-cols-2">
-        <ImageCanvas snapshot={snapshot} handles={handles} polys={polys} onMove={onMove} className="h-[58vh] min-h-[360px]" />
+        <ImageCanvas snapshot={snapshot} handles={handles} polys={allPolys} onMove={onMove} className="h-[58vh] min-h-[360px]" />
         <div ref={ref} className="h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-line" />
       </div>
       {msg && <div className="text-sm text-warn">{msg}</div>}
@@ -291,19 +289,45 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
   );
 }
 
-// Draggable vertices of the drawn layout, at their projection (or where the installer put them).
+export const STOP_COLORS = ["#ffffff", "#ff6b6b", "#fcc419", "#63e6be", "#da77f2"];
+const ROI_COLOR = "#5c7cfa", CW_COLOR = "#e9ecef";
+
+export interface AlignHandle extends Handle {
+  lat: number;
+  lon: number;
+  feature: string; // vertices of one feature share it (drawn joined)
+  closed?: boolean;
+}
+
+// Draggable vertices of the drawn layout, at their projection (or where the installer put them), one colour
+// per feature, joined in the image so it is clear which line a dot belongs to.
 export function alignHandles(cam: GroundCamera, m: UserMap | undefined, align: Record<string, AlignPair>) {
-  const out: (Handle & { lat: number; lon: number })[] = [];
+  const out: AlignHandle[] = [];
   if (!m) return out;
-  const add = (id: string, g: [number, number]) => {
+  const add = (id: string, g: [number, number], color: string, feature: string, hint: string, closed = false) => {
     const a = align[id];
     const p = a ? ([a.u, a.v] as V2) : cam.projectGeo(g[0], g[1]);
     if (!p || p[0] < -0.1 * cam.width || p[0] > 1.1 * cam.width || p[1] < -0.1 * cam.height || p[1] > 1.1 * cam.height) return;
-    out.push({ id, u: p[0], v: p[1], color: a ? "#ffb020" : "#ffffff", ring: !a, lat: g[0], lon: g[1] });
+    out.push({ id, u: p[0], v: p[1], color, ring: !a, lat: g[0], lon: g[1], feature, hint: `${hint}${a ? " (moved)" : ""}`, closed });
   };
-  m.lanes.forEach((l) => l.points.forEach((g, j) => add(`lane:${l.id}:${j}`, g)));
-  m.stop_lines.forEach((s, i) => s.forEach((g, j) => add(`stop:${i}:${j}`, g as [number, number])));
-  m.crosswalks.forEach((c, i) => c.forEach((g, j) => add(`cw:${i}:${j}`, g)));
-  m.roi.forEach((g, j) => add(`roi:${j}`, g));
+  m.lanes.forEach((l, i) =>
+    l.points.forEach((g, j) => add(`lane:${l.id}:${j}`, g, LANE_COLORS[i % LANE_COLORS.length], `lane:${l.id}`, `Lane ${l.id} · point ${j + 1}`)));
+  m.stop_lines.forEach((s, i) =>
+    s.forEach((g, j) => add(`stop:${i}:${j}`, g as [number, number], STOP_COLORS[i % STOP_COLORS.length], `stop:${i}`, `Stop line ${i + 1} · ${j ? "end B" : "end A"}`)));
+  m.crosswalks.forEach((c, i) => c.forEach((g, j) => add(`cw:${i}:${j}`, g, CW_COLOR, `cw:${i}`, `Crosswalk ${i + 1} · corner ${j + 1}`, true)));
+  m.roi.forEach((g, j) => add(`roi:${j}`, g, ROI_COLOR, "roi", `Road area · corner ${j + 1}`, true));
+  return out;
+}
+
+// Each feature drawn through its dots (solid), so moving a dot visibly moves its line.
+export function handlePolys(handles: AlignHandle[]): Poly[] {
+  const groups = new Map<string, AlignHandle[]>();
+  for (const h of handles) groups.set(h.feature, [...(groups.get(h.feature) ?? []), h]);
+  const out: Poly[] = [];
+  for (const [feature, hs] of groups) {
+    if (hs.length < 2) continue;
+    const stop = feature.startsWith("stop:");
+    out.push({ pts: hs.map((h) => [h.u, h.v]), color: hs[0].color, width: stop ? 4 : 2.5, closed: hs[0].closed, dashed: feature === "roi" });
+  }
   return out;
 }

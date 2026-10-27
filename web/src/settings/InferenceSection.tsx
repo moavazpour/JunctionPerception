@@ -6,7 +6,7 @@ import type { ObjectClass, Settings } from "../types";
 import { NoSite, Page, Row, Toggle } from "./SettingsPage";
 
 const ALL: ObjectClass[] = ["car", "bus", "truck", "trailer", "motorcycle", "bicycle", "escooter", "pedestrian"];
-const DEFAULTS: Partial<Settings> = { confidence: 0.45, keypoint_confidence: 0.35, max_range_m: 250, max_fps: 15, preview_fps: 12 };
+const DEFAULTS: Partial<Settings> = { confidence: 0.45, keypoint_confidence: 0.35, max_range_m: 250, max_fps: 15, preview_fps: 12, max_det: 300 };
 
 function Slider({ value, min, max, step, unit, onChange, fmt }: {
   value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void; fmt?: (v: number) => string;
@@ -25,6 +25,7 @@ function Slider({ value, min, max, step, unit, onChange, fmt }: {
 // Model settings applied by the running site within a frame (topic config/set), persisted on the device.
 export function InferenceSection() {
   const remote = useStore((s) => s.config?.settings);
+  const compute = useStore((s) => s.config?.compute);
   const [s, setS] = useState<Settings | undefined>(remote);
   const timer = useRef<number>();
   const pending = useRef<Partial<Settings>>({});
@@ -41,6 +42,40 @@ export function InferenceSection() {
   };
   return (
     <Page title="Detection" desc="Changes apply to the running site immediately and are kept across restarts.">
+      <section className="card px-5 py-2">
+        <Row label="Model" hint="Every trained detector in the models folder. Changing it reloads the network (a few seconds).">
+          <select className="input" value={s.model} onChange={(e) => change({ model: e.target.value })}>
+            {(compute?.models ?? [s.model]).map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </Row>
+        <Row label="Inference backend" hint="GPU / ONNX Runtime runs the exported model as trained (FP32). TensorRT is faster but uses FP16.">
+          <div className="seg">
+            {(["auto", "cuda", "tensorrt", "cpu"] as const).map((b) => (
+              <button key={b} data-on={s.backend === b} disabled={b !== "auto" && !compute?.available.includes(b)} onClick={() => change({ backend: b })}>
+                {{ auto: "Auto", cuda: "GPU (FP32)", tensorrt: "TensorRT (FP16)", cpu: "CPU" }[b]}
+              </button>
+            ))}
+          </div>
+        </Row>
+        <Row label="Input size" hint={compute?.dynamic_input ? "Long side of the network input in pixels. Larger finds smaller, farther objects but is slower." : "This model was exported with a fixed input size."}>
+          <select className="input w-40" disabled={!compute?.dynamic_input} value={s.imgsz} onChange={(e) => change({ imgsz: Number(e.target.value) })}>
+            {[640, 768, 960, 1120, 1280, 1440, 1600, 1920].map((v) => (
+              <option key={v} value={v}>{v} px</option>
+            ))}
+          </select>
+          {compute && <span className="ml-3 text-xs text-muted">network input now {compute.input.join(" × ")} px</span>}
+        </Row>
+        <Row label="Detect in the road area only" hint="Feed only the image region of the drawn road area to the network: far vehicles get more pixels, nothing is detected outside.">
+          <Toggle on={s.crop_to_roi} onChange={(v) => change({ crop_to_roi: v })} />
+          {compute?.crop && <span className="ml-3 text-xs text-muted">region {compute.crop[2]} × {compute.crop[3]} px</span>}
+        </Row>
+        <Row label="Maximum detections" hint="Per frame, highest scores first.">
+          <Slider value={s.max_det} min={10} max={300} step={10} onChange={(v) => change({ max_det: v })} />
+        </Row>
+        {compute?.error && <div className="pb-3 text-xs text-bad">Last model change failed: {compute.error}</div>}
+      </section>
       <section className="card px-5 py-2">
         <Row label="Detection confidence" hint="Score a detection needs to start a track. Lower finds more far objects but more false ones.">
           <Slider value={s.confidence} min={0.1} max={0.9} step={0.01} onChange={(v) => change({ confidence: v })} fmt={(v) => v.toFixed(2)} />

@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import type {
   CalibInputs, CalibrationMsg, ConfigMsg, DetectorsMsg, Health, MapMsg, NearMiss, OcclusionMsg, RefineState, RoadUser,
-  SnapshotMsg, SolveReport, UserMap,
+  SignalsMsg, SnapshotMsg, SolveReport, UserMap,
 } from "./types";
 
 export type ThemePref = "system" | "light" | "dark";
@@ -42,6 +42,7 @@ export interface State {
   config?: ConfigMsg;
   refine?: RefineState;
   userMap?: UserMap;
+  signals?: SignalsMsg;
   inputs?: CalibInputs;
   lastReport?: SolveReport;
   events: NearMiss[];

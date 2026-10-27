@@ -42,6 +42,9 @@ export interface RoadUser {
   decel_required?: number;
   stopping?: boolean;
   queued?: boolean;
+  speed_valid?: boolean;
+  heading_valid?: boolean;
+  heading_source?: "lane" | "motion" | "hold";
 }
 
 export interface ObjectsMsg extends Header {
@@ -226,10 +229,19 @@ export interface Settings {
   roi_filter: boolean;
   preview_overlay: boolean;
   preview_fps: number;
+  model: string;
+  imgsz: number;
+  backend: string;
+  max_det: number;
+  crop_to_roi: boolean;
 }
 
 export interface ComputeInfo {
-  backend: "tensorrt" | "cpu";
+  backend: "cuda" | "tensorrt" | "cpu";
+  dynamic_input?: boolean;
+  crop?: [number, number, number, number] | null;
+  models?: string[];
+  error?: string;
   device: string;
   precision: string;
   model: string;
@@ -255,11 +267,21 @@ export interface UserLane {
   points: [number, number][];
   width: number;
 }
+export interface SignalHead {
+  id: string;
+  box: [number, number, number, number]; // frame pixels u0 v0 u1 v1
+  stop_line: number; // index into stop_lines, -1 = none
+}
 export interface UserMap {
   lanes: UserLane[];
   stop_lines: [number, number][][];
   crosswalks: [number, number][][];
   roi: [number, number][];
+  signals?: SignalHead[];
+}
+export type SignalStateName = "red" | "red_amber" | "amber" | "green" | "off" | "unknown";
+export interface SignalsMsg extends Header {
+  signals: { id: string; state: SignalStateName; confidence: number; stop_line: number }[];
 }
 export interface UserMapMsg extends Header {
   map: UserMap;

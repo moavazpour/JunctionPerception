@@ -16,10 +16,13 @@ Environment:
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Literal
 
@@ -30,15 +33,15 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 DATA = Path("/data")
-SITES, VIDEOS, STATE = DATA / "sites", DATA / "videos", DATA / "state"
-for d in (SITES, VIDEOS, STATE):
+SITES, VIDEOS, STATE, OSM = DATA / "sites", DATA / "videos", DATA / "state", DATA / "osm"
+for d in (SITES, VIDEOS, STATE, OSM):
     d.mkdir(parents=True, exist_ok=True)
 HOST = os.environ.get("JP_DATA_HOST", "/data")
 MODELS_HOST = os.environ.get("JP_MODELS_HOST", "/models")
 NETWORK = os.environ.get("JP_NETWORK", "bridge")
 IMAGE = os.environ.get("JP_IMAGE", "junction-perception:latest")
 IMAGE_CPU = os.environ.get("JP_IMAGE_CPU", IMAGE)
-DETECTOR = os.environ.get("JP_DETECTOR", "jp_y26s_960.onnx")
+DETECTOR = os.environ.get("JP_DETECTOR", "jp_y26s_v2.onnx")
 MAX_SITES = int(os.environ.get("JP_MAX_SITES", "4"))
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".m4v"}
 LENSES = {"unknown", "phone_wide", "phone_2x", "phone_3x", "cctv"}
@@ -274,6 +277,40 @@ def logs(sid: str, lines: int = 80):
     p = _site(sid)
     c = container(p.stem)
     return {"logs": c.logs(tail=min(lines, 500)).decode(errors="replace") if c else ""}
+
+
+OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter", "https://overpass.private.coffee/api/interpreter"]
+
+
+@app.get("/api/osm")
+def osm(lat: float, lon: float, r: int = 350):
+    """Roads, crossings and traffic lights around a point (for the drawn base map), cached on disk: the public
+    Overpass servers are often busy, so every mirror is tried and a site's map is fetched only once."""
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 50 <= r <= 1500):
+        raise HTTPException(400, "bad area")
+    key = OSM / f"{lat:.5f}_{lon:.5f}_{r}.json"
+    if key.exists():
+        return json.loads(key.read_text())
+    q = (f"[out:json][timeout:25];(way[\"highway\"](around:{r},{lat},{lon});"
+         f"node[\"highway\"~\"traffic_signals|crossing|stop\"](around:{r},{lat},{lon}););out body geom;")
+    data = urllib.parse.urlencode({"data": q}).encode()
+    last = "no server answered"
+    for attempt in range(2):
+        for url in OVERPASS:
+            try:
+                req = urllib.request.Request(url, data=data, headers={"User-Agent": "junction-perception/0.2"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    j = json.loads(resp.read())
+                out = {"ways": [e for e in j.get("elements", []) if e.get("type") == "way" and e.get("geometry")],
+                       "nodes": [e for e in j.get("elements", []) if e.get("type") == "node"]}
+                if out["ways"]:
+                    key.write_text(json.dumps(out))
+                    return out
+            except Exception as e:  # busy mirror, timeout: try the next one
+                last = f"{url}: {e}"
+        time.sleep(2)
+    raise HTTPException(503, f"OpenStreetMap is not reachable ({last})")
 
 
 @app.get("/api/health")

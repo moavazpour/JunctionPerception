@@ -31,7 +31,8 @@ function Overview({ users }: { users: RoadUser[] }) {
     for (const u of users) m.set(u.class, (m.get(u.class) ?? 0) + 1);
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [users]);
-  const moving = users.filter((u) => Math.abs(u.speed) > 1.0 && u.class !== "pedestrian");
+  // Statistics only from road users whose speed is trustworthy.
+  const moving = users.filter((u) => u.speed_valid !== false && Math.abs(u.speed) > 1.0 && u.class !== "pedestrian");
   const avg = moving.length ? (moving.reduce((s, u) => s + Math.abs(u.speed_kmh), 0) / moving.length) : undefined;
   const max = moving.length ? Math.max(...moving.map((u) => Math.abs(u.speed_kmh))) : undefined;
   const queued = users.filter((u) => u.queued).length;
@@ -101,7 +102,7 @@ function Selected({ u }: { u: RoadUser }) {
   const rows: [string, string][] = [
     ["Speed", `${f0(Math.abs(u.speed_kmh))} km/h`],
     ["Acceleration", `${u.accel >= 0 ? "+" : ""}${u.accel.toFixed(2)} m/s²`],
-    ["Heading", `${f0(u.heading)}° ${compass(u.heading)}`],
+    ["Heading", `${f0(u.heading)}° ${compass(u.heading)}${u.heading_source ? ` · from ${u.heading_source === "lane" ? "the lane" : u.heading_source === "motion" ? "motion" : "last motion"}` : ""}${u.heading_valid === false ? " (uncertain)" : ""}`],
     ["Size (L×W×H)", `${f1(u.length)} × ${f1(u.width)} × ${f1(u.height)} m`],
     ["Lane", u.lane ? `${u.lane}${u.approach ? ` · ${u.approach}` : ""}` : "–"],
     ["To stop line", u.dist_to_stop !== undefined ? `${f1(u.dist_to_stop)} m` : "–"],
@@ -123,7 +124,7 @@ function Selected({ u }: { u: RoadUser }) {
         </button>
       </div>
       <div className="grid grid-cols-2 gap-3 px-4 pt-3">
-        <Stat label="Speed" value={f0(Math.abs(u.speed_kmh))} unit="km/h" sub={`± ${f1(u.sigma.speed * 3.6)} km/h`} />
+        <Stat label="Speed" value={`${u.speed_valid === false ? "~" : ""}${f0(Math.abs(u.speed_kmh))}`} unit="km/h" sub={u.speed_valid === false ? "uncertain: too little track history or jumpy detections" : `± ${f1(u.sigma.speed * 3.6)} km/h`} />
         <Stat label="Acceleration" value={`${u.accel >= 0 ? "+" : ""}${u.accel.toFixed(1)}`} unit="m/s²" sub={`± ${f1(u.sigma.accel)}`} />
       </div>
       {decel !== undefined && (
@@ -179,8 +180,11 @@ function ObjectList({ users }: { users: RoadUser[] }) {
                     <span className="text-muted">#{u.id}</span>
                   </span>
                 </td>
-                <td>{f0(Math.abs(u.speed_kmh))}</td>
-                <td className={u.accel < -2 ? "text-warn" : ""}>{u.accel.toFixed(1)}</td>
+                <td className={u.speed_valid === false ? "text-muted" : ""} title={u.speed_valid === false ? "uncertain" : undefined}>
+                  {u.speed_valid === false ? "~" : ""}
+                  {f0(Math.abs(u.speed_kmh))}
+                </td>
+                <td className={u.speed_valid === false ? "text-muted" : u.accel < -2 ? "text-warn" : ""}>{u.accel.toFixed(1)}</td>
                 <td>{u.lane ?? "–"}</td>
                 <td className="pr-4 text-right">
                   {u.dist_to_stop !== undefined && u.dist_to_stop > 0 ? `${f0(u.dist_to_stop)} m${u.eta !== undefined ? ` · ${f1(u.eta)} s` : ""}` : "–"}
@@ -196,6 +200,34 @@ function ObjectList({ users }: { users: RoadUser[] }) {
             )}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+const LAMP: Record<string, string> = { red: "#ff3b30", amber: "#ffb020", red_amber: "#ff7a1a", green: "#34c759", off: "#4b5058", unknown: "#8b929c" };
+
+function Signals() {
+  const sig = useStore((s) => s.signals?.signals);
+  if (!sig?.length) return null;
+  return (
+    <section className="card p-4">
+      <div className="card-title mb-2">Traffic lights</div>
+      <div className="flex flex-wrap gap-3">
+        {sig.map((s) => (
+          <div key={s.id} className="flex items-center gap-2 rounded-lg bg-panel2 px-3 py-2">
+            <div className="flex flex-col gap-0.5 rounded bg-black/80 p-1">
+              {(["red", "amber", "green"] as const).map((c) => {
+                const on = s.state === c || (s.state === "red_amber" && c !== "green");
+                return <span key={c} className="h-2.5 w-2.5 rounded-full" style={{ background: on ? LAMP[c] : "#2a2d33", boxShadow: on ? `0 0 6px ${LAMP[c]}` : undefined }} />;
+              })}
+            </div>
+            <div className="text-xs">
+              <div className="font-semibold">{s.id}</div>
+              <div className="text-muted">{s.state.replace("_", " + ")}{s.stop_line >= 0 ? ` · stop line ${s.stop_line + 1}` : ""}</div>
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -244,6 +276,7 @@ export function Sidebar() {
         </a>
       )}
       <Overview users={users} />
+      <Signals />
       {sel && <Selected u={sel} />}
       <Lanes />
       <ObjectList users={users} />

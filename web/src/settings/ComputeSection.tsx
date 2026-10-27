@@ -16,7 +16,7 @@ export function ComputeSection() {
     if (site) api<SiteInfo>(`/sites/${site}`).then(setInfo).catch(() => setInfo(null));
   }, [site]);
   if (!c) return <Page title="Compute"><NoSite /></Page>;
-  const gpu = c.backend === "tensorrt";
+  const gpu = c.backend !== "cpu";
   const setDevice = async (device: string) => {
     if (!site) return;
     setMsg("Restarting the site on the new device…");
@@ -34,7 +34,7 @@ export function ComputeSection() {
           {gpu ? <Zap size={22} /> : <Cpu size={22} />}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-lg font-semibold">{gpu ? "GPU · NVIDIA TensorRT" : "CPU · ONNX Runtime"}</div>
+          <div className="text-lg font-semibold">{c.backend === "tensorrt" ? "GPU · NVIDIA TensorRT (FP16)" : gpu ? "GPU · ONNX Runtime CUDA (FP32, model as trained)" : "CPU · ONNX Runtime"}</div>
           <div className="truncate text-sm text-muted">{c.device}</div>
         </div>
         {pipe && (
@@ -49,7 +49,7 @@ export function ComputeSection() {
         <Row label="Detector latency">{pipe ? `${pipe.detector_ms.toFixed(1)} ms per frame` : "–"}</Row>
         <Row label="End-to-end latency" hint="Frame capture to published result.">{pipe?.latency_ms !== undefined ? `${pipe.latency_ms.toFixed(0)} ms` : "–"}</Row>
         <Row label="Segmentation" hint="Static occlusion (buildings, trees); runs every few seconds in the background.">{c.segmentation ? "on" : "off"}</Row>
-        <Row label="Backends in this build">{c.available.map((b) => (b === "tensorrt" ? "TensorRT (GPU)" : "ONNX Runtime (CPU)")).join(", ")}</Row>
+        <Row label="Backends in this build">{c.available.map((b) => ({ cuda: "ONNX Runtime (GPU)", tensorrt: "TensorRT (GPU)", cpu: "ONNX Runtime (CPU)" } as Record<string, string>)[b] ?? b).join(", ")}</Row>
       </section>
       {mgr && info && (
         <section className="card px-5 py-2">

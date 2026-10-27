@@ -39,7 +39,8 @@ function ComputeBadge() {
   const lat = useStore((s) => s.health?.pipeline.latency_ms);
   const det = useStore((s) => s.health?.pipeline.detector_ms);
   if (!c) return null;
-  const gpu = c.backend === "tensorrt";
+  const gpu = c.backend !== "cpu";
+  const engine = c.backend === "tensorrt" ? "TensorRT" : "ONNX Runtime";
   return (
     <div className="hidden items-center gap-2 text-xs text-muted lg:flex">
       <span
@@ -47,7 +48,7 @@ function ComputeBadge() {
         title={`${c.device} · ${c.model} ${c.input?.join("×")}`}
       >
         {gpu ? <Zap size={11} /> : <Cpu size={11} />}
-        {gpu ? "GPU" : "CPU"} · {gpu ? "TensorRT" : "ONNX Runtime"} {c.precision.toUpperCase()}
+        {gpu ? "GPU" : "CPU"} · {engine} {c.precision.toUpperCase()}
       </span>
       <span className="hidden max-w-[180px] truncate xl:inline" title={c.device}>
         {c.device}

@@ -1,12 +1,12 @@
 // Step 3: reference points, lines and verticals matched between the camera image and the aerial map.
 import L from "leaflet";
-import { Camera, Crosshair, Minus, RefreshCw, Spline, Trash2, Undo2 } from "lucide-react";
+import { Camera, Crosshair, Minus, RefreshCw, Spline, TrafficCone, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { pin, useBaseMap } from "../components/leaflet";
 import { enuToGeo, GroundCamera } from "../geo";
-import { calibrationCommand } from "../mqtt";
+import { calibrationCommand, publish } from "../mqtt";
 import { useStore } from "../store";
-import type { SolveReport } from "../types";
+import type { SignalHead, SolveReport, UserMap } from "../types";
 import { useDraft, type Draft, type Tool } from "./draft";
 import { ImageCanvas, type Handle, type Poly } from "./ImageCanvas";
 import { drawLayout } from "./LayoutEditor";
@@ -39,6 +39,7 @@ export function residualIndex(d: Draft, r?: SolveReport) {
 }
 
 function guidance(d: Draft): string {
+  if (d.tool === "light") return "Drag a box around a traffic light head in the image, then pick the stop line it controls below. Its colour is read live from the image.";
   if (d.tool === "point") {
     const last = d.points[d.points.length - 1];
     if (last && last.u !== undefined && last.lat === undefined) return `Now click the same spot on the map (point ${d.points.length}).`;
@@ -223,6 +224,7 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
     { t: "point", label: "Point pair", icon: <Crosshair size={14} /> },
     { t: "line", label: "Line", icon: <Spline size={14} /> },
     { t: "vertical", label: "Vertical", icon: <Minus size={14} className="rotate-90" /> },
+    { t: "light", label: "Traffic light", icon: <TrafficCone size={14} /> },
   ];
   return (
     <div className="space-y-3">
@@ -250,9 +252,18 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
       </div>
       <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">{guidance(d)}</div>
       <div className="grid gap-3 lg:grid-cols-2">
-        <ImageCanvas snapshot={snapshot} handles={handles} polys={polys} onPlace={onPlace} onMove={onMove} className="h-[58vh] min-h-[360px]" />
+        <ImageCanvas
+          snapshot={snapshot}
+          handles={d.tool === "light" ? [] : handles}
+          polys={[...polys, ...signalPolys(userMap)]}
+          onPlace={d.tool === "light" ? undefined : onPlace}
+          onMove={d.tool === "light" ? undefined : onMove}
+          onRect={d.tool === "light" ? addSignal : undefined}
+          className="h-[58vh] min-h-[360px]"
+        />
         <div ref={ref} className="h-[58vh] min-h-[360px] overflow-hidden rounded-lg border border-line cursor-crosshair" />
       </div>
+      <SignalList />
       <PairList res={res} />
     </div>
   );
@@ -337,6 +348,69 @@ function PairList({ res }: { res: ReturnType<typeof residualIndex> }) {
       <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-[11px] text-muted">
         <RefreshCw size={11} /> Errors refresh after each solve. Colours compare the error with what clicking can achieve at that distance (far points may be off by more metres): green as expected, amber larger, red: check that both clicks show the same spot.
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ traffic lights
+
+const EMPTY_MAP: UserMap = { lanes: [], stop_lines: [], crosswalks: [], roi: [], signals: [] };
+
+function saveSignals(signals: SignalHead[]) {
+  const st = useStore.getState();
+  const m: UserMap = { ...(st.userMap ?? EMPTY_MAP), signals };
+  st.set({ userMap: m });
+  publish("map/user/set", { map: m });
+}
+
+function addSignal(u0: number, v0: number, u1: number, v1: number) {
+  const m = useStore.getState().userMap ?? EMPTY_MAP;
+  const cur = m.signals ?? [];
+  let k = cur.length + 1;
+  while (cur.some((s) => s.id === `S${k}`)) k++;
+  saveSignals([...cur, { id: `S${k}`, box: [u0, v0, u1, v1], stop_line: m.stop_lines.length ? 0 : -1 }]);
+}
+
+function signalPolys(m?: UserMap): Poly[] {
+  return (m?.signals ?? []).map((s) => {
+    const [u0, v0, u1, v1] = s.box;
+    return { pts: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]], color: "#ffb020", width: 2, closed: true };
+  });
+}
+
+function SignalList() {
+  const m = useStore((s) => s.userMap);
+  const states = useStore((s) => s.signals?.signals);
+  const sig = m?.signals ?? [];
+  if (!sig.length) return null;
+  return (
+    <div className="card p-4">
+      <div className="card-title mb-2">Traffic lights</div>
+      <ul className="space-y-2 text-sm">
+        {sig.map((s, i) => (
+          <li key={s.id} className="flex flex-wrap items-center gap-2">
+            <b className="w-10">{s.id}</b>
+            <span className="text-xs text-muted">controls</span>
+            <select
+              className="input w-44 py-1"
+              value={s.stop_line}
+              onChange={(e) => saveSignals(sig.map((x, j) => (j === i ? { ...x, stop_line: Number(e.target.value) } : x)))}
+            >
+              <option value={-1}>no stop line</option>
+              {m!.stop_lines.map((_, j) => (
+                <option key={j} value={j}>
+                  Stop line {j + 1}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-muted">now: {states?.find((x) => x.id === s.id)?.state ?? "–"}</span>
+            <button className="btn-ghost ml-auto px-1.5 py-1 text-bad" onClick={() => saveSignals(sig.filter((_, j) => j !== i))}>
+              <Trash2 size={13} />
+            </button>
+          </li>
+        ))}
+      </ul>
+      {!m!.stop_lines.length && <div className="mt-2 text-xs text-warn">Draw the stop lines in step 2 to link the lights to them.</div>}
     </div>
   );
 }

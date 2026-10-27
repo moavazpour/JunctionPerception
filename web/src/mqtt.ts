@@ -36,6 +36,7 @@ client.on("message", (topic, payload) => {
     if (leaf === "calibration") st.set({ calibration: undefined });
     else if (leaf === "map") st.set({ map: undefined });
     else if (leaf === "detectors") st.set({ detectors: undefined });
+    else if (leaf === "signals") st.set({ signals: undefined });
     return;
   }
   let m: any;
@@ -75,6 +76,9 @@ client.on("message", (topic, payload) => {
       break;
     case "map/user":
       set({ userMap: m.map });
+      break;
+    case "signals":
+      set({ signals: m });
       break;
     case "calibration/inputs":
       set({ inputs: m.inputs });
@@ -123,7 +127,7 @@ export function selectSite(site: string) {
   history.replaceState(null, "", url);
   useStore.getState().set({
     site, objects: [], health: undefined, calibration: undefined, map: undefined, detectors: undefined, occlusion: undefined,
-    snapshot: undefined, config: undefined, refine: undefined, userMap: undefined, inputs: undefined, lastReport: undefined,
+    snapshot: undefined, config: undefined, refine: undefined, userMap: undefined, signals: undefined, inputs: undefined, lastReport: undefined,
     events: [], selected: null,
   });
   client.unsubscribe(`${prefix}/+/+/#`, () => client.subscribe(`${prefix}/+/+/#`));

@@ -25,7 +25,7 @@ services:
       JP_MODELS_HOST: ${JP_MODELS:?set JP_MODELS to an absolute path}
       JP_NETWORK: jp-net
       JP_IMAGE: junction-perception:latest
-      JP_DETECTOR: ${JP_DETECTOR:-jp_y26s_960.onnx}
+      JP_DETECTOR: ${JP_DETECTOR:-jp_y26s_v2.onnx}
       JP_MAX_SITES: ${JP_MAX_SITES:-4}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

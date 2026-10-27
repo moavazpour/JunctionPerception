@@ -5,7 +5,8 @@ import { aerialGround } from "./aerial";
 import { PALETTES, buildStylizedMap } from "./osmroads";
 import { CLASS_LABEL, LANE_COLORS } from "./store";
 import { buildModel, glowTexture } from "./models";
-import type { CameraJson, DetectorsMsg, NearMiss, ObjectClass, OcclusionMsg, RoadUser, SiteMap } from "./types";
+import { geoToEnu } from "./geo";
+import type { CameraJson, DetectorsMsg, NearMiss, ObjectClass, OcclusionMsg, RoadUser, SignalsMsg, SiteMap, UserMap } from "./types";
 
 // Ground frame (x east, y north) -> three.js (x east, y up, z south).
 const toV3 = (x: number, y: number, h = 0) => new THREE.Vector3(x, h, -y);
@@ -34,6 +35,9 @@ export class Scene3D {
   private occMesh?: THREE.Mesh;
   private eventsGroup = new THREE.Group();
   private sensor = new THREE.Group();
+  private signalGroup = new THREE.Group();
+  private signalLamps = new Map<string, THREE.MeshStandardMaterial[]>();
+  private userMap?: UserMap;
   private glowTex = glowTexture();
   private cam?: CameraJson;
   private aerial?: THREE.Mesh;
@@ -54,7 +58,8 @@ export class Scene3D {
   onSelect: (id: number | null) => void = () => {};
 
   constructor(private host: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Logarithmic depth: the ground layers are centimetres apart and hundreds of metres away (no flicker).
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -82,12 +87,12 @@ export class Scene3D {
       new THREE.MeshStandardMaterial({ color: 0x15181d, roughness: 1 }),
     ));
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.02;
+    ground.position.y = -0.3;
     this.scene.add(ground);
     const grid = (this.grid = new THREE.GridHelper(1200, 120, 0x1f242b, 0x1a1e24));
     grid.position.y = -0.01;
     this.scene.add(grid);
-    this.scene.add(this.mapGroup, this.eventsGroup, this.sensor);
+    this.scene.add(this.mapGroup, this.eventsGroup, this.sensor, this.signalGroup);
 
     this.renderer.domElement.addEventListener("pointerdown", (e) => this.pick(e));
     new ResizeObserver(() => this.resize()).observe(host);
@@ -160,7 +165,13 @@ export class Scene3D {
     if (stylized && key !== this.stylizedKey) {
       this.stylizedKey = key;
       buildStylizedMap(a.lat, a.lon, STYLE).then((g) => {
-        if (!g || key !== this.stylizedKey) return;
+        if (key !== this.stylizedKey) return;
+        if (!g) {
+          // Map data not reachable right now: try again in a while.
+          this.stylizedKey = "";
+          setTimeout(() => this.updateBaseMap(), 15000);
+          return;
+        }
         if (this.stylized) this.scene.remove(this.stylized);
         this.stylized = g;
         g.visible = this.mapMode === "stylized";
@@ -170,7 +181,12 @@ export class Scene3D {
     if (!stylized && key !== this.aerialKey) {
       this.aerialKey = key;
       aerialGround(a.lat, a.lon).then((m) => {
-        if (!m || key !== this.aerialKey) return;
+        if (key !== this.aerialKey) return;
+        if (!m) {
+          this.aerialKey = "";
+          setTimeout(() => this.updateBaseMap(), 15000);
+          return;
+        }
         if (this.aerial) this.scene.remove(this.aerial);
         this.aerial = m;
         m.visible = this.mapMode === "aerial";
@@ -265,6 +281,69 @@ export class Scene3D {
       this.zoneMeshes.set(z.id, m);
     }
     this.buildSensor(cam);
+    this.setSignalLayout(this.userMap);
+  }
+
+  // Traffic light heads at the stop lines they control, floating (no pole), facing the approaching traffic.
+  setSignalLayout(um?: UserMap) {
+    this.userMap = um;
+    this.signalGroup.clear();
+    this.signalLamps.clear();
+    const anchor = this.cam?.anchor;
+    if (!um?.signals?.length || !anchor) return;
+    const enu = (p: number[]) => geoToEnu(anchor, p[0], p[1]);
+    for (const s of um.signals) {
+      const sl = um.stop_lines[s.stop_line];
+      if (!sl) continue;
+      const a = enu(sl[0]), b = enu(sl[1]);
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      // Travel direction: the drawn lane passing closest to the stop line, else away from the camera.
+      let dir: number[] | null = null, best = 1e9;
+      for (const l of um.lanes) {
+        const pts = l.points.map(enu);
+        for (let i = 1; i < pts.length; i++) {
+          const d = Math.hypot((pts[i][0] + pts[i - 1][0]) / 2 - mid[0], (pts[i][1] + pts[i - 1][1]) / 2 - mid[1]);
+          if (d < best) {
+            best = d;
+            const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) || 1;
+            dir = [(pts[i][0] - pts[i - 1][0]) / L, (pts[i][1] - pts[i - 1][1]) / L];
+          }
+        }
+      }
+      if (!dir || best > 40) {
+        const t = [b[0] - a[0], b[1] - a[1]], L = Math.hypot(t[0], t[1]) || 1;
+        dir = [-t[1] / L, t[0] / L];
+        if (dir[0] * mid[0] + dir[1] * mid[1] < 0) dir = [-dir[0], -dir[1]];
+      }
+      // On the right-hand end of the stop line, 5 m up.
+      const r = [dir[1], -dir[0]];
+      const end = (a[0] - mid[0]) * r[0] + (a[1] - mid[1]) * r[1] > 0 ? a : b;
+      const g = new THREE.Group();
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.2, 0.35), new THREE.MeshStandardMaterial({ color: 0x1f2227 }));
+      g.add(box);
+      const mats = [0xff3b30, 0xffb020, 0x34c759].map((c, i) => {
+        const m = new THREE.MeshStandardMaterial({ color: 0x30333a, emissive: c, emissiveIntensity: 0 });
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10), m);
+        lamp.position.set(0, 0.36 - i * 0.36, 0.18);
+        g.add(lamp);
+        return m;
+      });
+      g.position.copy(toV3(end[0] + r[0] * 0.8, end[1] + r[1] * 0.8, 5.2));
+      g.rotation.y = Math.atan2(-dir[0], dir[1]);
+      this.signalGroup.add(g);
+      this.signalLamps.set(s.id, mats);
+    }
+  }
+
+  setSignalStates(msg?: SignalsMsg) {
+    for (const [id, mats] of this.signalLamps) {
+      const st = msg?.signals.find((x) => x.id === id)?.state ?? "unknown";
+      const on = [st === "red" || st === "red_amber", st === "amber" || st === "red_amber", st === "green"];
+      mats.forEach((m, i) => {
+        m.emissiveIntensity = on[i] ? 2.4 : 0;
+        m.color.setHex(on[i] ? 0xffffff : 0x30333a);
+      });
+    }
   }
 
   private along(pts: THREE.Vector2[], s: number): [THREE.Vector2, THREE.Vector2] {

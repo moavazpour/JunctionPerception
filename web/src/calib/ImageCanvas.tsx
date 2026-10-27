@@ -11,6 +11,7 @@ export interface Handle {
   color: string;
   label?: string;
   ring?: boolean; // open (waiting for its map counterpart)
+  hint?: string; // shown while hovering
 }
 export interface Poly {
   pts: [number, number][];
@@ -27,15 +28,18 @@ interface Props {
   polys: Poly[];
   onPlace?: (u: number, v: number) => void;
   onMove?: (id: string, u: number, v: number) => void;
+  // Rectangle mode: dragging on the image draws a box (frame pixels) instead of panning.
+  onRect?: (u0: number, v0: number, u1: number, v1: number) => void;
   className?: string;
 }
 
-export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, className }: Props) {
+export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, onRect, className }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const view = useRef({ zoom: 1, ox: 0, oy: 0 }); // zoom relative to fit, offset in css px
-  const drag = useRef<{ kind: "pan" | "handle"; id?: string; x: number; y: number; moved: boolean } | null>(null);
+  const drag = useRef<{ kind: "pan" | "handle" | "rect"; id?: string; x: number; y: number; x0?: number; y0?: number; moved: boolean } | null>(null);
+  const [hover, setHover] = useState<string | null>(null);
   const mouse = useRef<{ x: number; y: number } | null>(null);
   const [, redraw] = useState(0);
 
@@ -107,12 +111,13 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
     ctx.setLineDash([]);
     for (const h of handles) {
       const [x, y] = P(h.u, h.v);
+      const hot = hover === h.id || drag.current?.id === h.id;
       ctx.beginPath();
-      ctx.arc(x, y, h.ring ? 9 : 7, 0, Math.PI * 2);
-      ctx.fillStyle = h.ring ? "rgba(0,0,0,0.35)" : h.color;
+      ctx.arc(x, y, hot ? 11 : h.ring ? 8 : 7, 0, Math.PI * 2);
+      ctx.fillStyle = hot ? h.color : h.ring ? "rgba(0,0,0,0.45)" : h.color;
       ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = h.ring ? h.color : "white";
+      ctx.lineWidth = hot ? 3 : 2;
+      ctx.strokeStyle = hot ? "white" : h.ring ? h.color : "white";
       ctx.stroke();
       if (h.label) {
         ctx.fillStyle = "white";
@@ -121,6 +126,31 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
         ctx.textBaseline = "middle";
         ctx.fillText(h.label, x, y + 0.5);
       }
+    }
+    // Rectangle being drawn.
+    const dr = drag.current;
+    if (dr?.kind === "rect" && dr.moved && dr.x0 !== undefined && dr.y0 !== undefined) {
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "#ffb020";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(dr.x0, dr.y0, dr.x - dr.x0, dr.y - dr.y0);
+      ctx.setLineDash([]);
+    }
+    // Name of the hovered handle.
+    const hh = handles.find((h) => h.id === hover);
+    if (hh?.hint) {
+      const [x, y] = P(hh.u, hh.v);
+      ctx.font = "600 12px Inter, sans-serif";
+      const w = ctx.measureText(hh.hint).width + 12;
+      const bx = Math.min(Math.max(4, x - w / 2), g.W - w - 4), by = y - 34 < 4 ? y + 16 : y - 34;
+      ctx.fillStyle = "rgba(15,17,20,0.9)";
+      ctx.fillRect(bx, by, w, 20);
+      ctx.fillStyle = hh.color;
+      ctx.fillRect(bx, by, 3, 20);
+      ctx.fillStyle = "white";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(hh.hint, bx + 8, by + 10);
     }
     // Magnifier: 4x around the cursor, in the corner away from it.
     const m = mouse.current;
@@ -152,7 +182,7 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
-  }, [geom, handles, polys, img, s]);
+  }, [geom, handles, polys, img, s, hover]);
 
   useEffect(() => {
     draw();
@@ -178,17 +208,28 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
     const p = local(e);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const h = e.button === 0 ? hit(p.x, p.y) : null;
-    drag.current = h && onMove ? { kind: "handle", id: h.id, ...p, moved: false } : { kind: "pan", ...p, moved: false };
+    drag.current = h && onMove
+      ? { kind: "handle", id: h.id, ...p, moved: false }
+      : onRect && e.button === 0
+        ? { kind: "rect", ...p, x0: p.x, y0: p.y, moved: false }
+        : { kind: "pan", ...p, moved: false };
   };
   const onMoveEv = (e: React.PointerEvent) => {
     const p = local(e);
     mouse.current = p;
     const d = drag.current;
+    if (!d) {
+      const h = hit(p.x, p.y);
+      if ((h?.id ?? null) !== hover) setHover(h?.id ?? null);
+    }
     if (d) {
       if (Math.hypot(p.x - d.x, p.y - d.y) > 3) d.moved = true;
       if (d.moved && d.kind === "pan") {
         view.current.ox += p.x - d.x;
         view.current.oy += p.y - d.y;
+        d.x = p.x;
+        d.y = p.y;
+      } else if (d.kind === "rect") {
         d.x = p.x;
         d.y = p.y;
       } else if (d.moved && d.kind === "handle" && d.id) {
@@ -201,7 +242,11 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    if (d && !d.moved && e.button === 0 && img) {
+    if (d?.kind === "rect" && d.moved && d.x0 !== undefined && d.y0 !== undefined) {
+      const [u0, v0] = toFrame(Math.min(d.x0, d.x), Math.min(d.y0, d.y));
+      const [u1, v1] = toFrame(Math.max(d.x0, d.x), Math.max(d.y0, d.y));
+      if (u1 - u0 > 2 && v1 - v0 > 2) onRect?.(u0, v0, u1, v1);
+    } else if (d && !d.moved && e.button === 0 && img) {
       const p = local(e);
       const [u, v] = toFrame(p.x, p.y);
       const fw = img.width / s, fh = img.height / s;
@@ -241,7 +286,7 @@ export function ImageCanvas({ snapshot, handles, polys, onPlace, onMove, classNa
     <div ref={wrap} className={`relative overflow-hidden rounded-lg bg-black ${className ?? ""}`}>
       <canvas
         ref={canvas}
-        className="block cursor-crosshair touch-none"
+        className={`block touch-none ${hover ? "cursor-grab" : "cursor-crosshair"}`}
         onPointerDown={onDown}
         onPointerMove={onMoveEv}
         onPointerUp={onUp}

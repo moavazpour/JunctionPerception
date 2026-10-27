@@ -15,7 +15,7 @@ export interface LineDraft {
   px: [number, number][];
   geo: [number, number][];
 }
-export type Tool = "point" | "line" | "vertical";
+export type Tool = "point" | "line" | "vertical" | "light";
 // Alignment pair from the check view: a drawn layout vertex (lat/lon) dragged onto its place in the image.
 export interface AlignPair {
   u: number;
