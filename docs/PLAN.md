@@ -42,7 +42,7 @@ and standard outputs, designed for edge deployment.
 | 9 | Benchmark: JP-Unified test split per source, TUMTraf official val, cross-dataset (zero-shot camera) tests, the deployed TensorRT engine through the C++ path | ✅ per-source TensorRT benchmark (LUMPI ATE 0.46 m, TUMTraf-I 0.57 m) |
 | 10 | Test-site run (Georg-Brauchle-Ring video): calibration, tracks, ETA, events, panel | 🔄 demo site running (looped video); manual calibration of the site pending |
 | 11 | Edge: INT8, Jetson image validation, long-run test | ⏳ |
-| 12 | Product demo: React panel (live twin, camera view, statistics, object cards, light/dark), settings (source, detection thresholds live, compute, sites, system), calibration wizard with drawn lanes, ONNX Runtime CPU backend | ✅ done |
+| 12 | Product demo: React panel (live twin, camera view, statistics, object cards, light/dark), settings (source, detection thresholds live, compute, sites, system), calibration wizard with drawn lanes, ONNX Runtime CPU backend | ✅ done; plus GPU inference with ONNX Runtime FP32 (TensorRT optional), model/input-size/backend switching live, road-area crop, motion stabilisation, traffic light states |
 
 ## Phase 7 — data (current)
 

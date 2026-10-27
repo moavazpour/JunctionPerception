@@ -113,9 +113,10 @@ flowchart TB
 | geometry | `geometry/camera.hpp` | `CameraModel`, `GeoAnchor`, `geoToEnu`, `enuToGeo` | pinhole camera over a planar ground: pixel ↔ ground, box projection, keypoint lifting, JSON (de)serialisation, small-rotation correction |
 | | `geometry/bev.hpp` | `OrientedBox`, `Polyline` | oriented-rectangle overlap and distance (SAT), polylines for lanes and zones |
 | ingest | `ingest/video_source.hpp` | `VideoSource`, `VideoSourceConfig` | one interface for `file://`, `rtsp://`, `usb:`/`v4l2://`, `gst:` pipelines; real-time pacing, looping, reconnects |
-| infer | `infer/engine.hpp` | `InferenceEngine`, `EngineOptions`, `createEngine`, `TensorInfo` | backend-neutral model interface; `auto` picks TensorRT when a GPU is usable, else ONNX Runtime on the CPU |
+| infer | `infer/engine.hpp` | `InferenceEngine`, `EngineOptions`, `createEngine`, `TensorInfo` | backend-neutral model interface; `auto` runs the ONNX model as trained (FP32) with ONNX Runtime on the GPU (CUDA provider) or the CPU; TensorRT (FP16) only on request; dynamic input sizes |
 | | `infer/trt_engine.hpp` | `TrtEngine` | TensorRT 10 backend: builds an engine from ONNX on first use and caches it next to the ONNX (per GPU and precision), owns device buffers and a CUDA stream |
-| | `src/infer/ort_engine.cpp` | `OrtEngine` | ONNX Runtime CPU backend (all cores, full graph optimisation) |
+| | `src/infer/ort_engine.cpp` | `OrtEngine` | ONNX Runtime backend: CUDA provider (FP32, TF32 off) or CPU; dynamic height/width |
+| scene | `scene/signals.hpp` | `SignalHead`, `SignalReader` | traffic light state from an image box: bright saturated pixels by hue, lamp position check, majority over 0.5 s |
 | | `infer/detector.hpp` | `Letterbox`, `Detector3D`, `Segmenter` | undistortion + letterbox in one remap; detector decoding for the YOLO26-pose layout `[K, 6+27]` (and the older `[K, 13]`); SegFormer semantic segmentation for static occlusion and visibility |
 | calib | `calib/auto_calibrator.hpp` | `AutoCalibrator`, `CalibrationPriors`, `CalibrationResult` | self-calibration from traffic (keypoint 4-DoF search or vanishing-point path), bearing from the map |
 | | `calib/manual_calibration.hpp` | `calibrateManual`, `ManualCalibrationInput`, `GroundCorrespondence`, `LineCorrespondence` | camera from installer input: point pairs, traced lines, verticals, height and lens priors (MAP estimate, multi-start LM), per-input residuals and expected accuracy |
@@ -123,7 +124,7 @@ flowchart TB
 | tracking | `tracking/tracker.hpp` | `CtraEkf`, `Track`, `Tracker` | CTRA extended Kalman filter `[x, y, yaw, v, yaw_rate, a]`; two-stage (high/low score) association with Mahalanobis gating and Hungarian assignment; coasting through occlusions |
 | scene | `scene/site_map.hpp` | `Lane`, `Zone`, `SiteMap`, `LaneLearner` | site map (lanes, stop lines, zones, crosswalks); lane learning from traffic and stop lines from queue heads |
 | | `scene/user_map.hpp` | `UserMap` | installer-drawn layout in WGS84 (lanes in travel direction, stop lines, crosswalks, road area) → `SiteMap` with inbound/outbound lanes, `stop_s` and approaches |
-| | `scene/intersection.hpp` | `RoadUser`, `LaneState`, `ZoneState`, `StopLineCrossing`, `IntersectionModel` | lane assignment, distance and ETA to the stop line (with acceleration), queues, virtual detectors, stop-line crossings |
+| | `scene/intersection.hpp` | `RoadUser`, `LaneState`, `ZoneState`, `StopLineCrossing`, `IntersectionModel` | output stabilisation (heading from the lane or the motion with reversal guard and turn-rate limit, smoothed speed/acceleration, validity flags), lane assignment, distance and ETA to the stop line (with acceleration), queues, virtual detectors, stop-line crossings |
 | safety | `safety/near_miss.hpp` | `NearMissDetector`, `ConflictMetrics`, `NearMissEvent` | TTC (oriented footprints), MTTC (CTRA prediction), PET (grid of occupancy times), DRAC, hard braking; event lifecycle with severity |
 | health | `health/monitors.hpp` | `StabilityMonitor`, `VisibilityMonitor`, `CalibrationMonitor`, `OcclusionMap`, `HealthReport` | camera shake/drift/moved (feature tracking → per-frame rotation correction), image quality and weather conditions, calibration consistency, static/dynamic occlusion per lane, fused integrity level |
 | output | `output/messages.hpp` | `msg::objects`, `msg::cpm`, `msg::health`, … | JSON schema of every topic, ETSI CPM content |
@@ -360,7 +361,7 @@ reports), `models/` (ONNX + cached TensorRT engines), `state/` (runtime state an
 
 ## 10. Tests
 
-`jp_tests` (GoogleTest, 27 tests, no GPU): camera geometry and lifting, BEV geometry, CTRA filter and
+`jp_tests` (GoogleTest, 28 tests, no GPU): camera geometry and lifting, BEV geometry, CTRA filter and
 tracker, near-miss metrics, auto-calibration on synthetic traffic (vanishing-point path and three
 keypoint scenarios: footbridge phone, gantry camera, wide-angle low mount), manual calibration (map
 points; four clustered points with a height prior; traced lines; a wrong pair flagged), the drawn site

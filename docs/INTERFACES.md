@@ -44,7 +44,8 @@ All timestamps are stream time (UNIX seconds).
 | `calibration/inputs` | on solve | yes | the last manual-calibration inputs (points, lines, verticals, height, lens), so the panel can reload them |
 | `calibration/refine` | 0.2 Hz while collecting | yes | traffic check of a manual calibration: `status` (`collecting`, `solving`, `proposal`, `consistent`, `rejected`), `progress`, `tracks`, `spread_deg`, optional `proposal` (before/after path spread and point fit, pitch/roll/yaw/focal correction, camera) |
 | `config` | on change | yes | live settings, compute (`backend` `tensorrt`/`cpu`, `device`, `precision`, `model`, `input`), source (`live`, `loop`, size, fps), camera `placement`, live-view port |
-| `map/user` | on change | yes | installer-drawn layout (WGS84): `lanes` (`id`, `points` in travel direction, `width`), `stop_lines`, `crosswalks`, `roi` |
+| `map/user` | on change | yes | installer-drawn layout (WGS84): `lanes` (`id`, `points` in travel direction, `width`), `stop_lines`, `crosswalks`, `roi`, `signals` (`id`, image `box` u0 v0 u1 v1, `stop_line` index) |
+| `signals` | on change, 2 Hz | yes | traffic light states read from the image: `id`, `state` (`red`, `red_amber`, `amber`, `green`, `off`, `unknown`), `confidence`, `stop_line` |
 
 ### Operator commands (subscribed)
 
@@ -66,7 +67,7 @@ per-input `residuals` (`kind`, `index`, `px`, `m`, `norm`), `accuracy` (expected
 `<prefix>/<site>/<camera>/map/user/set` takes `{"map": {lanes, stop_lines, crosswalks, roi}}` (as
 `map/user`); drawn lanes replace the learned ones. `<prefix>/<site>/<camera>/config/set` takes
 `{"settings": {…}}` with any of `confidence`, `keypoint_confidence`, `max_range_m`, `max_fps`, `classes`,
-`roi_filter`, `preview_overlay`, `preview_fps`; applied within a frame and persisted in
+`roi_filter`, `preview_overlay`, `preview_fps`, `model` (ONNX file in the models folder), `imgsz`, `backend` (`auto`, `cuda`, `tensorrt`, `cpu`), `max_det`, `crop_to_roi`; model, size and backend reload the detector; applied within a frame and persisted in
 `state_dir/settings.json`. Enable MQTT authentication before exposing these channels.
 
 ### Live camera view (HTTP)
@@ -94,6 +95,8 @@ disable it (`preview.enabled: false`) where video may not leave the device.
 | `lane`, `approach`, `lane_s`, `lateral` | –, –, m, m | lane assignment and position along/across it |
 | `dist_to_stop` | m | front bumper to stop line (positive before the line) |
 | `decel_required` | m/s² | constant deceleration needed to stop at the line (v²/2d); above about 3.5 a comfortable stop is no longer possible |
+| `speed_valid`, `heading_valid` | – | whether speed and heading are trustworthy (track history, uncertainty); untrusted values are reported but not used for safety events |
+| `heading_source` | – | `lane` (direction of the lane the vehicle is on), `motion`, or `hold` (standing, last known) |
 | `eta` | s | time to reach the stop line, using speed and acceleration |
 | `eta_cv` | s | the same at constant speed |
 | `eta_sigma` | s | 1-σ uncertainty of `eta` |

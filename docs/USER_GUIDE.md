@@ -33,7 +33,7 @@ light/dark/system theme switch and **Settings**.
 |---|---|
 | **Calibration** | places the camera in the world (below) |
 | **Video source** | shows the source; upload another video or switch to an RTSP stream; loop on/off; camera position, height and lens |
-| **Detection** | model thresholds (confidence, keypoint confidence), maximum range, processing rate, reported classes, road-area filter, boxes in the camera view. Applied to the running site within a frame and kept across restarts |
+| **Detection** | model (every trained ONNX in the models folder), inference backend (GPU with ONNX Runtime in FP32 = the model as trained; TensorRT FP16 optional; CPU), input size (640–1920 px, for models exported with a dynamic size), detect in the road area only (the network sees only the image box of the drawn road area, so far vehicles get more pixels), maximum detections, confidence and keypoint thresholds, range, processing rate, classes, boxes in the camera view. Applied to the running site within seconds and kept across restarts |
 | **Compute** | GPU or CPU, device, model, latency; run the site on Auto / GPU / CPU |
 | **Display** | theme, base map, labels, camera view (this browser only) |
 | **Sites** | all cameras on the server: open, start, stop, delete, **New site** |
@@ -68,6 +68,9 @@ length, tilt, roll, height and the exact camera position are all solved from you
      (lane line, kerb), then two points of the same marking on the map, anywhere along it. Lines pin
      down the tilt and zoom better than distant points.
    - **Vertical** (optional): the bottom and top of a pole or building edge; fixes the roll.
+   - **Traffic light** (optional): drag a box around each signal head in the image and pick the stop line it
+     controls. The lit colour (red, red + amber, amber, green) is read from the image live, shown in the
+     camera view, the sidebar and in the twin as a floating head at that stop line facing the traffic.
    - **Solve** shows the quality (good / fair / poor), how well your points fit on the ground (metres)
      and in the image (pixels), field of view, height, tilt and direction, and hints such as *point 3 is
      off by 2.4 m* or *all points are at a similar distance*. Errors are judged against what clicking can
@@ -79,7 +82,8 @@ length, tilt, roll, height and the exact camera position are all solved from you
 4. **Check**: the drawn lanes, stop lines and a 5 m grid are drawn into the camera image, and the
    camera image is projected onto the map. When they sit on the road, the calibration is good. Where
    they do not, **drag the white dots** (vertices of the drawn lanes, stop lines, crosswalks and road
-   area) in the image to where that point really is: each drag pairs the map position of that vertex
+   area; each feature in its own colour, joined by its line, named on hover) in the image to where that
+   point really is: each drag pairs the map position of that vertex
    with the pixel, the camera is solved again within a second, and the image on the map moves with it.
    **Reset** drops the dragged pairs; **Apply calibration** activates the result. The aerial image itself
    can be a few decimetres off, so a small offset is normal. The **expected position accuracy** lists the
@@ -94,6 +98,12 @@ The inputs are stored on the device; you can come back later, change a point and
 discards the calibration.
 
 ## 5. The digital twin
+
+Between the detector and everything downstream sits a stabilisation layer: the tracker trusts jumpy
+measurements less (adaptive noise), merges duplicate tracks, bounds the turn rate and only reverses a
+heading on clear, lasting evidence. The heading of a vehicle comes from the lane it is on (the direction
+you drew) or from its motion, never from a single box. Speeds and headings that are not yet trustworthy
+(short track, far and jumpy) are marked with “~” and are not used for safety events.
 
 After calibration every road user is placed at its measured position with its heading, speed and
 acceleration (from the tracker, in metres on the ground). With drawn lanes and stop lines the twin
