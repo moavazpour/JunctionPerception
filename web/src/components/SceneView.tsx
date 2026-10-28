@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { coveredCameras, gtFrame } from "../evaluation";
+import { geoToEnu } from "../geo";
 import { Scene3D } from "../scene3d";
 import { resolvedTheme, useStore } from "../store";
 
@@ -34,6 +36,23 @@ export function SceneView() {
       if (cur.theme !== prev?.theme) s.setTheme(resolvedTheme(cur.theme));
       if (cur.mapMode !== prev?.mapMode) s.setMapMode(cur.mapMode);
       if (cur.offLane !== prev?.offLane) s.offLane = cur.offLane;
+      if (cur.gtVisible !== prev?.gtVisible || cur.gt !== prev?.gt || (cur.gtVisible && cur.sourceFrame !== prev?.sourceFrame)) {
+        const a = cur.map?.camera_model?.anchor;
+        s.setGroundTruth(
+          cur.gtVisible && cur.gt && a
+            ? gtFrame(cur.gt, cur.sourceFrame, coveredCameras(cur)).map((o) => {
+                const [x, y] = geoToEnu(a, o[0], o[1]);
+                return { x, y, yaw: ((90 - o[2]) * Math.PI) / 180, length: o[3], width: o[4], height: o[5] };
+              })
+            : [],
+        );
+      }
+      if (cur.cams !== prev?.cams || cur.camera !== prev?.camera)
+        s.setOtherCameras(
+          Object.entries(cur.cams)
+            .filter(([id, c]) => id !== cur.camera && c.calibration)
+            .map(([, c]) => c.calibration!),
+        );
       if (cur.focusLanes !== prev?.focusLanes) s.setFocusLanes(cur.focusLanes);
       if (cur.userMap !== prev?.userMap) s.setSignalLayout(cur.userMap);
       if (cur.signals !== prev?.signals || cur.userMap !== prev?.userMap || cur.map !== prev?.map) s.setSignalStates(cur.signals);

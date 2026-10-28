@@ -1,6 +1,6 @@
 import { Upload } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, json, managerHealth, uploadVideo, type SiteInfo } from "../api";
+import { api, json, managerHealth, uploadVideo, type CameraInfo, type SiteInfo } from "../api";
 import { useStore } from "../store";
 import { CameraPlacer, LENSES } from "./SitesSection";
 import { NoSite, Page, Row, Toggle } from "./SettingsPage";
@@ -8,7 +8,10 @@ import { NoSite, Page, Row, Toggle } from "./SettingsPage";
 export function SourceSection() {
   const site = useStore((s) => s.site);
   const config = useStore((s) => s.config);
-  const [info, setInfo] = useState<SiteInfo | null>(null);
+  const camera = useStore((s) => s.camera);
+  // The selected camera of the site (its source, placement and lens).
+  const [info, setInfo] = useState<CameraInfo | SiteInfo | null>(null);
+  const pick = (i: SiteInfo) => i.cameras?.find((c) => c.id === camera) ?? i;
   const [hasMgr, setHasMgr] = useState(false);
   const [kind, setKind] = useState<"video" | "stream">("video");
   const [file, setFile] = useState<File | null>(null);
@@ -18,15 +21,16 @@ export function SourceSection() {
   const [height, setHeight] = useState<number | null>(null);
   useEffect(() => {
     managerHealth().then((h) => setHasMgr(!!h));
-    if (site) api<SiteInfo>(`/sites/${site}`).then((i) => { setInfo(i); setKind(i.kind); }).catch(() => setInfo(null));
-  }, [site]);
+    if (site) api<SiteInfo>(`/sites/${site}`).then((i) => { setInfo(pick(i)); setKind(pick(i).kind); }).catch(() => setInfo(null));
+  }, [site, camera]);
   if (!config) return <Page title="Video source"><NoSite /></Page>;
   const src = config.source;
   const patch = async (body: object, note: string) => {
     if (!site) return;
     try {
       setMsg({ t: note });
-      setInfo(await api<SiteInfo>(`/sites/${site}`, json("PATCH", body)));
+      const path = camera === "cam1" ? `/sites/${site}` : `/sites/${site}/cameras/${camera}`;
+      setInfo(pick(await api<SiteInfo>(path, json("PATCH", body))));
       setMsg({ t: "Saved. The site restarts with the new settings." });
     } catch (e) {
       setMsg({ t: (e as Error).message, bad: true });

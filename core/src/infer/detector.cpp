@@ -96,10 +96,9 @@ bool Detector3D::dynamicInput() const { return engine_->dynamicInput(); }
 
 cv::Size Detector3D::inputSizeFor(cv::Size region) const {
   if (!engine_->dynamicInput() || region.area() <= 0) return net_;
-  const int L = cfg_.imgsz > 0 ? cfg_.imgsz : std::max(net_.width, net_.height);
-  const double s = static_cast<double>(L) / std::max(region.width, region.height);
-  auto up32 = [](double v) { return std::max(32, static_cast<int>(std::ceil(v / 32.0)) * 32); };
-  return {up32(region.width * s), up32(region.height * s)};
+  // Square input as in training (the letterbox pads the region): "640" means 640 x 640.
+  const int L = std::max(32, (cfg_.imgsz > 0 ? cfg_.imgsz : std::max(net_.width, net_.height)) / 32 * 32);
+  return {L, L};
 }
 
 std::vector<ImageDetection> Detector3D::detect(const cv::Mat& net_bgr, const Letterbox& lb) {

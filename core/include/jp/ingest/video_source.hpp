@@ -34,6 +34,8 @@ class VideoSource {
   std::string describe() const;
   // Times a looping file restarted (consumers reset their tracks then).
   std::uint64_t loops() const { return loops_.load(); }
+  // Index (within the file, from 0) of the frame the last read() returned; frames since start for streams.
+  std::uint64_t lastIndex() const { return last_index_; }
   void setMaxFps(double f) { max_fps_ = f; }
   double maxFps() const { return max_fps_.load(); }
 
@@ -45,6 +47,7 @@ class VideoSource {
   double fps_ = 30;
   cv::Size size_;
   std::uint64_t frames_ = 0;
+  std::uint64_t last_index_ = 0;
   double file_t0_ = 0;
   std::chrono::steady_clock::time_point wall0_;
   double last_emit_ = -1;

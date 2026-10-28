@@ -35,6 +35,10 @@ export class Scene3D {
   private occMesh?: THREE.Mesh;
   private eventsGroup = new THREE.Group();
   private sensor = new THREE.Group();
+  private others = new THREE.Group();
+  private otherCams: CameraJson[] = [];
+  private gtGroup = new THREE.Group();
+  private gtMat = new THREE.LineBasicMaterial({ color: 0x9aa1aa, transparent: true, opacity: 0.9 });
   private signalGroup = new THREE.Group();
   private signalLamps = new Map<string, THREE.MeshStandardMaterial[]>();
   private userMap?: UserMap;
@@ -99,7 +103,7 @@ export class Scene3D {
     const grid = (this.grid = new THREE.GridHelper(1200, 120, 0x1f242b, 0x1a1e24));
     grid.position.y = -0.01;
     this.scene.add(grid);
-    this.scene.add(this.mapGroup, this.eventsGroup, this.sensor, this.signalGroup);
+    this.scene.add(this.mapGroup, this.eventsGroup, this.sensor, this.others, this.gtGroup, this.signalGroup);
 
     this.renderer.domElement.addEventListener("pointerdown", (e) => this.pick(e));
     new ResizeObserver(() => this.resize()).observe(host);
@@ -456,13 +460,52 @@ export class Scene3D {
 
   private buildSensor(cam: CameraJson) {
     this.sensor.clear();
+    this.sensor.add(this.sensorGroup(cam));
+    this.drawOtherCameras();
+  }
+
+  // Ground-truth road users (replayed dataset sites) as grey wireframe boxes; empty list hides them.
+  setGroundTruth(boxes: { x: number; y: number; yaw: number; length: number; width: number; height: number }[]) {
+    for (const c of this.gtGroup.children) (c as THREE.LineSegments).geometry.dispose();
+    this.gtGroup.clear();
+    for (const b of boxes) {
+      const e = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(b.length, b.height, b.width)), this.gtMat);
+      e.position.copy(toV3(b.x, b.y, b.height / 2));
+      e.rotation.y = b.yaw;
+      this.gtGroup.add(e);
+    }
+  }
+
+  // The site's other cameras (multi-camera sites), placed by their ground anchors.
+  setOtherCameras(cams: CameraJson[]) {
+    if (cams.length === this.otherCams.length && cams.every((c, i) => c === this.otherCams[i])) return;
+    this.otherCams = cams;
+    this.drawOtherCameras();
+  }
+
+  private drawOtherCameras() {
+    this.others.clear();
+    const a = this.cam?.anchor;
+    if (!a) return;
+    for (const c of this.otherCams) {
+      if (!c.anchor) continue;
+      const [e, n] = geoToEnu(a, c.anchor.lat, c.anchor.lon);
+      const g = this.sensorGroup(c);
+      g.position.copy(toV3(e, n));
+      this.others.add(g);
+    }
+  }
+
+  // Pole, camera head and field-of-view wedge of one camera, at its ground point.
+  private sensorGroup(cam: CameraJson) {
+    const group = new THREE.Group();
     const h = cam.height_m;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, h), new THREE.MeshStandardMaterial({ color: 0x59606a }));
     pole.position.y = h / 2;
-    this.sensor.add(pole);
+    group.add(pole);
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshStandardMaterial({ color: 0x4e8cff, emissive: 0x2a5cff, emissiveIntensity: 1.5 }));
     head.position.y = h;
-    this.sensor.add(head);
+    group.add(head);
     // Field of view wedge on the ground.
     const fx = cam.K[0][0];
     const half = Math.atan((cam.width / 2) / fx);
@@ -481,7 +524,8 @@ export class Scene3D {
     );
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.02;
-    this.sensor.add(m);
+    group.add(m);
+    return group;
   }
 
   // ------------------------------------------------------------------ dynamic state

@@ -1,8 +1,8 @@
-import { ArrowLeft, Cpu, Monitor, Moon, Radio, Repeat, Settings, Sun, TriangleAlert, Zap } from "lucide-react";
+import { ArrowLeft, Cpu, Layers, Monitor, Moon, Radio, Repeat, Settings, Sun, TriangleAlert, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { navigate, type Route } from "../App";
 import { api, type SiteInfo } from "../api";
-import { selectSite } from "../mqtt";
+import { selectCamera, selectSite } from "../mqtt";
 import { useStore, type ThemePref } from "../store";
 
 function Logo() {
@@ -12,6 +12,23 @@ function Logo() {
       <path d="M8 22 L16 8 L24 22" stroke="white" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M11.5 17 H20.5" stroke="white" strokeWidth="2.2" strokeLinecap="round" opacity="0.8" />
     </svg>
+  );
+}
+
+// Panel version (and commit); the runtime's own version shows on hover, flagged when it differs.
+function Version() {
+  const rt = useStore((s) => s.health?.version);
+  const panel = `v${__APP_VERSION__}${__GIT_SHA__ ? ` (${__GIT_SHA__})` : ""}`;
+  const runtime = rt ? `v${rt.version} (${rt.commit})` : "";
+  const differs = !!rt && rt.version !== __APP_VERSION__;
+  return (
+    <span
+      className={`hidden whitespace-nowrap text-[11px] tabular-nums md:inline ${differs ? "text-warn" : "text-muted"}`}
+      title={`Panel ${panel}${runtime ? `\nRuntime ${runtime}` : ""}`}
+    >
+      {panel}
+      {differs && ` · runtime v${rt!.version}`}
+    </span>
   );
 }
 
@@ -104,6 +121,31 @@ function SitePicker() {
   );
 }
 
+// Camera of a multi-camera site whose video, calibration and settings are shown (the twin shows all of them).
+function CameraPicker() {
+  const site = useStore((s) => s.site);
+  const camera = useStore((s) => s.camera);
+  const cams = useStore((s) => (s.site ? s.camerasSeen[s.site] : undefined));
+  const fused = useStore((s) => s.fusedAt > 0);
+  if (!site || !cams || cams.length <= 1) return null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <select className="input w-auto py-1" value={camera} onChange={(e) => selectCamera(e.target.value)} title="Camera shown in the video and the settings">
+        {cams.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+      {fused && (
+        <span className="chip" title={`Road users of all ${cams.length} cameras are fused in the twin`}>
+          <Layers size={11} /> {cams.length} cams fused
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function Header({ route }: { route: Route }) {
   const connected = useStore((s) => s.connected);
   const calibrated = useStore((s) => !!s.calibration);
@@ -120,8 +162,10 @@ export function Header({ route }: { route: Route }) {
         <Logo />
         <span className="hidden whitespace-nowrap text-[15px] font-semibold tracking-tight md:inline">Junction Perception</span>
       </a>
+      <Version />
       <div className="mx-1 h-6 w-px bg-line" />
       <SitePicker />
+      <CameraPicker />
       <SourceBadge />
       {!connected && (
         <span className="chip border-bad/30 bg-bad/10 text-bad">

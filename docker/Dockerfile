@@ -19,12 +19,14 @@ RUN mkdir -p /opt/onnxruntime \
 
 FROM deps AS build
 WORKDIR /src
-COPY CMakeLists.txt ./
+ARG GIT_SHA=""
+COPY CMakeLists.txt VERSION ./
 COPY cmake cmake
 COPY core core
 COPY apps apps
 COPY tests tests
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp -DJP_WITH_ONNXRUNTIME=ON -DJP_ORT_CUDA=ON \
+      -DJP_GIT_SHA="${GIT_SHA}" \
       -DCMAKE_INSTALL_RPATH=/opt/onnxruntime/lib \
  && cmake --build build -j"$(nproc)" \
  && ctest --test-dir build --output-on-failure \

@@ -35,6 +35,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.web
+      args:
+        GIT_SHA: ${GIT_SHA:-}
     image: junction-perception-web:latest
     restart: unless-stopped
     depends_on: [mosquitto, manager]

@@ -11,9 +11,13 @@ const POS: Record<string, string> = {
   tl: "top-14 left-4",
 };
 
+// Live view path of a camera (its runtime container): the first camera keeps the site's own name.
+export const liveName = (site: string, camera: string) => (camera === "cam1" ? site : `${site}-${camera}`);
+
 // Live camera view (MJPEG from the runtime, boxes drawn there), docked in a corner of the 3D view.
 export function VideoPip() {
   const site = useStore((s) => s.site);
+  const camera = useStore((s) => s.camera);
   const corner = useStore((s) => s.videoCorner);
   const size = useStore((s) => s.videoSize);
   const visible = useStore((s) => s.videoVisible);
@@ -38,7 +42,7 @@ export function VideoPip() {
         Show camera
       </button>
     );
-  const src = `/live/${site}/video.mjpg?n=${nonce}`;
+  const src = `/live/${liveName(site, camera)}/video.mjpg?n=${nonce}`;
   const aspect = source && source.width && source.height ? `${source.width} / ${source.height}` : "16 / 9";
   const badge = source?.live ? (
     <span className="flex items-center gap-1 rounded bg-bad px-1.5 py-0.5 text-[10px] font-bold text-white">

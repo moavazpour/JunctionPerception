@@ -3,6 +3,9 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json* ./
 RUN npm install --no-audit --no-fund
 COPY web/ ./
+COPY VERSION /VERSION
+ARG GIT_SHA=""
+ENV JP_GIT_SHA=${GIT_SHA}
 RUN npm run build
 
 FROM nginx:1.27-alpine

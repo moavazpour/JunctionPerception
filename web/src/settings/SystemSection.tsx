@@ -8,11 +8,12 @@ const pct = (v?: number) => (v === undefined ? "–" : `${Math.round(v * 100)} %
 
 export function SystemSection() {
   const site = useStore((s) => s.site);
+  const camera = useStore((s) => s.camera);
   const h = useStore((s) => s.health);
   const connected = useStore((s) => s.connected);
   const [logs, setLogs] = useState<string | null>(null);
   const [hasMgr, setHasMgr] = useState(false);
-  const loadLogs = () => site && api<{ logs: string }>(`/sites/${site}/logs?lines=200`).then((r) => setLogs(r.logs)).catch(() => setLogs(null));
+  const loadLogs = () => site && api<{ logs: string }>(`/sites/${site}/logs?lines=200&camera=${camera}`).then((r) => setLogs(r.logs)).catch(() => setLogs(null));
   useEffect(() => {
     managerHealth().then((m) => {
       setHasMgr(!!m);

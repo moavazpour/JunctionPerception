@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.22)
-project(JunctionPerception VERSION 0.1.0 LANGUAGES CXX)
+# One version for the runtime, the panel and the manager (VERSION file); the git commit is added when known.
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/VERSION JP_VERSION LIMIT_COUNT 1)
+project(JunctionPerception VERSION ${JP_VERSION} LANGUAGES CXX)
+set(JP_GIT_SHA "" CACHE STRING "Git commit of this build (set by the Docker build)")
+if(NOT JP_GIT_SHA)
+  execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                  OUTPUT_VARIABLE JP_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+if(NOT JP_GIT_SHA)
+  set(JP_GIT_SHA "unknown")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

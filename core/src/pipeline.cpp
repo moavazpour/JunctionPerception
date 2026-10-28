@@ -623,7 +623,7 @@ void Pipeline::applySettings(const nlohmann::json& s, bool persist) {
       const auto p = (std::filesystem::path(models_dir_) / s["model"].get<std::string>()).lexically_normal();
       if (p.string() != old_model && std::filesystem::exists(p) && p.string().rfind(models_dir_, 0) == 0) cfg_.detector_onnx = p.string(), reload = true;
     }
-    if (auto v = num("imgsz", 320, 2560)) {
+    if (auto v = num("imgsz", 128, 2560)) {
       const int sz = static_cast<int>(std::round(*v / 32.0)) * 32;
       const int current = cfg_.imgsz > 0 ? cfg_.imgsz : std::max(det_->inputSize().width, det_->inputSize().height);
       if (sz != current) cfg_.imgsz = sz, reload = true;
@@ -1116,6 +1116,8 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     t_objects_ = stamp;
     auto h = msg::header("objects", cfg_.site_id, cfg_.camera_id, stamp);
     h["frame"] = frames_;
+    // Frame of the source video these road users belong to (to line up recorded ground truth).
+    h["source_frame"] = source_frame_;
     h["objects"] = msg::roadUsers(scene_->users(), map_);
     emit("objects", h);
   }
@@ -1162,6 +1164,7 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
     h["health"]["pipeline"]["frames"] = frames_;
     h["health"]["pipeline"]["dropped"] = dropped_;
     h["health"]["calibration_confidence"] = calib_confidence_;
+    h["health"]["version"] = {{"version", JP_VERSION}, {"commit", JP_GIT_SHA}};
     h["health"]["compute"] = computeInfo();
     h["health"]["source"] = {{"live", !src_->isFile()}, {"loop", src_->isFile() && cfg_.source.loop}};
     h["health"]["preview_clients"] = preview_ ? preview_->clients() : 0;
@@ -1184,6 +1187,7 @@ void Pipeline::run(std::uint64_t max_frames) {
   std::condition_variable cv;
   cv::Mat latest;
   double latest_stamp = 0, latest_wall = 0;
+  std::uint64_t latest_index = 0;
   bool have = false, eof = false;
   // Files without real-time pacing must not drop frames: capture waits for processing (lock-step).
   const bool lockstep = src_->isFile() && !cfg_.source.realtime;
@@ -1203,6 +1207,7 @@ void Pipeline::run(std::uint64_t max_frames) {
       if (have) ++dropped_;
       latest = f.clone();
       latest_stamp = t;
+      latest_index = src_->lastIndex();
       latest_wall = wallNow();
       have = true;
       cv.notify_one();
@@ -1220,6 +1225,7 @@ void Pipeline::run(std::uint64_t max_frames) {
       f = std::move(latest);
       t = latest_stamp;
       w = latest_wall;
+      source_frame_ = latest_index;
       have = false;
       cv_free.notify_one();
     }

@@ -1,11 +1,11 @@
 import L from "leaflet";
-import { Eye, Play, Plus, Search, Square, Trash2 } from "lucide-react";
+import { Eye, Play, Plus, Search, Square, Trash2, Video } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { navigate } from "../App";
 import { api, geocode, json, managerHealth, uploadVideo, type ManagerHealth, type SiteInfo } from "../api";
 import { useBaseMap, pin } from "../components/leaflet";
 import { bearingDeg } from "../geo";
-import { selectSite } from "../mqtt";
+import { selectCamera, selectSite } from "../mqtt";
 import { useStore } from "../store";
 import { Page } from "./SettingsPage";
 
@@ -94,7 +94,8 @@ export function CameraPlacer({ value, onChange }: {
   );
 }
 
-function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
+// New site, or (with addTo) a further camera of an existing site: its own source, placement and lens.
+function NewSite({ mgr, onDone, addTo }: { mgr: ManagerHealth; onDone: () => void; addTo?: SiteInfo }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"video" | "stream">("video");
   const [file, setFile] = useState<File | null>(null);
@@ -106,9 +107,10 @@ function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
   const [msg, setMsg] = useState<{ t: string; bad?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const create = async () => {
-    if (!name.trim()) return setMsg({ t: "Give the site a name.", bad: true });
+    if (!addTo && !name.trim()) return setMsg({ t: "Give the site a name.", bad: true });
     if (!place) return setMsg({ t: "Place the camera on the map (camera, then a point it looks at).", bad: true });
-    const body: Record<string, unknown> = { name: name.trim(), lat: place.lat, lon: place.lon, height_m: height, bearing_deg: place.bearing, lens, device };
+    const body: Record<string, unknown> = { lat: place.lat, lon: place.lon, height_m: height, bearing_deg: place.bearing, lens };
+    if (!addTo) Object.assign(body, { name: name.trim(), device });
     setBusy(true);
     try {
       if (kind === "video") {
@@ -118,9 +120,10 @@ function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
         if (!/^(rtsp|rtsps|http|https):\/\//.test(url.trim())) throw new Error("The stream URL must start with rtsp:// or http(s)://");
         body.stream = url.trim();
       }
-      setMsg({ t: "Starting the site… (the first GPU start builds the TensorRT engine, about a minute)" });
-      const s = await api<SiteInfo>("/sites", json("POST", body));
+      setMsg({ t: addTo ? "Adding the camera…" : "Starting the site… (the first GPU start builds the TensorRT engine, about a minute)" });
+      const s = await api<SiteInfo>(addTo ? `/sites/${addTo.id}/cameras` : "/sites", json("POST", body));
       selectSite(s.id);
+      if (addTo && s.cameras?.length) selectCamera(s.cameras[s.cameras.length - 1].id);
       onDone();
       navigate("settings/calibration");
     } catch (e) {
@@ -131,12 +134,14 @@ function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
   };
   return (
     <section className="card space-y-4 p-5">
-      <div className="text-base font-semibold">New site</div>
+      <div className="text-base font-semibold">{addTo ? `Add a camera to ${addTo.name}` : "New site"}</div>
       <div className="grid gap-4 md:grid-cols-2">
-        <div>
-          <label className="label">Name</label>
-          <input className="input" placeholder="e.g. Georg-Brauchle-Ring east" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
+        {!addTo && (
+          <div>
+            <label className="label">Name</label>
+            <input className="input" placeholder="e.g. Georg-Brauchle-Ring east" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+        )}
         <div>
           <label className="label">Source</label>
           <div className="seg">
@@ -171,7 +176,7 @@ function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
             ))}
           </select>
         </div>
-        <div>
+        <div className={addTo ? "hidden" : ""}>
           <label className="label">Compute</label>
           <div className="seg">
             {(["auto", "gpu", "cpu"] as const).map((d) => (
@@ -188,7 +193,10 @@ function NewSite({ mgr, onDone }: { mgr: ManagerHealth; onDone: () => void }) {
       </div>
       <div className="flex items-center gap-3">
         <button className="btn-primary" disabled={busy} onClick={create}>
-          <Plus size={15} /> Create and start
+          <Plus size={15} /> {addTo ? "Add camera" : "Create and start"}
+        </button>
+        <button className="btn" disabled={busy} onClick={onDone}>
+          Cancel
         </button>
         {msg && <span className={`text-xs ${msg.bad ? "text-bad" : "text-muted"}`}>{msg.t}</span>}
       </div>
@@ -201,6 +209,7 @@ export function SitesSection() {
   const [mgr, setMgr] = useState<ManagerHealth | null | undefined>(undefined);
   const [sites, setSites] = useState<SiteInfo[]>([]);
   const [adding, setAdding] = useState(false);
+  const [addTo, setAddTo] = useState<SiteInfo | null>(null);
   const [err, setErr] = useState("");
   const refresh = () => api<SiteInfo[]>("/sites").then(setSites).catch((e) => setErr(e.message));
   useEffect(() => {
@@ -216,6 +225,15 @@ export function SitesSection() {
         <div className="card p-5 text-sm text-muted">This installation runs a single camera configured on the device; site management is not available.</div>
       </Page>
     );
+  const removeCamera = async (s: SiteInfo, cam: string) => {
+    if (!confirm(`Remove ${cam} from “${s.name}” with its video and calibration?`)) return;
+    try {
+      await api(`/sites/${s.id}/cameras/${cam}`, { method: "DELETE" });
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
   const act = async (s: SiteInfo, a: string) => {
     try {
       if (a === "delete") {
@@ -228,7 +246,7 @@ export function SitesSection() {
     }
   };
   return (
-    <Page title="Sites" desc={`Each site is one camera. Up to ${mgr.max_sites} can run at the same time.`}>
+    <Page title="Sites" desc={`Each site is one junction with one or more cameras (add one with the camera button). Up to ${mgr.max_sites} cameras can run at the same time.`}>
       <section className="card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-panel2 text-xs text-muted">
@@ -242,7 +260,7 @@ export function SitesSection() {
             </tr>
           </thead>
           <tbody>
-            {sites.map((s) => (
+            {sites.flatMap((s) => [
               <tr key={s.id} className={`border-t border-line ${s.id === current ? "bg-accent/5" : ""}`}>
                 <td className="px-4 py-2.5 font-medium">{s.name}</td>
                 <td className="max-w-[220px] truncate text-xs text-muted" title={s.source}>
@@ -267,12 +285,37 @@ export function SitesSection() {
                       <Play size={15} />
                     </button>
                   )}
+                  <button className="btn-ghost px-2" title="Add a camera to this junction" onClick={() => setAddTo(s)}>
+                    <Video size={15} />
+                  </button>
                   <button className="btn-ghost px-2 text-bad" title="Delete" onClick={() => act(s, "delete")}>
                     <Trash2 size={15} />
                   </button>
                 </td>
-              </tr>
-            ))}
+              </tr>,
+              // Further cameras of a multi-camera junction, one row each.
+              ...(s.cameras && s.cameras.length > 1
+                ? s.cameras.map((c) => (
+                    <tr key={`${s.id}/${c.id}`} className="border-t border-line/50 text-xs text-muted">
+                      <td className="py-1.5 pl-8">{c.id}</td>
+                      <td className="max-w-[220px] truncate" title={c.source}>
+                        {c.kind === "video" ? "Video · " : "Stream · "}
+                        {c.source}
+                      </td>
+                      <td>{c.status}</td>
+                      <td>{c.calibrated ? "yes" : <span className="text-warn">no</span>}</td>
+                      <td>{c.position.bearing_deg.toFixed(0)}°</td>
+                      <td className="pr-3 text-right">
+                        {c.id !== "cam1" && (
+                          <button className="btn-ghost px-2 text-bad" title="Remove this camera" onClick={() => removeCamera(s, c.id)}>
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                : []),
+            ])}
             {!sites.length && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-muted">No sites yet.</td>
@@ -282,7 +325,9 @@ export function SitesSection() {
         </table>
       </section>
       {err && <div className="text-xs text-bad">{err}</div>}
-      {adding ? (
+      {addTo ? (
+        <NewSite key={addTo.id} mgr={mgr} addTo={addTo} onDone={() => { setAddTo(null); refresh(); }} />
+      ) : adding ? (
         <NewSite mgr={mgr} onDone={() => { setAdding(false); refresh(); }} />
       ) : (
         <button className="btn-primary" onClick={() => setAdding(true)}>

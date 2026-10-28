@@ -18,6 +18,7 @@ set(JP_CORE_SOURCES
 # Geometry, tracking, scene, safety, health, calibration and output: no GPU dependency.
 add_library(jp_core ${JP_CORE_SOURCES})
 target_include_directories(jp_core PUBLIC include)
+target_compile_definitions(jp_core PUBLIC JP_VERSION="${PROJECT_VERSION}" JP_GIT_SHA="${JP_GIT_SHA}")
 target_link_libraries(jp_core PUBLIC Eigen3::Eigen ${OpenCV_LIBS} nlohmann_json::nlohmann_json spdlog::spdlog
                                      yaml-cpp Threads::Threads)
 if(JP_WITH_MQTT)

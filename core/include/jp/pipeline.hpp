@@ -167,6 +167,7 @@ class Pipeline {
   std::string models_dir_, model_error_;
 
   std::uint64_t frames_ = 0, dropped_ = 0;
+  std::uint64_t source_frame_ = 0;  // source video frame being processed (see VideoSource::lastIndex)
   double fps_ = 0, latency_ms_ = 0, last_stamp_ = -1;
   double t_objects_ = -1, t_cpm_ = -1, t_state_ = -1, t_health_ = -1, t_occ_ = -1, t_seg_ = -1, t_vis_ = -1,
          t_dyn_ = -1, t_lanes_ = -1, t_drift_ = -1, t_invalid_ = -1;

@@ -5,6 +5,7 @@ import type {
   CalibInputs, CalibrationMsg, ConfigMsg, DetectorsMsg, Health, MapMsg, NearMiss, OcclusionMsg, RefineState, RoadUser,
   SignalsMsg, SnapshotMsg, SolveReport, UserMap,
 } from "./types";
+import type { GroundTruth } from "./api";
 
 export type ThemePref = "system" | "light" | "dark";
 export type MapMode = "stylized" | "aerial";
@@ -26,11 +27,25 @@ export const save = (key: string, v: unknown) => {
   }
 };
 
+// What one camera publishes. The flat fields of State hold the selected camera's copy; `cams` keeps every
+// camera of the site, so switching camera is instant.
+export const CAMERA_FIELDS = [
+  "objects", "objectsAt", "sourceFrame", "health", "healthAt", "calibration", "map", "detectors", "occlusion", "snapshot", "config",
+  "refine", "signals", "inputs", "lastReport",
+] as const;
+export type CameraState = Partial<Pick<State, (typeof CAMERA_FIELDS)[number]>>;
+
 export interface State {
   connected: boolean;
   site: string | null;
   camera: string;
   sitesSeen: string[];
+  camerasSeen: Record<string, string[]>; // per site, from the MQTT topics
+  cams: Record<string, CameraState>;
+  fusedAt: number; // last fused road-user list (multi-camera sites); 0 = none
+  sourceFrame?: number; // source video frame of the shown road users (to line up ground truth)
+  gt?: GroundTruth | null; // ground truth of a replayed dataset site (null: none)
+  gtVisible: boolean; // ground-truth boxes and the evaluation panel shown
   objects: RoadUser[];
   objectsAt: number;
   health?: Health;
@@ -66,6 +81,10 @@ export const useStore = create<State>((set) => ({
   site: new URLSearchParams(location.search).get("site"),
   camera: "cam1",
   sitesSeen: [],
+  camerasSeen: {},
+  cams: {},
+  fusedAt: 0,
+  gtVisible: false,
   objects: [],
   objectsAt: 0,
   healthAt: 0,

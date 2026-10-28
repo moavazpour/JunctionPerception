@@ -59,10 +59,10 @@ export function InferenceSection() {
             ))}
           </div>
         </Row>
-        <Row label="Input size" hint={compute?.dynamic_input ? "Long side of the network input in pixels. Larger finds smaller, farther objects but is slower." : "This model was exported with a fixed input size."}>
+        <Row label="Input size" hint={compute?.dynamic_input ? "Square network input in pixels (the image is scaled into it and padded). Larger finds smaller, farther objects but is slower." : "This model was exported with a fixed input size."}>
           <select className="input w-40" disabled={!compute?.dynamic_input} value={s.imgsz} onChange={(e) => change({ imgsz: Number(e.target.value) })}>
-            {[640, 768, 960, 1120, 1280, 1440, 1600, 1920].map((v) => (
-              <option key={v} value={v}>{v} px</option>
+            {[128, 160, 192, 256, 320, 416, 480, 640, 768, 960, 1120, 1280, 1440, 1600, 1920].map((v) => (
+              <option key={v} value={v}>{v} × {v} px</option>
             ))}
           </select>
           {compute && <span className="ml-3 text-xs text-muted">network input now {compute.input.join(" × ")} px</span>}

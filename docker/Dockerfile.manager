@@ -1,7 +1,7 @@
-# Site manager (FastAPI): starts one perception container per site through the Docker socket.
+# Site manager (FastAPI): starts one perception container per camera through the Docker socket.
 FROM python:3.11.10-slim
-RUN pip install --no-cache-dir fastapi==0.115.0 uvicorn==0.30.6 python-multipart==0.0.9 docker==7.1.0 pyyaml==6.0.2
+RUN pip install --no-cache-dir fastapi==0.115.0 uvicorn==0.30.6 python-multipart==0.0.9 docker==7.1.0 pyyaml==6.0.2 paho-mqtt==2.1.0
 WORKDIR /app
-COPY manager/app.py .
+COPY manager/app.py manager/fusion.py VERSION ./
 EXPOSE 8000
 CMD ["python", "app.py"]

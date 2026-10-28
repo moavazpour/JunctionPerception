@@ -87,10 +87,10 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
         const auto due = wall0_ + std::chrono::duration<double>(frames_ / fps_);
         std::this_thread::sleep_until(due);
       }
-      frames_++;
+      last_index_ = frames_++;
     } else {
       stamp = nowSeconds();
-      frames_++;
+      last_index_ = frames_++;
     }
     const double mf = max_fps_.load();
     if (mf > 0 && last_emit_ >= 0 && stamp - last_emit_ < 1.0 / mf - 1e-3) continue;

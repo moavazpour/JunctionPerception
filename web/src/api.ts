@@ -12,6 +12,32 @@ export interface SiteInfo {
   loop: boolean;
   lens: string;
   position: { lat: number; lon: number; height_m: number; bearing_deg: number };
+  cameras?: CameraInfo[]; // first camera = the top-level fields
+}
+
+// One ground-truth road user: lat, lon, heading (deg, compass), length, width, height, class, track id,
+// speed (m/s or null), cameras that see it.
+export type GtObject = [number, number, number, number, number, number, string, string, number | null, string[]];
+
+// Recorded ground truth of a replayed dataset site, one list per source video frame.
+export interface GroundTruth {
+  dataset: string;
+  fps: number;
+  frames: GtObject[][];
+  cameras: Record<string, string>; // our camera id -> dataset camera
+  calibration: Record<string, import("./types").CameraJson>; // reference (dataset) calibration per camera
+}
+
+export interface CameraInfo {
+  id: string;
+  live: string; // live-view name (/live/<live>/video.mjpg)
+  source: string;
+  kind: "video" | "stream";
+  status: string;
+  calibrated: boolean;
+  loop: boolean;
+  lens: string;
+  position: { lat: number; lon: number; height_m: number; bearing_deg: number };
 }
 
 export interface ManagerHealth {

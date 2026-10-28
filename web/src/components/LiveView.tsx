@@ -1,4 +1,5 @@
-import { Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Video } from "lucide-react";
+import { Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Target, Video } from "lucide-react";
+import { GroundTruthPanel, useGroundTruth } from "./GroundTruthPanel";
 import { useState } from "react";
 import { useStore } from "../store";
 import { SceneView, sceneView } from "./SceneView";
@@ -10,6 +11,8 @@ function Toolbar() {
   const labels = useStore((s) => s.labels);
   const occ = useStore((s) => s.occlusionLayer);
   const focus = useStore((s) => s.focusLanes);
+  const hasGt = useStore((s) => !!s.gt);
+  const gtVisible = useStore((s) => s.gtVisible);
   const videoVisible = useStore((s) => s.videoVisible);
   const calibrated = useStore((s) => !!s.map);
   const set = useStore((s) => s.set);
@@ -61,6 +64,13 @@ function Toolbar() {
             <Eye size={12} /> Occlusion
           </span>
         </button>
+        {hasGt && (
+          <button data-on={gtVisible} onClick={() => set({ gtVisible: !gtVisible })} title="Ground-truth boxes and accuracy (recorded dataset)">
+            <span className="flex items-center gap-1">
+              <Target size={12} /> Ground truth
+            </span>
+          </button>
+        )}
         <button data-on={videoVisible} onClick={() => set({ videoVisible: !videoVisible })} title="Camera view">
           <span className="flex items-center gap-1">
             <Video size={12} /> Camera
@@ -80,12 +90,14 @@ function Legend() {
 }
 
 export function LiveView() {
+  useGroundTruth();
   return (
     <div className="flex h-full flex-col lg:flex-row">
       <div className="relative min-h-[55vh] flex-1 lg:min-h-0">
         <SceneView />
         <Toolbar />
         <VideoPip />
+        <GroundTruthPanel />
         <Legend />
       </div>
       <Sidebar />

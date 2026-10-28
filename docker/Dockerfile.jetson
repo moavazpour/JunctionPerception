@@ -10,12 +10,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libopencv-dev libeigen3-dev libyaml-cpp-dev nlohmann-json3-dev libspdlog-dev libgtest-dev libpaho-mqtt-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-COPY CMakeLists.txt ./
+ARG GIT_SHA=""
+COPY CMakeLists.txt VERSION ./
 COPY cmake cmake
 COPY core core
 COPY apps apps
 COPY tests tests
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp \
+      -DJP_GIT_SHA="${GIT_SHA}" \
  && cmake --build build -j"$(nproc)" && ctest --test-dir build --output-on-failure && cmake --install build
 
 FROM ${BASE}

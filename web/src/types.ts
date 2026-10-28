@@ -153,6 +153,7 @@ export interface Health {
   source?: { live: boolean; loop: boolean };
   preview_clients?: number;
   calibration_confidence?: number;
+  version?: { version: string; commit: string };
   coverage?: { zone: string; visible: number; static_occluded: number; dynamic_occluded: number; unobservable: number }[];
 }
 

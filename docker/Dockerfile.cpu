@@ -14,12 +14,14 @@ RUN mkdir -p /opt/onnxruntime \
  && curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz \
     | tar -xz -C /opt/onnxruntime --strip-components=1
 WORKDIR /src
-COPY CMakeLists.txt ./
+ARG GIT_SHA=""
+COPY CMakeLists.txt VERSION ./
 COPY cmake cmake
 COPY core core
 COPY apps apps
 COPY tests tests
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jp \
+      -DJP_GIT_SHA="${GIT_SHA}" \
       -DJP_WITH_TENSORRT=OFF -DJP_WITH_ONNXRUNTIME=ON -DCMAKE_INSTALL_RPATH=/opt/onnxruntime/lib \
  && cmake --build build -j"$(nproc)" \
  && ctest --test-dir build --output-on-failure \
