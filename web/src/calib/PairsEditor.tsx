@@ -1,13 +1,14 @@
 // Step 3: reference points, lines and verticals matched between the camera image and the aerial map.
 import L from "leaflet";
-import { Camera, Crosshair, Minus, RefreshCw, Spline, TrafficCone, Trash2, Undo2 } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { Camera, Crosshair, Layers, Minus, RefreshCw, Spline, TrafficCone, Trash2, Undo2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { pin, useBaseMap } from "../components/leaflet";
 import { enuToGeo, GroundCamera } from "../geo";
 import { calibrationCommand, publish } from "../mqtt";
 import { useStore } from "../store";
 import type { SignalHead, SolveReport, UserMap } from "../types";
 import { useDraft, type Draft, type Tool } from "./draft";
+import { geoProjector, type GeoProjector } from "./homography";
 import { ImageCanvas, type Handle, type Poly } from "./ImageCanvas";
 import { drawLayout } from "./LayoutEditor";
 
@@ -38,7 +39,7 @@ export function residualIndex(d: Draft, r?: SolveReport) {
   return { pts, lines };
 }
 
-function guidance(d: Draft): string {
+function guidance(d: Draft, proj: GeoProjector | null): string {
   if (d.tool === "light") return "Drag a box around a traffic light head in the image, then pick the stop line it controls below. Its colour is read live from the image.";
   if (d.tool === "point") {
     const last = d.points[d.points.length - 1];
@@ -49,7 +50,11 @@ function guidance(d: Draft): string {
     const l = d.openLine !== null ? d.lines[d.openLine] : null;
     if (l && l.geo.length === 0 && l.px.length < 2) return "Keep clicking along the same straight marking in the image (two or more points, as far apart as possible).";
     if (l && l.geo.length < 2) return `Now click two points of the same marking on the map (${l.geo.length}/2). Image clicks still add points to the line.`;
-    return "Click on a long straight marking in the image (lane line, kerb, stop line) to start a line.";
+    if (l && l.px.length < 2)
+      return `Now click the same marking in the image (${l.px.length}/2)${proj ? ": the dashed line shows where the current estimate puts it" : ""}.`;
+    return `Click on a long straight marking in the image or on the map (lane line, kerb, stop line) to start a line.${
+      proj ? " Lines drawn on the map appear in the image at their estimated place." : " With 4 point pairs, lines drawn on the map also appear in the image."
+    }`;
   }
   const v = d.openVertical !== null ? d.verticals[d.openVertical] : null;
   return v && v.length === 1 ? "Now click the top of the same pole or edge." : "Click the bottom of a vertical pole or building edge, then its top.";
@@ -61,6 +66,9 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
   const config = useStore((s) => s.config);
   const userMap = useStore((s) => s.userMap);
   const res = residualIndex(d, report);
+  // Map -> image: the solved camera, else a homography of the point pairs (rough, before the first solve).
+  const proj = useMemo(() => geoProjector(camera, d.points), [camera, d.points]);
+  const [cursor, setCursor] = useState<[number, number] | null>(null); // map position under the mouse
 
   // ------------------------------------------------------------------ image side
   const onPlace = (u: number, v: number) => {
@@ -73,9 +81,11 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
       s.set({ points: pts });
     } else if (s.tool === "line") {
       const lines = s.lines.map((l) => ({ px: [...l.px], geo: [...l.geo] }));
-      if (s.openLine !== null && lines[s.openLine] && lines[s.openLine].geo.length < 2) {
-        lines[s.openLine].px.push([u, v]);
-        s.set({ lines });
+      const open = s.openLine !== null ? lines[s.openLine] : undefined;
+      if (open && (open.geo.length < 2 || open.px.length < 2)) {
+        open.px.push([u, v]);
+        // A line started on the map is done once it has two image points.
+        s.set({ lines, openLine: open.geo.length === 2 && open.px.length >= 2 ? null : s.openLine });
       } else {
         lines.push({ px: [[u, v]], geo: [] });
         s.set({ lines, openLine: lines.length - 1 });
@@ -113,23 +123,32 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
       }
     });
     d.lines.forEach((l, i) => {
-      p.push({ pts: l.px, color: LINE_COLOR, width: 2.5, dashed: l.geo.length < 2 });
+      if (l.px.length) p.push({ pts: l.px, color: LINE_COLOR, width: 2.5, dashed: l.geo.length < 2 });
       l.px.forEach(([u, v], j) => h.push({ id: `l:${i}:${j}`, u, v, color: LINE_COLOR, ring: l.geo.length < 2 }));
-      if (camera && l.geo.length === 2) {
-        const a = camera.projectGeo(l.geo[0][0], l.geo[0][1]), b = camera.projectGeo(l.geo[1][0], l.geo[1][1]);
-        if (a && b) {
-          // The map line extended across the image.
-          const dx = b[0] - a[0], dy = b[1] - a[1];
-          p.push({ pts: [[a[0] - dx * 3, a[1] - dy * 3], [b[0] + dx * 3, b[1] + dy * 3]], color: errColor(res.lines.get(i)?.norm), width: 1, dashed: true });
-        }
-      }
+      if (!proj || !l.geo.length) return;
+      const a = proj(l.geo[0][0], l.geo[0][1]);
+      // Second end: the clicked one, else the map cursor while the line is being drawn on the map.
+      const g1 = l.geo[1] ?? (d.openLine === i ? cursor : null);
+      const b = g1 ? proj(g1[0], g1[1]) : null;
+      if (!a || !b) return;
+      const color = camera && l.px.length >= 2 ? errColor(res.lines.get(i)?.norm) : LINE_COLOR;
+      // The map line in the image, extended across it once it is complete.
+      const dx = b[0] - a[0], dy = b[1] - a[1], k = l.geo.length === 2 && l.px.length >= 2 ? 3 : 0;
+      p.push({ pts: [[a[0] - dx * k, a[1] - dy * k], [b[0] + dx * k, b[1] + dy * k]], color, width: k ? 1 : 2, dashed: true });
     });
+    // Where the map cursor falls in the image.
+    const c = cursor && proj ? proj(cursor[0], cursor[1]) : null;
+    if (c) {
+      const r = 14;
+      p.push({ pts: [[c[0] - r, c[1]], [c[0] + r, c[1]]], color: "#ffffff", width: 1.5 });
+      p.push({ pts: [[c[0], c[1] - r], [c[0], c[1] + r]], color: "#ffffff", width: 1.5 });
+    }
     d.verticals.forEach((v, i) => {
       if (v.length === 2) p.push({ pts: v as [number, number][], color: VERT_COLOR, width: 2.5 });
       v.forEach(([a, b], j) => h.push({ id: `v:${i}:${j}`, u: a, v: b, color: VERT_COLOR, ring: v.length < 2 }));
     });
     return { handles: h, polys: p };
-  }, [d.points, d.lines, d.verticals, camera, report]);
+  }, [d.points, d.lines, d.verticals, d.openLine, camera, report, proj, cursor]);
 
   // ------------------------------------------------------------------ map side
   const ref = useRef<HTMLDivElement>(null);
@@ -152,23 +171,40 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
           pts[pts.length - 1] = { ...last, lat: g[0], lon: g[1] };
           s.set({ points: pts });
         }
-      } else if (s.tool === "line" && s.openLine !== null) {
+      } else if (s.tool === "line") {
         const lines = s.lines.map((l) => ({ px: [...l.px], geo: [...l.geo] }));
-        const l = lines[s.openLine];
-        if (l && l.px.length >= 2 && l.geo.length < 2) {
+        const l = s.openLine !== null ? lines[s.openLine] : undefined;
+        if (l && l.geo.length < 2) {
           l.geo.push(g);
-          s.set({ lines, openLine: l.geo.length === 2 ? null : s.openLine });
+          s.set({ lines, openLine: l.geo.length === 2 && l.px.length >= 2 ? null : s.openLine });
+        } else if (!l) {
+          // Started on the map: the image points follow.
+          lines.push({ px: [], geo: [g] });
+          s.set({ lines, openLine: lines.length - 1 });
         }
       }
     });
+    // Mouse position, shown in the camera image (throttled to one update per frame).
+    let raf = 0;
+    map.on("mousemove", (e: L.LeafletMouseEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setCursor([e.latlng.lat, e.latlng.lng]));
+    });
+    map.on("mouseout", () => {
+      cancelAnimationFrame(raf);
+      setCursor(null);
+    });
     return () => {
+      cancelAnimationFrame(raf);
       map.off("click");
+      map.off("mousemove");
+      map.off("mouseout");
     };
   }, [map]);
   useEffect(() => {
     context.current.clearLayers();
-    if (userMap) drawLayout(userMap, context.current, { faint: true });
-  }, [userMap, map]);
+    if (userMap && d.showLayout) drawLayout(userMap, context.current, { faint: true });
+  }, [userMap, map, d.showLayout]);
   useEffect(() => {
     const lg = layer.current;
     lg.clearLayers();
@@ -213,9 +249,12 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
     } else if (s.tool === "line" && s.lines.length) {
       const i = s.openLine ?? s.lines.length - 1;
       const l = s.lines[i];
-      const nl = l.geo.length ? { ...l, geo: l.geo.slice(0, -1) } : { ...l, px: l.px.slice(0, -1) };
-      const lines = nl.px.length ? s.lines.map((x, n) => (n === i ? nl : x)) : s.lines.filter((_, n) => n !== i);
-      s.set({ lines, openLine: nl.px.length ? i : null });
+      // Undo the side clicked last: image points of a line started on the map come after its map points.
+      const mapFirst = l.geo.length === 2 && l.px.length === 1;
+      const nl = l.geo.length && !mapFirst ? { ...l, geo: l.geo.slice(0, -1) } : { ...l, px: l.px.slice(0, -1) };
+      const keep = nl.px.length > 0 || nl.geo.length > 0;
+      const lines = keep ? s.lines.map((x, n) => (n === i ? nl : x)) : s.lines.filter((_, n) => n !== i);
+      s.set({ lines, openLine: keep ? i : null });
     } else if (s.tool === "vertical" && s.verticals.length) {
       s.set({ verticals: s.verticals.slice(0, -1), openVertical: null });
     }
@@ -248,9 +287,12 @@ export function PairsEditor({ camera, report }: { camera?: GroundCamera; report?
         >
           <Trash2 size={14} /> Clear
         </button>
+        <button className="btn" data-on={d.showLayout} onClick={() => d.set({ showLayout: !d.showLayout })} title="Show or hide the lanes, stop lines and crossings drawn in step 2 on the map">
+          <Layers size={14} /> {d.showLayout ? "Hide drawn layout" : "Show drawn layout"}
+        </button>
         <span className="ml-auto text-xs text-muted">Wheel: zoom · drag: pan · drag a marker to correct it</span>
       </div>
-      <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">{guidance(d)}</div>
+      <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-sm">{guidance(d, proj)}</div>
       <div className="grid gap-3 lg:grid-cols-2">
         <ImageCanvas
           snapshot={snapshot}

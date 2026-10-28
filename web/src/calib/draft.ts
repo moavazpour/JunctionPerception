@@ -36,6 +36,7 @@ export interface Draft {
   tool: Tool;
   openLine: number | null; // line being traced
   openVertical: number | null;
+  showLayout: boolean; // drawn road layout shown on the calibration maps
   set: (p: Partial<Draft>) => void;
 }
 
@@ -51,6 +52,7 @@ export const useDraft = create<Draft>((set) => ({
   tool: "point",
   openLine: null,
   openVertical: null,
+  showLayout: true,
   set: (p) => set(p),
 }));
 

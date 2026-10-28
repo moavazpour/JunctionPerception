@@ -194,6 +194,7 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
   const polys = useMemo(() => (camera ? overlayPolys(camera, userMap, grid, layout) : []), [camera, userMap, grid, layout]);
   // Drag-to-align: moving a drawn vertex in the image pairs its map position with that pixel and re-solves.
   const align = useDraft((s) => s.align);
+  const showLayout = useDraft((s) => s.showLayout);
   const handles = useMemo(() => (camera && layout ? alignHandles(camera, userMap, align) : []), [camera, userMap, align, layout]);
   const allPolys = useMemo(() => [...polys, ...handlePolys(handles)], [polys, handles]);
   const [solving, setSolving] = useState(false);
@@ -245,15 +246,15 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
       birdsEye(camera, snapshot).then((o) => {
         if (cancelled) return;
         if (o) L.imageOverlay(o.url, o.bounds, { opacity: 0.75 }).addTo(lg);
-        if (userMap) drawLayout(userMap, lg, { faint: true });
+        if (userMap && showLayout) drawLayout(userMap, lg, { faint: true });
       });
-    else if (userMap) drawLayout(userMap, lg, { faint: true });
+    else if (userMap && showLayout) drawLayout(userMap, lg, { faint: true });
     if (camera?.anchor) L.circleMarker([camera.anchor.lat, camera.anchor.lon], { radius: 6, color: "#3e6ae1", weight: 3, fillOpacity: 1 }).bindTooltip("camera").addTo(lg);
     return () => {
       cancelled = true;
       lg.remove();
     };
-  }, [map, camera, snapshot, bev, userMap]);
+  }, [map, camera, snapshot, bev, userMap, showLayout]);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -261,6 +262,7 @@ export function Verify({ camera, report }: { camera?: GroundCamera; report?: Sol
           <button data-on={grid} onClick={() => setGrid(!grid)}>5 m grid</button>
           <button data-on={layout} onClick={() => setLayout(!layout)}>Lanes & stop lines</button>
           <button data-on={bev} onClick={() => setBev(!bev)}>Image on map</button>
+          <button data-on={showLayout} onClick={() => useDraft.getState().set({ showLayout: !showLayout })}>Layout on map</button>
         </div>
         <span className="flex-1 text-xs text-muted">
           The drawn lanes should sit on the painted lanes in the image. If they do not, <b className="text-fg">drag the white dots</b> in

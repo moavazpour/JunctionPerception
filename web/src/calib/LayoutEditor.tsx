@@ -2,7 +2,7 @@
 // crosswalks and the road area. Saved on the device (map/user/set) and used by the twin, the lane
 // statistics (queues, distance to the stop line, arrival time) and the calibration check.
 import L from "leaflet";
-import { Check, Footprints, MoveRight, Save, Square, Trash2, Undo2 } from "lucide-react";
+import { Check, Eraser, Footprints, MoveRight, Save, Square, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBaseMap } from "../components/leaflet";
 import { enuToGeo, geoToEnu } from "../geo";
@@ -10,7 +10,7 @@ import { publish } from "../mqtt";
 import { LANE_COLORS, useStore } from "../store";
 import type { UserMap } from "../types";
 
-type Tool = "lane" | "stop" | "crosswalk" | "roi";
+type Tool = "lane" | "stop" | "crosswalk" | "roi" | "erase";
 const EMPTY: UserMap = { lanes: [], stop_lines: [], crosswalks: [], roi: [] };
 
 // Polygon of a lane ribbon (centreline +/- width/2), in lat/lon.
@@ -61,6 +61,34 @@ export function drawLayout(m: UserMap, layer: L.LayerGroup, opts: { faint?: bool
   m.crosswalks.forEach((c) => L.polygon(c, { color: "#ffffff", weight: 2, dashArray: "3 4", fillColor: "#ffffff", fillOpacity: 0.25, interactive: false }).addTo(layer));
 }
 
+// The drawn feature under a click (within `tol` screen px of its line or inside its area), drawn last first.
+function featureAt(map: L.Map, m: UserMap, at: L.Point, tol = 12): { kind: "lane" | "stop" | "crosswalk" | "roi"; i: number } | null {
+  const px = (pts: [number, number][]) => pts.map((p) => map.latLngToContainerPoint(p));
+  const near = (pts: L.Point[], closed: boolean) => {
+    const n = closed ? pts.length : pts.length - 1;
+    for (let k = 0; k < n; k++) if (L.LineUtil.pointToSegmentDistance(at, pts[k], pts[(k + 1) % pts.length]) <= tol) return true;
+    return false;
+  };
+  const inside = (pts: L.Point[]) => {
+    let c = false;
+    for (let a = 0, b = pts.length - 1; a < pts.length; b = a++)
+      if (pts[a].y > at.y !== pts[b].y > at.y && at.x < ((pts[b].x - pts[a].x) * (at.y - pts[a].y)) / (pts[b].y - pts[a].y) + pts[a].x) c = !c;
+    return c;
+  };
+  for (let i = m.stop_lines.length - 1; i >= 0; i--) if (near(px(m.stop_lines[i] as [number, number][]), false)) return { kind: "stop", i };
+  for (let i = m.lanes.length - 1; i >= 0; i--) {
+    const rib = px(laneRibbon(m.lanes[i].points, m.lanes[i].width));
+    if (near(px(m.lanes[i].points), false) || (rib.length >= 3 && inside(rib))) return { kind: "lane", i };
+  }
+  for (let i = m.crosswalks.length - 1; i >= 0; i--) {
+    const c = px(m.crosswalks[i]);
+    if (near(c, true) || inside(c)) return { kind: "crosswalk", i };
+  }
+  // The road area only by its outline: it covers everything else.
+  if (m.roi.length >= 3 && near(px(m.roi), true)) return { kind: "roi", i: 0 };
+  return null;
+}
+
 export function LayoutEditor() {
   const remote = useStore((s) => s.userMap);
   const config = useStore((s) => s.config);
@@ -75,8 +103,8 @@ export function LayoutEditor() {
   const [saved, setSaved] = useState("");
   const layer = useRef(L.layerGroup());
   const draftLayer = useRef(L.layerGroup());
-  const state = useRef({ tool, pending, width });
-  state.current = { tool, pending, width };
+  const state = useRef({ tool, pending, width, m });
+  state.current = { tool, pending, width, m };
 
   useEffect(() => {
     if (remote && !dirty) setM(remote);
@@ -110,6 +138,18 @@ export function LayoutEditor() {
     layer.current.addTo(map);
     draftLayer.current.addTo(map);
     map.on("click", (e: L.LeafletMouseEvent) => {
+      if (state.current.tool === "erase") {
+        const hit = featureAt(map, state.current.m, e.containerPoint);
+        if (!hit) return;
+        setM((mm) => {
+          if (hit.kind === "lane") return { ...mm, lanes: mm.lanes.filter((_, j) => j !== hit.i) };
+          if (hit.kind === "stop") return { ...mm, stop_lines: mm.stop_lines.filter((_, j) => j !== hit.i) };
+          if (hit.kind === "crosswalk") return { ...mm, crosswalks: mm.crosswalks.filter((_, j) => j !== hit.i) };
+          return { ...mm, roi: [] };
+        });
+        setDirty(true);
+        return;
+      }
       const p: [number, number] = [e.latlng.lat, e.latlng.lng];
       const next = [...state.current.pending, p];
       if (state.current.tool === "stop" && next.length === 2) return finish(next);
@@ -160,6 +200,7 @@ export function LayoutEditor() {
     { t: "stop", label: "Stop line", icon: <Square size={14} />, hint: "Click both ends of a stop line, across all its lanes." },
     { t: "crosswalk", label: "Crosswalk", icon: <Footprints size={14} />, hint: "Click the corners of the crossing. Double-click to finish." },
     { t: "roi", label: "Road area", icon: <Check size={14} />, hint: "Outline the road surface the system should watch (optional). Objects outside are ignored. Double-click to finish." },
+    { t: "erase", label: "Erase", icon: <Eraser size={14} />, hint: "Click a lane, stop line, crossing or the outline of the road area to delete it. Save to keep the change." },
   ];
   const cur = TOOLS.find((x) => x.t === tool)!;
   return (
@@ -187,7 +228,9 @@ export function LayoutEditor() {
           </button>
         </div>
         <div className="text-xs text-muted">{cur.hint}</div>
-        <div ref={ref} className="h-[560px] overflow-hidden rounded-xl border border-line cursor-crosshair" />
+        <div className={tool === "erase" ? "jp-erase" : "cursor-crosshair"}>
+          <div ref={ref} className="h-[560px] overflow-hidden rounded-xl border border-line" />
+        </div>
       </div>
       <div className="space-y-3">
         <div className="card p-4">

@@ -1,22 +1,32 @@
-// Leaflet base map shared by the site editor and the calibration tools: aerial imagery (default) and
-// OpenStreetMap, zoomable past the imagery's native resolution for precise clicking.
+// Leaflet base map shared by the site editor and the calibration tools: Google satellite imagery (default,
+// sharpest in cities), Esri imagery and OpenStreetMap, zoomable past the native resolution for precise clicking.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+const google = (lyrs: string) =>
+  L.tileLayer(`https://mt{s}.google.com/vt/lyrs=${lyrs}&x={x}&y={y}&z={z}`, {
+    subdomains: ["0", "1", "2", "3"],
+    maxNativeZoom: 20,
+    maxZoom: 23,
+    attribution: "Imagery © Google",
+  });
+
 export function createBaseMap(el: HTMLElement, center: [number, number], zoom: number): L.Map {
   const map = L.map(el, { maxZoom: 23, zoomSnap: 0.25, wheelPxPerZoomLevel: 90 }).setView(center, zoom);
-  const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  const gsat = google("s").addTo(map);
+  const ghyb = google("y");
+  const esri = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
     maxNativeZoom: 19,
     maxZoom: 23,
     attribution: "Imagery © Esri",
-  }).addTo(map);
+  });
   const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxNativeZoom: 19,
     maxZoom: 23,
     attribution: "© OpenStreetMap contributors",
   });
-  L.control.layers({ Aerial: sat, Map: osm }, {}, { position: "topright" }).addTo(map);
+  L.control.layers({ "Google satellite": gsat, "Google hybrid": ghyb, "Esri aerial": esri, Map: osm }, {}, { position: "topright" }).addTo(map);
   L.control.scale({ imperial: false }).addTo(map);
   return map;
 }

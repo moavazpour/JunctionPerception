@@ -123,6 +123,9 @@ body {
 .cursor-crosshair.leaflet-container {
   cursor: crosshair;
 }
+.jp-erase .leaflet-container {
+  cursor: pointer;
+}
 
 @keyframes pulse-dot {
   0%,
