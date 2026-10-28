@@ -68,7 +68,7 @@ export function GroundTruthPanel() {
     a.click();
   };
   return (
-    <div className="absolute left-3 top-14 z-10 w-[340px] space-y-3 rounded-xl bg-panel/95 p-3 text-xs shadow-card backdrop-blur">
+    <div className="w-[340px] space-y-3 rounded-xl bg-panel/95 p-3 text-xs shadow-card backdrop-blur">
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <div className="text-sm font-semibold">Accuracy vs ground truth</div>

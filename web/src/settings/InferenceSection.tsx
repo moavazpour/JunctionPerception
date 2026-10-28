@@ -1,47 +1,25 @@
 import { RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { publish } from "../mqtt";
-import { CLASS_COLOR, CLASS_LABEL, useStore } from "../store";
+import { CLASS_COLOR, CLASS_LABEL } from "../store";
 import type { ObjectClass, Settings } from "../types";
+import { BACKENDS, INPUT_SIZES, RestartButton, Slider, useModelSettings } from "./modelSettings";
 import { NoSite, Page, Row, Toggle } from "./SettingsPage";
 
 const ALL: ObjectClass[] = ["car", "bus", "truck", "trailer", "motorcycle", "bicycle", "escooter", "pedestrian"];
 const DEFAULTS: Partial<Settings> = { confidence: 0.45, keypoint_confidence: 0.35, max_range_m: 250, max_fps: 15, preview_fps: 12, max_det: 300 };
 
-function Slider({ value, min, max, step, unit, onChange, fmt }: {
-  value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void; fmt?: (v: number) => string;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <input type="range" className="flex-1" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-      <span className="w-20 text-right text-sm tabular-nums">
-        {fmt ? fmt(value) : value}
-        {unit && <span className="text-muted"> {unit}</span>}
-      </span>
-    </div>
-  );
-}
-
-// Model settings applied by the running site within a frame (topic config/set), persisted on the device.
+// Model settings applied by the running site within a frame (topic config/set, every camera of the site),
+// persisted on the device.
 export function InferenceSection() {
-  const remote = useStore((s) => s.config?.settings);
-  const compute = useStore((s) => s.config?.compute);
-  const [s, setS] = useState<Settings | undefined>(remote);
-  const timer = useRef<number>();
-  const pending = useRef<Partial<Settings>>({});
-  useEffect(() => setS(remote), [remote]);
+  const { s, compute, change } = useModelSettings();
   if (!s) return <Page title="Detection"><NoSite /></Page>;
-  const change = (p: Partial<Settings>) => {
-    setS({ ...s, ...p });
-    pending.current = { ...pending.current, ...p };
-    clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      publish("config/set", { settings: pending.current });
-      pending.current = {};
-    }, 150);
-  };
   return (
-    <Page title="Detection" desc="Changes apply to the running site immediately and are kept across restarts.">
+    <Page title="Detection" desc="Changes apply to every camera of the running site immediately and are kept across restarts.">
+      <section className="card flex flex-wrap items-center gap-3 px-5 py-3">
+        <RestartButton className="btn-primary" />
+        <span className="text-xs text-muted">
+          After changing the model or its input: play the video again from its first frame with fresh tracks, so results can be compared from the same start.
+        </span>
+      </section>
       <section className="card px-5 py-2">
         <Row label="Model" hint="Every trained detector in the models folder. Changing it reloads the network (a few seconds).">
           <select className="input" value={s.model} onChange={(e) => change({ model: e.target.value })}>
@@ -52,16 +30,16 @@ export function InferenceSection() {
         </Row>
         <Row label="Inference backend" hint="GPU / ONNX Runtime runs the exported model as trained (FP32). TensorRT is faster but uses FP16.">
           <div className="seg">
-            {(["auto", "cuda", "tensorrt", "cpu"] as const).map((b) => (
+            {(Object.keys(BACKENDS) as (keyof typeof BACKENDS)[]).map((b) => (
               <button key={b} data-on={s.backend === b} disabled={b !== "auto" && !compute?.available.includes(b)} onClick={() => change({ backend: b })}>
-                {{ auto: "Auto", cuda: "GPU (FP32)", tensorrt: "TensorRT (FP16)", cpu: "CPU" }[b]}
+                {BACKENDS[b]}
               </button>
             ))}
           </div>
         </Row>
         <Row label="Input size" hint={compute?.dynamic_input ? "Square network input in pixels (the image is scaled into it and padded). Larger finds smaller, farther objects but is slower." : "This model was exported with a fixed input size."}>
           <select className="input w-40" disabled={!compute?.dynamic_input} value={s.imgsz} onChange={(e) => change({ imgsz: Number(e.target.value) })}>
-            {[128, 160, 192, 256, 320, 416, 480, 640, 768, 960, 1120, 1280, 1440, 1600, 1920].map((v) => (
+            {INPUT_SIZES.map((v) => (
               <option key={v} value={v}>{v} × {v} px</option>
             ))}
           </select>

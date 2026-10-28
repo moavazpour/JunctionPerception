@@ -122,11 +122,14 @@ client.on("message", (topic, payload) => {
   if (leaf === "calibration/manual/result") waiters.splice(0).forEach((w) => w(m.result));
 });
 
-// Commands go to the selected camera; the drawn layout belongs to the site and goes to all its cameras.
+// Leaves that belong to the whole site (every camera gets them): the drawn layout and the detection settings.
+const SITE_WIDE = new Set(["map/user/set", "config/set"]);
+
+// Commands go to the selected camera, site-wide ones to all cameras of the site.
 export function publish(leaf: string, body: object) {
   const { site, camera, camerasSeen } = useStore.getState();
   if (!site) return false;
-  const targets = leaf === "map/user/set" ? camerasSeen[site] ?? [camera] : [camera];
+  const targets = SITE_WIDE.has(leaf) ? camerasSeen[site] ?? [camera] : [camera];
   for (const cam of targets) client.publish(`${prefix}/${site}/${cam}/${leaf}`, JSON.stringify(body), { qos: 1 });
   return true;
 }

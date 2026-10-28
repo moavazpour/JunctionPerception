@@ -46,6 +46,7 @@ export interface State {
   sourceFrame?: number; // source video frame of the shown road users (to line up ground truth)
   gt?: GroundTruth | null; // ground truth of a replayed dataset site (null: none)
   gtVisible: boolean; // ground-truth boxes and the evaluation panel shown
+  modelPanel: boolean; // quick detection settings on the live view
   objects: RoadUser[];
   objectsAt: number;
   health?: Health;
@@ -85,6 +86,7 @@ export const useStore = create<State>((set) => ({
   cams: {},
   fusedAt: 0,
   gtVisible: false,
+  modelPanel: false,
   objects: [],
   objectsAt: 0,
   healthAt: 0,

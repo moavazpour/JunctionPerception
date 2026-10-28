@@ -1,4 +1,5 @@
-import { Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Target, Video } from "lucide-react";
+import { Cpu, Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Target, Video } from "lucide-react";
+import { ModelPanel } from "./ModelPanel";
 import { GroundTruthPanel, useGroundTruth } from "./GroundTruthPanel";
 import { useState } from "react";
 import { useStore } from "../store";
@@ -13,6 +14,7 @@ function Toolbar() {
   const focus = useStore((s) => s.focusLanes);
   const hasGt = useStore((s) => !!s.gt);
   const gtVisible = useStore((s) => s.gtVisible);
+  const modelPanel = useStore((s) => s.modelPanel);
   const videoVisible = useStore((s) => s.videoVisible);
   const calibrated = useStore((s) => !!s.map);
   const set = useStore((s) => s.set);
@@ -64,6 +66,11 @@ function Toolbar() {
             <Eye size={12} /> Occlusion
           </span>
         </button>
+        <button data-on={modelPanel} onClick={() => set({ modelPanel: !modelPanel })} title="Detection model and its input, changed live">
+          <span className="flex items-center gap-1">
+            <Cpu size={12} /> Model
+          </span>
+        </button>
         {hasGt && (
           <button data-on={gtVisible} onClick={() => set({ gtVisible: !gtVisible })} title="Ground-truth boxes and accuracy (recorded dataset)">
             <span className="flex items-center gap-1">
@@ -97,7 +104,11 @@ export function LiveView() {
         <SceneView />
         <Toolbar />
         <VideoPip />
-        <GroundTruthPanel />
+        {/* Floating panels, stacked under the toolbar. */}
+        <div className="absolute left-3 top-14 z-10 flex max-h-[calc(100%-4.5rem)] flex-col gap-2 overflow-y-auto">
+          <ModelPanel />
+          <GroundTruthPanel />
+        </div>
         <Legend />
       </div>
       <Sidebar />
