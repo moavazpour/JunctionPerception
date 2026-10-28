@@ -29,6 +29,30 @@ Pose predictCtra(const RoadUser& u, double t) {
   return {x.head<2>(), x[2]};
 }
 
+// Pose on a lane at arc length s, keeping the current lateral offset.
+Pose lanePose(const Polyline& c, double s, double lateral) {
+  const Eigen::Vector2d d = c.at(s + 0.5) - c.at(s - 0.5);
+  const double h = d.norm() > 1e-6 ? std::atan2(d.y(), d.x()) : c.project(c.at(s)).heading;
+  return {c.at(s) + lateral * Eigen::Vector2d(-std::sin(h), std::cos(h)), h};
+}
+
+// Lane following: advances along the lane centreline with the user's speed (and acceleration); past the lane end it
+// continues with CTRA (or constant velocity) from the end of the lane.
+Pose predictLane(const RoadUser& u, const Lane& l, double t, bool accel) {
+  const double a = accel ? u.accel : 0.0;
+  const double len = l.centerline.length();
+  const auto t_end = IntersectionModel::timeToDistance(len - u.lane_s, u.speed, a);
+  if (!t_end || t <= *t_end)
+    return lanePose(l.centerline, u.lane_s + IntersectionModel::distanceInTime(t, u.speed, a), u.lateral);
+  const Pose end = lanePose(l.centerline, len, u.lateral);
+  RoadUser e = u;
+  e.pos = end.p;
+  e.yaw = end.yaw;
+  e.speed = std::max(0.0, u.speed + a * *t_end);
+  e.accel = a;
+  return accel ? predictCtra(e, t - *t_end) : predictCv(e, t - *t_end);
+}
+
 OrientedBox box(const RoadUser& u, const Pose& p, double shrink) {
   // Pedestrians and two-wheelers get a minimum footprint so contact is not missed.
   const double l = std::max(u.dims[0], 0.6) * shrink, w = std::max(u.dims[1], 0.6) * shrink;
@@ -56,10 +80,16 @@ ConflictMetrics NearMissDetector::evaluatePair(const RoadUser& a, const RoadUser
   const Eigen::Vector2d dp = b.pos - a.pos;
   const double dist = std::max(dp.norm(), 1e-6);
   m.closing_speed = -(vb - va).dot(dp) / dist;
-  if (m.closing_speed > 0.5 && m.gap > 0.05) m.drac = m.closing_speed * m.closing_speed / (2 * m.gap);
   if (m.closing_speed <= 0.3) return m;
+  // Road users on a lane follow it; the others keep their heading.
+  const Lane* la = map_ && !a.lane.empty() ? map_->lane(a.lane) : nullptr;
+  const Lane* lb = map_ && !b.lane.empty() ? map_->lane(b.lane) : nullptr;
+  auto predict = [](const RoadUser& u, const Lane* l, double t, bool accel) {
+    if (l && l->centerline.pts.size() >= 2) return predictLane(u, *l, t, accel);
+    return accel ? predictCtra(u, t) : predictCv(u, t);
+  };
   for (double t = 0; t <= cfg_.horizon + 1e-9; t += cfg_.step) {
-    const Pose pa = predictCv(a, t), pb = predictCv(b, t);
+    const Pose pa = predict(a, la, t, false), pb = predict(b, lb, t, false);
     if (overlaps(box(a, pa, cfg_.footprint_shrink), box(b, pb, cfg_.footprint_shrink))) {
       m.ttc = t;
       m.conflict_point = 0.5 * (pa.p + pb.p);
@@ -67,13 +97,17 @@ ConflictMetrics NearMissDetector::evaluatePair(const RoadUser& a, const RoadUser
     }
   }
   for (double t = 0; t <= cfg_.horizon + 1e-9; t += cfg_.step) {
-    const Pose pa = predictCtra(a, t), pb = predictCtra(b, t);
+    const Pose pa = predict(a, la, t, true), pb = predict(b, lb, t, true);
     if (overlaps(box(a, pa, cfg_.footprint_shrink), box(b, pb, cfg_.footprint_shrink))) {
       m.mttc = t;
       if (!m.ttc) m.conflict_point = 0.5 * (pa.p + pb.p);
       break;
     }
   }
+  // Deceleration needed to avoid a crash only means something on a collision course: cars passing each other on
+  // parallel lanes close in fast but never meet.
+  if ((m.ttc || m.mttc) && m.closing_speed > 0.5 && m.gap > 0.05)
+    m.drac = m.closing_speed * m.closing_speed / (2 * m.gap);
   return m;
 }
 

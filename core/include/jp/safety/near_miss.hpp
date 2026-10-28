@@ -51,6 +51,8 @@ class NearMissDetector {
  public:
   explicit NearMissDetector(NearMissConfig cfg = {}, const CameraModel* cam = nullptr) : cfg_(cfg), cam_(cam) {}
   void setCamera(const CameraModel* cam) { cam_ = cam; }
+  // Lanes for lane-following prediction of road users that have a lane (RoadUser::lane).
+  void setMap(const SiteMap* map) { map_ = map; }
   // Returns events that started, escalated or finished in this frame.
   std::vector<NearMissEvent> update(double stamp, const std::vector<RoadUser>& users);
   const std::map<std::pair<std::uint32_t, std::uint32_t>, ConflictMetrics>& current() const { return current_; }
@@ -62,6 +64,7 @@ class NearMissDetector {
                      std::map<std::pair<std::uint32_t, std::uint32_t>, std::pair<double, Eigen::Vector2d>>& pets);
   NearMissConfig cfg_;
   const CameraModel* cam_;
+  const SiteMap* map_ = nullptr;
   std::map<std::pair<std::uint32_t, std::uint32_t>, ConflictMetrics> current_;
   std::map<std::pair<std::uint32_t, std::uint32_t>, NearMissEvent> open_;
   std::map<std::uint32_t, NearMissEvent> braking_;

@@ -85,6 +85,9 @@ class IntersectionModel {
 
   // Kinematic time to cover distance d (m) with speed v and acceleration a. Empty if it stops first.
   static std::optional<double> timeToDistance(double d, double v, double a);
+  // Distance covered along the lane in time t with speed v and acceleration a (a braking user stops, it does not
+  // reverse). The inverse of timeToDistance; ETAs and lane-following prediction share it.
+  static double distanceInTime(double t, double v, double a);
 
  private:
   RoadUser describe(const Track& t, double stamp) const;

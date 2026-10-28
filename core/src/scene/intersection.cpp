@@ -20,6 +20,12 @@ std::optional<double> IntersectionModel::timeToDistance(double d, double v, doub
   return t;
 }
 
+double IntersectionModel::distanceInTime(double t, double v, double a) {
+  if (t <= 0 || v <= 0) return 0.0;
+  if (a < 0 && v + a * t < 0) t = v / -a;
+  return std::max(0.0, v * t + 0.5 * a * t * t);
+}
+
 RoadUser IntersectionModel::describe(const Track& t, double stamp) const {
   RoadUser u;
   u.id = t.id;
@@ -138,7 +144,7 @@ void IntersectionModel::assignLane(RoadUser& u, const Track& t) {
       if (u.speed > 0.3) u.eta_cv = d / u.speed;
       if (!u.eta && u.accel < -0.05) {
         u.stopping = true;
-        u.stop_position_s = u.lane_s + u.speed * u.speed / (2 * -u.accel);
+        u.stop_position_s = u.lane_s + distanceInTime(std::numeric_limits<double>::infinity(), u.speed, u.accel);
       }
       // First-order uncertainty of the ETA from speed and acceleration uncertainty.
       if (u.eta) {

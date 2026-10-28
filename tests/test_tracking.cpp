@@ -92,3 +92,82 @@ TEST(Scene, LaneAssignmentAndQueue) {
     if (z.id == "in1_stopbar") stopbar_occupied = z.occupied;
   EXPECT_TRUE(stopbar_occupied);
 }
+
+namespace {
+Lane straightLane(const std::string& id, Eigen::Vector2d a, Eigen::Vector2d b) {
+  Lane l;
+  l.id = id;
+  l.centerline.pts = {a, b};
+  l.width = 3.5;
+  return l;
+}
+}  // namespace
+
+TEST(Tracker, LaneConstraintSettlesNoisyHeading) {
+  // Car driving along a straight lane at 0.3 rad with very noisy box orientation.
+  const double th = 0.3;
+  const Eigen::Vector2d u(std::cos(th), std::sin(th));
+  const std::vector<Lane> lanes = {straightLane("l1", {0, 0}, 200 * u)};
+  auto run = [&](bool hint) {
+    Tracker tr;
+    if (hint) tr.setLaneHint([&](const Eigen::Vector2d& p, double yaw) { return laneHintAt(lanes, p, yaw); });
+    std::mt19937 rng(7);
+    std::normal_distribution<double> pos(0, 0.3), yaw(0, 0.35);
+    double err = 0;
+    int n = 0;
+    for (int k = 0; k < 60; ++k) {
+      const double t = k * 0.1;
+      const Eigen::Vector2d p = (20 + 12 * t) * u + Eigen::Vector2d(pos(rng), pos(rng));
+      tr.update(t, {det(p.x(), p.y(), th + yaw(rng))});
+      if (k >= 40) {
+        EXPECT_EQ(tr.tracks().size(), 1u);
+        err += std::abs(wrapAngle(tr.tracks()[0].yaw() - th));
+        ++n;
+      }
+    }
+    return err / n;
+  };
+  const double with_lane = run(true), without = run(false);
+  EXPECT_LT(with_lane, 1.5 * M_PI / 180);
+  EXPECT_LT(with_lane, without);
+}
+
+TEST(Tracker, LaneConstraintStillFollowsLaneChange) {
+  // Two lanes heading east, 3.5 m apart. The car changes from the right lane to the left one over 4 s.
+  const std::vector<Lane> lanes = {straightLane("r", {0, 0}, {300, 0}), straightLane("l", {0, 3.5}, {300, 3.5})};
+  Tracker tr;
+  tr.setLaneHint([&](const Eigen::Vector2d& p, double yaw) { return laneHintAt(lanes, p, yaw); });
+  std::mt19937 rng(3);
+  std::normal_distribution<double> pos(0, 0.2), yaw(0, 0.15);
+  std::uint32_t id = 0;
+  double max_err = 0;
+  for (int k = 0; k < 120; ++k) {
+    const double t = k * 0.1;
+    const double x = 20 + 12 * t;
+    const double ph = std::clamp((t - 3.0) / 4.0, 0.0, 1.0);
+    const double y = 1.75 * (1 - std::cos(M_PI * ph));
+    const double vy = (t > 3.0 && t < 7.0) ? 1.75 * M_PI / 4 * std::sin(M_PI * ph) : 0.0;
+    tr.update(t, {det(x + pos(rng), y + pos(rng), std::atan2(vy, 12.0) + yaw(rng))});
+    ASSERT_EQ(tr.tracks().size(), 1u) << "t=" << t;
+    if (k == 0) id = tr.tracks()[0].id;
+    EXPECT_EQ(tr.tracks()[0].id, id);
+    if (t > 1.0) max_err = std::max(max_err, std::abs(tr.tracks()[0].position().y() - y));
+  }
+  const Track& t = tr.tracks()[0];
+  EXPECT_LT(max_err, 1.0);
+  EXPECT_NEAR(t.position().y(), 3.5, 0.3);
+  EXPECT_LT(std::abs(wrapAngle(t.yaw())), 3 * M_PI / 180);
+}
+
+TEST(SiteMap, LaneHintSkipsEndsAndJunctions) {
+  // Eastbound lane, plus a northbound lane crossing it at x = 50 (junction area).
+  const std::vector<Lane> lanes = {straightLane("e", {0, 0}, {100, 0}), straightLane("n", {50, -50}, {50, 50})};
+  auto h = laneHintAt(lanes, {20, 0.4}, 0.1);
+  ASSERT_TRUE(h);
+  EXPECT_NEAR(h->heading, 0, 1e-9);
+  EXPECT_NEAR(h->lateral, 0.4, 1e-9);
+  EXPECT_FALSE(laneHintAt(lanes, {20, 0.4}, M_PI));   // driving against the lane
+  EXPECT_FALSE(laneHintAt(lanes, {99, 0}, 0));        // lane end
+  EXPECT_FALSE(laneHintAt(lanes, {50, 0}, M_PI / 4));  // both lanes match: ambiguous
+  EXPECT_FALSE(laneHintAt(lanes, {20, 3}, 0));        // outside the lane
+}

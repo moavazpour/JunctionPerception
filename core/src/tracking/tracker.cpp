@@ -104,6 +104,25 @@ void CtraEkf::update(const Eigen::Vector2d& p, const Eigen::Matrix2d& pos_cov, d
   normalize();
 }
 
+void CtraEkf::constrainToLane(const LaneHint& h, double heading_sigma, double lateral_sigma) {
+  // z = [heading, lateral offset], observed as [lane tangent, 0]. The offset is linear in the position along the
+  // lane normal.
+  Eigen::Matrix<double, 2, 6> H = Eigen::Matrix<double, 2, 6>::Zero();
+  H(0, 2) = 1;
+  H(1, 0) = -std::sin(h.heading);
+  H(1, 1) = std::cos(h.heading);
+  const Eigen::Vector2d r(wrapAngle(h.heading - x[2]), -h.lateral);
+  Eigen::Matrix2d R = Eigen::Matrix2d::Zero();
+  R(0, 0) = heading_sigma * heading_sigma;
+  R(1, 1) = lateral_sigma * lateral_sigma;
+  const Eigen::Matrix2d S = H * P * H.transpose() + R;
+  const Eigen::Matrix<double, 6, 2> K = P * H.transpose() * S.inverse();
+  x += K * r;
+  P = (Mat::Identity() - K * H) * P;
+  P = 0.5 * (P + P.transpose());
+  normalize();
+}
+
 void CtraEkf::normalize() {
   // A clearly negative speed means the heading is reversed. Only clear evidence flips it: with noisy far
   // measurements the speed of a slow vehicle wanders around zero and must not turn it around.
@@ -226,6 +245,7 @@ void Tracker::applyMeasurement(Track& t, const Detection3D& d, double stamp) {
   t.nis = 0.85 * t.nis + 0.15 * (m2 / 2.0);
   t.r_scale = std::clamp(t.r_scale * (t.nis > 1.5 ? 1.15 : t.nis < 0.7 ? 0.95 : 1.0), 1.0, 30.0);
   t.ekf.update(d.bottom.head<2>(), R, d.yaw, yawSigmaFor(d), use_yaw);
+  applyLaneConstraint(t);
   const double w = std::clamp(static_cast<double>(d.img.score), 0.05, 1.0);
   t.class_votes[static_cast<size_t>(d.img.cls)] += static_cast<float>(w);
   const auto best = std::max_element(t.class_votes.begin(), t.class_votes.end());
@@ -241,6 +261,16 @@ void Tracker::applyMeasurement(Track& t, const Detection3D& d, double stamp) {
   t.last_range = d.range;
   if (t.state != TrackState::Confirmed && t.hits >= cfg_.confirm_hits) t.state = TrackState::Confirmed;
   if (t.state == TrackState::Coasting) t.state = TrackState::Confirmed;
+}
+
+void Tracker::applyLaneConstraint(Track& t) {
+  if (!lane_hint_ || !isVehicle(t.cls)) return;
+  // Measurements that keep disagreeing with the prediction mean a manoeuvre: let them steer alone.
+  if (t.nis > 3.0) return;
+  const auto h = lane_hint_(t.position(), t.yaw());
+  if (!h || std::abs(h->lateral) > h->width / 2 + cfg_.lane_margin) return;
+  if (std::abs(wrapAngle(t.yaw() - h->heading)) > cfg_.lane_max_angle) return;
+  t.ekf.constrainToLane(*h, cfg_.lane_heading_sigma, cfg_.lane_lateral_sigma);
 }
 
 void Tracker::associate(std::vector<int>& track_idx, const std::vector<int>& det_idx,

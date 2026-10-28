@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "jp/geometry/bev.hpp"
+#include "jp/tracking/tracker.hpp"
 
 namespace jp {
 
@@ -20,6 +21,11 @@ struct Lane {
   std::optional<double> stop_s;   // arc length of the stop line along the centreline
   std::string source = "config";  // config | learned | osm
 };
+
+// Lane hint for the tracker: the lane a vehicle at p heading yaw drives in. Empty off the lanes, within
+// end_margin of a lane end, and where lanes of clearly different direction overlap (the junction area).
+std::optional<LaneHint> laneHintAt(const std::vector<Lane>& lanes, const Eigen::Vector2d& p, double yaw,
+                                   double end_margin = 2.0);
 
 struct Zone {
   std::string id;

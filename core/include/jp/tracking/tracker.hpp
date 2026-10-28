@@ -6,11 +6,22 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "jp/common/types.hpp"
 
 namespace jp {
+
+// Lane a vehicle is driving in, seen from its current position: vehicles normally stay inside a lane and move
+// roughly along it, which the tracker uses as a soft constraint.
+struct LaneHint {
+  double heading = 0;  // lane tangent (rad)
+  double lateral = 0;  // signed offset from the centreline, left positive (m)
+  double width = 3.25;
+};
+// Lane hint for a position and heading; empty off the lanes, near lane ends and where lanes overlap ambiguously.
+using LaneHintFn = std::function<std::optional<LaneHint>(const Eigen::Vector2d& p, double yaw)>;
 
 // Constant turn rate and acceleration (CTRA) extended Kalman filter on the ground plane.
 // State: [x, y, yaw, v, yaw_rate, a].
@@ -29,6 +40,8 @@ class CtraEkf {
   void predict(double dt, const Noise& q);
   // Measurement of position and (optionally) yaw. Yaw is folded by pi to the closest hypothesis.
   void update(const Eigen::Vector2d& p, const Eigen::Matrix2d& pos_cov, double yaw, double yaw_sigma, bool use_yaw);
+  // Soft pseudo-measurement pulling the heading toward the lane tangent and the position toward the centreline.
+  void constrainToLane(const LaneHint& h, double heading_sigma, double lateral_sigma);
   double mahalanobis2(const Eigen::Vector2d& p, const Eigen::Matrix2d& pos_cov) const;
   void normalize();
 
@@ -77,6 +90,12 @@ struct TrackerConfig {
   double max_coast_occluded_s = 3.0;
   double gate_chi2 = 13.8;  // 99.9 % for 2 dof
   double max_jump_vehicle = 6.0, max_jump_vru = 2.5;
+  // Lane constraint for vehicles (needs a lane hint): applies within width/2 + margin of the centreline and when
+  // the heading is within max_angle of the lane direction. Soft, so lane changes are still followed.
+  double lane_heading_sigma = 6.0 * M_PI / 180;
+  double lane_lateral_sigma = 0.8;  // m
+  double lane_max_angle = 35.0 * M_PI / 180;
+  double lane_margin = 0.5;  // m
 };
 
 class Tracker {
@@ -90,6 +109,7 @@ class Tracker {
   TrackerConfig& config() { return cfg_; }
   const TrackerConfig& config() const { return cfg_; }
   void reset() { tracks_.clear(); }
+  void setLaneHint(LaneHintFn fn) { lane_hint_ = std::move(fn); }
 
   static CtraEkf::Noise noiseFor(ObjectClass c);
 
@@ -97,8 +117,10 @@ class Tracker {
   void associate(std::vector<int>& track_idx, const std::vector<int>& det_idx, const std::vector<Detection3D>& dets,
                  std::vector<int>& det_to_track);
   void applyMeasurement(Track& t, const Detection3D& d, double stamp);
+  void applyLaneConstraint(Track& t);
 
   TrackerConfig cfg_;
+  LaneHintFn lane_hint_;
   std::vector<Track> tracks_;
   std::uint32_t next_id_ = 1;
   double last_stamp_ = -1;

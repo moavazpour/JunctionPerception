@@ -196,4 +196,27 @@ std::vector<Lane> LaneLearner::build() const {
   return lanes;
 }
 
+std::optional<LaneHint> laneHintAt(const std::vector<Lane>& lanes, const Eigen::Vector2d& p, double yaw,
+                                   double end_margin) {
+  // Candidates: lanes the point lies in (with a small margin) whose direction roughly matches the heading.
+  // Opposite-direction lanes never count; lanes of different direction overlapping here make it ambiguous.
+  constexpr double kMaxAngle = 60.0 * M_PI / 180, kAmbiguous = 15.0 * M_PI / 180, kMargin = 0.5;
+  const Lane* best = nullptr;
+  Polyline::Projection best_p;
+  std::vector<double> headings;
+  for (const auto& l : lanes) {
+    if (l.centerline.pts.size() < 2) continue;
+    const auto pr = l.centerline.project(p);
+    if (std::abs(pr.lateral) > l.width / 2 + kMargin || pr.dist > l.width / 2 + kMargin) continue;
+    if (std::abs(wrapAngle(yaw - pr.heading)) > kMaxAngle) continue;
+    headings.push_back(pr.heading);
+    if (!best || std::abs(pr.lateral) < std::abs(best_p.lateral)) best = &l, best_p = pr;
+  }
+  if (!best) return std::nullopt;
+  for (double h : headings)
+    if (std::abs(wrapAngle(h - best_p.heading)) > kAmbiguous) return std::nullopt;
+  if (best_p.s < end_margin || best_p.s > best->centerline.length() - end_margin) return std::nullopt;
+  return LaneHint{best_p.heading, best_p.lateral, best->width};
+}
+
 }  // namespace jp

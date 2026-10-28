@@ -220,6 +220,9 @@ Pipeline::Pipeline(PipelineConfig cfg) : cfg_(std::move(cfg)) {
   map_.name = cfg_.site_name;
   scene_ = std::make_unique<IntersectionModel>(map_, nullptr);
   safety_ = std::make_unique<NearMissDetector>();
+  // Vehicles stay in their lanes: soft lane constraint in the tracker, lane-following prediction for safety.
+  tracker_.setLaneHint([this](const Eigen::Vector2d& p, double yaw) { return laneHintAt(map_.lanes, p, yaw); });
+  safety_->setMap(&scene_->map());
 
   calibrator_ = makeCalibrator();
 
