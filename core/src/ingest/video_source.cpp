@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <thread>
 
@@ -49,6 +51,25 @@ bool VideoSource::open() {
   return true;
 }
 
+void VideoSource::startAt(double epoch) {
+  if (!is_file_) return;
+  epoch_ = epoch;
+  double idx = std::max(0.0, (nowSeconds() - epoch) * fps_);
+  const double n = cap_.get(cv::CAP_PROP_FRAME_COUNT);
+  if (cfg_.loop && n > 1) {
+    // Whole loops already played on the shared clock.
+    const double k = std::floor(idx / n);
+    epoch_ += k * n / fps_;
+    idx -= k * n;
+  }
+  frames_ = static_cast<std::uint64_t>(idx);
+  file_t0_ = epoch_;
+  cap_.set(cv::CAP_PROP_POS_FRAMES, static_cast<double>(frames_));
+  paced_ = true;
+  last_emit_ = -1;
+  spdlog::info("Playing on the shared clock from frame {}", frames_);
+}
+
 std::string VideoSource::describe() const {
   // Never log credentials embedded in RTSP URIs.
   std::string u = cfg_.uri;
@@ -64,6 +85,7 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
       if (is_file_ && cfg_.loop) {
         cap_.set(cv::CAP_PROP_POS_FRAMES, 0);
         file_t0_ += frames_ / fps_;
+        if (epoch_ > 0) epoch_ += frames_ / fps_;
         wall0_ = std::chrono::steady_clock::now();
         frames_ = 0;
         loops_++;
@@ -78,7 +100,12 @@ bool VideoSource::read(cv::Mat& frame, double& stamp) {
     if (is_file_) {
       // File time base: frame index / fps, anchored to the wall clock at open.
       stamp = file_t0_ + frames_ / fps_;
-      if (cfg_.realtime) {
+      if (cfg_.realtime && epoch_ > 0) {
+        // Shared clock: frame k is due at epoch + k / fps on every camera of the site.
+        const auto due = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::duration<double>(epoch_ + frames_ / fps_)));
+        std::this_thread::sleep_until(due);
+      } else if (cfg_.realtime) {
         // Anchor pacing at the first frame actually read (engine builds may delay the first read).
         if (!paced_) {
           wall0_ = std::chrono::steady_clock::now() - std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(frames_ / fps_));

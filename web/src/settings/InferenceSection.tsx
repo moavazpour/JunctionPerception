@@ -1,19 +1,20 @@
 import { RotateCcw } from "lucide-react";
 import { CLASS_COLOR, CLASS_LABEL } from "../store";
 import type { ObjectClass, Settings } from "../types";
-import { BACKENDS, INPUT_SIZES, RestartButton, Slider, useModelSettings } from "./modelSettings";
+import { BACKENDS, INPUT_SIZES, RestartButton, Slider, SwitchStatus, useModelSettings } from "./modelSettings";
 import { NoSite, Page, Row, Toggle } from "./SettingsPage";
 
 const ALL: ObjectClass[] = ["car", "bus", "truck", "trailer", "motorcycle", "bicycle", "escooter", "pedestrian"];
 const DEFAULTS: Partial<Settings> = { confidence: 0.45, keypoint_confidence: 0.35, max_range_m: 250, max_fps: 15, preview_fps: 12, max_det: 300 };
 
-// Model settings applied by the running site within a frame (topic config/set, every camera of the site),
-// persisted on the device.
+// Model settings of the running site, persisted on the device. Model, backend and input size restart the site
+// with them (site manager, every camera from the first frame); the others apply within a frame (config/set).
 export function InferenceSection() {
   const { s, compute, change } = useModelSettings();
   if (!s) return <Page title="Detection"><NoSite /></Page>;
   return (
-    <Page title="Detection" desc="Changes apply to every camera of the running site immediately and are kept across restarts.">
+    <Page title="Detection" desc="A new model, backend or input size restarts every camera of the site with it, from the first frame. The other settings apply immediately. All are kept across restarts.">
+      <SwitchStatus className="card px-5 py-3 text-sm" />
       <section className="card flex flex-wrap items-center gap-3 px-5 py-3">
         <RestartButton className="btn-primary" />
         <span className="text-xs text-muted">
@@ -21,7 +22,7 @@ export function InferenceSection() {
         </span>
       </section>
       <section className="card px-5 py-2">
-        <Row label="Model" hint="Every trained detector in the models folder. Changing it reloads the network (a few seconds).">
+        <Row label="Model" hint="Every trained detector in the models folder. A new model runs at its own input size; the site restarts with it.">
           <select className="input" value={s.model} onChange={(e) => change({ model: e.target.value })}>
             {(compute?.models ?? [s.model]).map((m) => (
               <option key={m} value={m}>{m}</option>

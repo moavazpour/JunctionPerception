@@ -79,6 +79,14 @@ struct PipelineConfig {
   double target_fps = 15;
   std::uint32_t station_id = 1001;
   std::string state_dir = "/data/state";
+  // Lock-step start of the cameras of one site replaying recordings (written by the site manager): every camera
+  // marks itself ready in `dir` once its models are loaded; when all are, they play from one shared clock.
+  struct Sync {
+    std::string dir, token;
+    std::vector<std::string> cameras;
+    double timeout_s = 300;
+  };
+  std::optional<Sync> sync;
 
   static PipelineConfig fromYaml(const YAML::Node& n);
 };
@@ -115,6 +123,8 @@ class Pipeline {
   nlohmann::json computeInfo() const;
   // Detector (re)load and the network input region (whole frame or the road area's image box).
   void loadDetector();
+  // Waits for the other cameras of the site (cfg_.sync) and returns the shared start time.
+  double waitForSync();
   void updateLetterbox();
   cv::Rect computeCrop() const;
   nlohmann::json modelList() const;

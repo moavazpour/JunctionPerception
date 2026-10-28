@@ -1,5 +1,6 @@
 import { Cpu, Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Target, Video } from "lucide-react";
 import { ModelPanel } from "./ModelPanel";
+import { SwitchStatus } from "../settings/modelSettings";
 import { GroundTruthPanel, useGroundTruth } from "./GroundTruthPanel";
 import { useState } from "react";
 import { useStore } from "../store";
@@ -110,6 +111,7 @@ export function LiveView() {
           <GroundTruthPanel />
         </div>
         <Legend />
+        <SwitchStatus className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-xl bg-panel/95 px-4 py-2.5 text-sm shadow-card backdrop-blur" />
       </div>
       <Sidebar />
     </div>

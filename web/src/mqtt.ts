@@ -43,7 +43,7 @@ function toTwinFrame(objects: RoadUser[], st: State): RoadUser[] {
 function cameraPatch(leaf: string, m: any): CameraState | undefined {
   switch (leaf) {
     case "objects":
-      return { objects: m.objects, objectsAt: now(), sourceFrame: m.source_frame };
+      return { objects: m.objects, objectsAt: now(), objectsTs: m.ts, sourceFrame: m.source_frame };
     case "health":
       return { health: m.health, healthAt: now() };
     case "calibration":
@@ -102,8 +102,10 @@ client.on("message", (topic, payload) => {
   } catch {
     return;
   }
+  // While a model switch is in progress no road users are shown (the restarted cameras start over together).
+  if (leaf === "objects" && st.switching) return;
   if (camera === FUSED) {
-    if (leaf === "objects") st.set({ objects: toTwinFrame(m.objects, st), objectsAt: now(), fusedAt: now(), sourceFrame: m.source_frame ?? undefined });
+    if (leaf === "objects") st.set({ objects: toTwinFrame(m.objects, st), objectsAt: now(), objectsTs: m.ts, fusedAt: now(), sourceFrame: m.source_frame ?? undefined });
     return;
   }
   // Site-wide: the drawn layout (the same on every camera) and safety events from any camera.
@@ -157,8 +159,8 @@ const EMPTY_CAMERA: CameraState = Object.fromEntries(CAMERA_FIELDS.map((k) => [k
 export function selectCamera(camera: string) {
   const st = useStore.getState();
   const fused = st.fusedAt > 0 && now() - st.fusedAt < FUSED_FRESH_S;
-  const { objects, objectsAt, sourceFrame, ...rest }: CameraState = { ...EMPTY_CAMERA, objects: [], objectsAt: 0, healthAt: 0, ...st.cams[camera] };
-  st.set({ ...rest, ...(fused ? {} : { objects, objectsAt, sourceFrame }), camera });
+  const { objects, objectsAt, objectsTs, sourceFrame, ...rest }: CameraState = { ...EMPTY_CAMERA, objects: [], objectsAt: 0, healthAt: 0, ...st.cams[camera] };
+  st.set({ ...rest, ...(fused ? {} : { objects, objectsAt, objectsTs, sourceFrame }), camera });
 }
 
 // Switching site: drop the previous site's state; retained topics refill it.

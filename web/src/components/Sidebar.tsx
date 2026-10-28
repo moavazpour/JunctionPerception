@@ -148,7 +148,8 @@ function Selected({ u }: { u: RoadUser }) {
 function ObjectList({ users }: { users: RoadUser[] }) {
   const selected = useStore((s) => s.selected);
   const set = useStore((s) => s.set);
-  const sorted = useMemo(() => [...users].sort((a, b) => a.range - b.range), [users]);
+  // One row per id: a repeated id would leave React rows behind that are never removed.
+  const sorted = useMemo(() => [...new Map(users.map((u) => [u.id, u])).values()].sort((a, b) => a.range - b.range), [users]);
   return (
     <section className="card flex min-h-0 flex-col">
       <div className="flex items-center justify-between px-4 pb-2 pt-3">

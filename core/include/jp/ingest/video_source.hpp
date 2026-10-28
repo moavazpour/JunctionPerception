@@ -36,6 +36,10 @@ class VideoSource {
   std::uint64_t loops() const { return loops_.load(); }
   // Index (within the file, from 0) of the frame the last read() returned; frames since start for streams.
   std::uint64_t lastIndex() const { return last_index_; }
+  // Plays a file on a shared clock: its first frame is due at the system time `epoch` (seconds since the Unix
+  // epoch), so several cameras replaying recordings of the same moment stay on the same frame. A start after the
+  // epoch seeks to the frame due now.
+  void startAt(double epoch);
   void setMaxFps(double f) { max_fps_ = f; }
   double maxFps() const { return max_fps_.load(); }
 
@@ -52,6 +56,7 @@ class VideoSource {
   std::chrono::steady_clock::time_point wall0_;
   double last_emit_ = -1;
   bool paced_ = false;
+  double epoch_ = 0;  // shared clock (startAt), 0 = paced from the first frame read
   std::atomic<std::uint64_t> loops_{0};
   std::atomic<double> max_fps_{0};
 };

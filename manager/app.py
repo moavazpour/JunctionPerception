@@ -193,13 +193,16 @@ def device_of(cfg: dict) -> str:
     return {"tensorrt": "gpu", "cpu": "cpu"}.get(cfg.get("models", {}).get("backend", "auto"), "auto")
 
 
-def start_camera(sid: str, cfg: dict, cam: dict):
+def start_camera(sid: str, cfg: dict, cam: dict, sync: dict | None = None):
     cid = cam.get("id", PRIMARY)
     if (c := container(suffix(sid, cid))) is not None:
         c.remove(force=True)
     if "cameras" in cfg:
         (SITES / sid).mkdir(exist_ok=True)
-        (SITES / sid / f"{cid}.yaml").write_text(yaml.safe_dump(runtime_config(sid, cfg, cam), sort_keys=False))
+        rc = runtime_config(sid, cfg, cam)
+        if sync:
+            rc["sync"] = sync
+        (SITES / sid / f"{cid}.yaml").write_text(yaml.safe_dump(rc, sort_keys=False))
         conf = f"/data/sites/{sid}/{cid}.yaml"
     else:
         conf = f"/data/sites/{sid}.yaml"
@@ -213,9 +216,22 @@ def start_camera(sid: str, cfg: dict, cam: dict):
 
 
 def start(sid: str):
+    """Starts every camera of the site. Replayed videos of a multi-camera site play in lock-step: each runtime
+    waits until all cameras have loaded their models, then all start from the first frame on one shared clock
+    (runtime config `sync:`; the barrier lives in the site's state directory)."""
     cfg = yaml.safe_load((SITES / f"{sid}.yaml").read_text())
-    for cam in cameras_of(cfg):
-        start_camera(sid, cfg, cam)
+    for c in site_containers(sid):
+        c.remove(force=True)
+    cams = cameras_of(cfg)
+    sync = None
+    if "cameras" in cfg and len(cams) > 1:
+        d = STATE / sid / ".sync"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(parents=True)
+        sync = {"dir": f"/data/state/{sid}/.sync", "cameras": [c.get("id", PRIMARY) for c in cams],
+                "token": f"{time.time():.3f}", "timeout_s": 300}
+    for cam in cams:
+        start_camera(sid, cfg, cam, sync)
 
 
 def stop(sid: str):
@@ -383,7 +399,7 @@ def add_camera(sid: str, s: CameraIn):
             shutil.copy(STATE / p.stem / f, st / f)
     _save(p, cfg)
     if running:
-        start_camera(p.stem, cfg, cam)
+        start(p.stem)  # all cameras again, so the replays stay in lock-step
     return describe(p)
 
 
@@ -395,10 +411,7 @@ def update_camera(sid: str, cam: str, s: CameraPatch):
     patch_camera(p.stem, c, s)
     _save(p, cfg)
     if _running(p.stem):
-        if "cameras" in cfg:
-            start_camera(p.stem, cfg, c)
-        else:
-            start(p.stem)
+        start(p.stem)  # all cameras again, so the replays stay in lock-step
     return describe(p)
 
 
@@ -425,6 +438,45 @@ def start_site(sid: str):
     p = _site(sid)
     cfg = yaml.safe_load(p.read_text())
     check_capacity(len(cameras_of(cfg)) - len([c for c in site_containers(p.stem) if c.status == "running"]))
+    start(p.stem)
+    return describe(p)
+
+
+class ModelIn(BaseModel):
+    model: str | None = None   # detector ONNX relative to the models directory
+    imgsz: int | None = Field(default=None, ge=0, le=2560)  # 0: the model's own input size
+    backend: Literal["auto", "cuda", "tensorrt", "cpu"] | None = None
+
+
+@app.post("/api/sites/{sid}/model")
+def switch_model(sid: str, m: ModelIn):
+    """Switches the detection model, its input size or backend on every camera of the site and restarts the
+    site from the first frame (cameras in lock-step, tracks and statistics cleared). A new model runs at its
+    own input size unless one is given. Applied at a restart, not mid-stream: the old model's tracks never mix
+    with the new model's detections and all cameras run the same model."""
+    p = _site(sid)
+    if m.model is not None and (not m.model.endswith(".onnx") or ".." in Path(m.model).parts or m.model.startswith("/")):
+        raise HTTPException(400, "unknown model")
+    cfg = yaml.safe_load(p.read_text())
+    check_capacity(len(cameras_of(cfg)) - len([c for c in site_containers(p.stem) if c.status == "running"]))
+    for cam in cameras_of(cfg):
+        st = cam_state(p.stem, cam.get("id", PRIMARY))
+        st.mkdir(parents=True, exist_ok=True)
+        sf = st / "settings.json"
+        try:
+            s = json.loads(sf.read_text()) if sf.exists() else {}
+        except ValueError:
+            s = {}
+        if m.model is not None and m.model != s.get("model"):
+            s["model"] = m.model
+            s.pop("imgsz", None)
+        if m.imgsz == 0:
+            s.pop("imgsz", None)
+        elif m.imgsz is not None:
+            s["imgsz"] = m.imgsz
+        if m.backend is not None:
+            s["backend"] = m.backend
+        sf.write_text(json.dumps(s, indent=1))
     start(p.stem)
     return describe(p)
 

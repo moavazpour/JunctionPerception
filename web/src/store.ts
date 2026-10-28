@@ -30,7 +30,7 @@ export const save = (key: string, v: unknown) => {
 // What one camera publishes. The flat fields of State hold the selected camera's copy; `cams` keeps every
 // camera of the site, so switching camera is instant.
 export const CAMERA_FIELDS = [
-  "objects", "objectsAt", "sourceFrame", "health", "healthAt", "calibration", "map", "detectors", "occlusion", "snapshot", "config",
+  "objects", "objectsAt", "objectsTs", "sourceFrame", "health", "healthAt", "calibration", "map", "detectors", "occlusion", "snapshot", "config",
   "refine", "signals", "inputs", "lastReport",
 ] as const;
 export type CameraState = Partial<Pick<State, (typeof CAMERA_FIELDS)[number]>>;
@@ -49,6 +49,9 @@ export interface State {
   modelPanel: boolean; // quick detection settings on the live view
   objects: RoadUser[];
   objectsAt: number;
+  objectsTs?: number; // frame time of the shown road users, on the publisher's clock
+  // A model switch in progress (site restarting with it): cleared once every camera runs it.
+  switching?: { model: string; imgsz?: number; backend?: string; since: number; error?: string } | null;
   health?: Health;
   healthAt: number;
   calibration?: CalibrationMsg["calibration"];

@@ -135,6 +135,14 @@ PipelineConfig PipelineConfig::fromYaml(const YAML::Node& n) {
   }
   if (auto h = n["health"]) c.target_fps = h["target_fps"].as<double>(c.target_fps);
   c.state_dir = n["state_dir"].as<std::string>(c.state_dir);
+  if (auto s = n["sync"]) {
+    PipelineConfig::Sync y;
+    y.dir = s["dir"].as<std::string>();
+    y.token = s["token"].as<std::string>();
+    y.cameras = s["cameras"].as<std::vector<std::string>>();
+    y.timeout_s = s["timeout_s"].as<double>(y.timeout_s);
+    c.sync = y;
+  }
   return c;
 }
 
@@ -1181,7 +1189,47 @@ void Pipeline::process(const cv::Mat& frame, double stamp, double capture_wall) 
   }
 }
 
+double Pipeline::waitForSync() {
+  namespace fs = std::filesystem;
+  const auto& y = *cfg_.sync;
+  auto file = [&](const std::string& cam) { return fs::path(y.dir) / (y.token + "_" + cam); };
+  std::error_code ec;
+  fs::create_directories(y.dir, ec);
+  // A camera restarted on its own finds its earlier mark and the others': it joins the running clock.
+  if (!fs::exists(file(cfg_.camera_id))) {
+    const auto tmp = file(cfg_.camera_id).string() + ".tmp";
+    std::ofstream(tmp) << std::to_string(wallNow());
+    fs::rename(tmp, file(cfg_.camera_id), ec);
+  }
+  std::string names;
+  for (const auto& c : y.cameras) names += (names.empty() ? "" : ", ") + c;
+  spdlog::info("Waiting for cameras {} to load", names);
+  const double t0 = wallNow();
+  while (!stop_) {
+    double latest = 0;
+    bool all = true;
+    for (const auto& c : y.cameras) {
+      std::ifstream f(file(c));
+      double t = 0;
+      if (!(f >> t)) {
+        all = false;
+        break;
+      }
+      latest = std::max(latest, t);
+    }
+    // Everyone is ready: the first frame is due a moment after the last one got there.
+    if (all) return latest + 1.0;
+    if (wallNow() - t0 > y.timeout_s) {
+      spdlog::warn("Cameras of the site did not all start within {:.0f} s; playing unsynchronized", y.timeout_s);
+      return wallNow();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return wallNow();
+}
+
 void Pipeline::run(std::uint64_t max_frames) {
+  if (cfg_.sync && src_->isFile() && cfg_.source.realtime) src_->startAt(waitForSync());
   // Capture thread keeps only the newest frame; processing never works on stale video.
   std::mutex m;
   std::condition_variable cv;

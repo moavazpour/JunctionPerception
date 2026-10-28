@@ -1,4 +1,27 @@
-import * as THREE from "three";
+  // `ts`: time of the frame the list describes, on the publisher's clock. Mapped to the local clock through the
+  // smallest transport delay seen (it follows a slowly growing delay and jumps to a shorter one), so the spacing of
+  // the states is the spacing of the video frames, not of their arrival.
+  updateObjects(objs: RoadUser[], now: number, ts?: number) {
+    let t = now;
+    if (ts !== undefined) {
+      const d = now - ts;
+      this.clockOff = this.clockOff === undefined || Math.abs(d - this.clockOff) > 1 ? d : Math.min(d, this.clockOff + 0.002);
+      t = ts + this.clockOff;
+    }
+    const seen = new Set<number>();
+    for (const o of objs) {
+      seen.add(o.id);
+      let a = this.actors.get(o.id);
+      if (!a) a = this.create(o);
+      else if (a.cls !== o.class) this.restyle(a, o.class);
+      a.target = o;
+      a.received = now;
+      a.seen = now;
+      const last = a.samples[a.samples.length - 1];
+      if (last && t <= last.t) a.samples.pop();
+      a.samples.push({ t, x: o.x, y: o.y, yaw: o.yaw, speed: o.speed });
+      while (a.samples.length > 2 && a.samples[1].t < t - RENDER_DELAY_S - 1) a.samples.shift();
+    }import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { aerialGround } from "./aerial";
@@ -21,7 +44,16 @@ interface Actor {
   target: RoadUser;
   received: number;
   seen: number;
+  // Recent states on the local clock (frame time mapped through clockOff), oldest first.
+  samples: { t: number; x: number; y: number; yaw: number; speed: number }[];
 }
+
+// The twin is drawn this far behind the newest state, so it moves between two real states instead of guessing
+// ahead and correcting (uneven message spacing then no longer shows as stutter).
+const RENDER_DELAY_S = 0.15;
+const MAX_AHEAD_S = 0.3;
+
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export class Scene3D {
   readonly renderer: THREE.WebGLRenderer;
@@ -30,6 +62,8 @@ export class Scene3D {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
   private actors = new Map<number, Actor>();
+  // Local clock minus the publisher's clock (seconds), tracked from the message times.
+  private clockOff?: number;
   private mapGroup = new THREE.Group();
   private zoneMeshes = new Map<string, THREE.Mesh>();
   private occMesh?: THREE.Mesh;
@@ -546,13 +580,26 @@ export class Scene3D {
     for (const a of [...this.actors.values()]) if (!seen.has(a.id) && now - a.seen > 0.6) this.remove(a);
   }
 
-  private create(o: RoadUser): Actor {
-    const group = new THREE.Group();
-    const model = buildModel(o.class);
+  private actorModel(cls: ObjectClass) {
+    const model = buildModel(cls);
     // Per-actor materials so fading one predicted object does not fade all of them.
     model.traverse((m) => {
       if (m instanceof THREE.Mesh) m.material = (m.material as THREE.Material).clone();
     });
+    return model;
+  }
+
+  // A changed class swaps the model in place: the road user keeps its position and motion.
+  private restyle(a: Actor, cls: ObjectClass) {
+    a.group.remove(a.model);
+    a.model = this.actorModel(cls);
+    a.group.add(a.model);
+    a.cls = cls;
+  }
+
+  private create(o: RoadUser): Actor {
+    const group = new THREE.Group();
+    const model = this.actorModel(o.class);
     group.add(model);
     const glow = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -571,7 +618,7 @@ export class Scene3D {
     group.rotation.y = o.yaw;
     group.userData.id = o.id;
     this.scene.add(group);
-    const a: Actor = { id: o.id, cls: o.class, group, model, glow, label, target: o, received: 0, seen: 0 };
+    const a: Actor = { id: o.id, cls: o.class, group, model, glow, label, target: o, received: 0, seen: 0, samples: [] };
     this.actors.set(o.id, a);
     return a;
   }
@@ -685,21 +732,33 @@ export class Scene3D {
 
   // ------------------------------------------------------------------ render loop
 
+  // Position and heading at local time t: between the two states around it, or a short way past the newest one.
+  private stateAt(a: Actor, t: number): [number, number, number] {
+    const s = a.samples;
+    if (!s.length) return [a.target.x, a.target.y, a.target.yaw];
+    const last = s[s.length - 1];
+    if (t >= last.t) {
+      const ahead = Math.min(t - last.t, MAX_AHEAD_S);
+      return [last.x + Math.cos(last.yaw) * last.speed * ahead, last.y + Math.sin(last.yaw) * last.speed * ahead, last.yaw];
+    }
+    if (t <= s[0].t) return [s[0].x, s[0].y, s[0].yaw];
+    let i = s.length - 2;
+    while (i > 0 && s[i].t > t) i--;
+    const p = s[i], q = s[i + 1];
+    const f = (t - p.t) / Math.max(q.t - p.t, 1e-3);
+    return [p.x + (q.x - p.x) * f, p.y + (q.y - p.y) * f, p.yaw + wrap(q.yaw - p.yaw) * f];
+  }
+
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.1);
     const now = performance.now() / 1000;
-    const k = 1 - Math.exp(-dt * 10);
+    const k = 1 - Math.exp(-dt * 25);
+    const rt = now - RENDER_DELAY_S;
     for (const a of this.actors.values()) {
       const o = a.target;
-      // Dead-reckon from the last message so motion stays smooth between updates.
-      const ahead = Math.min(now - a.received, 0.3);
-      const px = o.x + Math.cos(o.yaw) * o.speed * ahead;
-      const py = o.y + Math.sin(o.yaw) * o.speed * ahead;
-      const tgt = toV3(px, py);
-      a.group.position.lerp(tgt, k);
-      let dy = o.yaw - a.group.rotation.y;
-      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-      a.group.rotation.y += dy * k;
+      const [px, py, pyaw] = this.stateAt(a, rt);
+      a.group.position.lerp(toV3(px, py), k);
+      a.group.rotation.y += wrap(pyaw - a.group.rotation.y) * k;
       const base = a.model.userData.base as THREE.Vector3;
       a.model.scale.set(o.length / base.x, Math.max(o.height, 0.5) / base.y, o.width / base.z);
       const sel = this.selected === a.id;

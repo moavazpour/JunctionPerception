@@ -29,7 +29,7 @@ export function SceneView() {
           viewed = true;
         }
       }
-      if (cur.objects !== prev?.objects) s.updateObjects(cur.objects, performance.now() / 1000);
+      if (cur.objects !== prev?.objects) s.updateObjects(cur.objects, performance.now() / 1000, cur.objectsTs);
       if (cur.detectors && cur.detectors !== prev?.detectors) s.setDetectors(cur.detectors);
       if (cur.occlusion !== prev?.occlusion || cur.occlusionLayer !== prev?.occlusionLayer)
         s.setOcclusion(cur.occlusion ?? null, cur.occlusionLayer);
