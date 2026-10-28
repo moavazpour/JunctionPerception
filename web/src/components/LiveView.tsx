@@ -67,7 +67,7 @@ function Toolbar() {
             <Eye size={12} /> Occlusion
           </span>
         </button>
-        <button data-on={modelPanel} onClick={() => set({ modelPanel: !modelPanel })} title="Detection model and its input, changed live">
+        <button data-on={modelPanel} onClick={() => set({ modelPanel: !modelPanel })} title="Detection model and its input (a new model restarts the site with it)">
           <span className="flex items-center gap-1">
             <Cpu size={12} /> Model
           </span>
@@ -111,7 +111,7 @@ export function LiveView() {
           <GroundTruthPanel />
         </div>
         <Legend />
-        <SwitchStatus className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-xl bg-panel/95 px-4 py-2.5 text-sm shadow-card backdrop-blur" />
+        <SwitchStatus className="absolute bottom-14 left-1/2 z-20 max-w-[90%] -translate-x-1/2 rounded-xl bg-panel/95 px-4 py-2.5 text-sm shadow-card backdrop-blur" />
       </div>
       <Sidebar />
     </div>
