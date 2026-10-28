@@ -68,7 +68,7 @@ function Toolbar() {
 function Legend() {
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 z-0 hidden items-center gap-1.5 rounded-lg bg-panel/80 px-2 py-1 text-[10px] text-muted backdrop-blur md:flex">
-      <Layers size={11} /> Map data © OpenStreetMap contributors · Imagery © Esri
+      <Layers size={11} /> Map data © OpenStreetMap contributors · Imagery © Google
     </div>
   );
 }

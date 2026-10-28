@@ -4,8 +4,7 @@ import * as THREE from "three";
 
 const R = 6378137.0;
 const TILE = 256;
-const URL = (z: number, x: number, y: number) =>
-  `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+const URL = (z: number, x: number, y: number) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=s&x=${x}&y=${y}&z=${z}`;
 
 const lon2x = (lon: number, z: number) => ((lon + 180) / 360) * 2 ** z;
 const lat2y = (lat: number, z: number) => {
@@ -25,14 +24,20 @@ function load(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
-// Ground mesh of roughly `radius` metres around (lat, lon); null when the imagery cannot be loaded.
-export async function aerialGround(lat: number, lon: number, radius = 260, zoom = 19): Promise<THREE.Mesh | null> {
+// Ground mesh of roughly `radius` metres around (lat, lon), at the sharpest zoom (up to `maxZoom`) whose
+// stitched image fits one texture; null when the imagery cannot be loaded.
+export async function aerialGround(lat: number, lon: number, maxTex = 4096, radius = 260, maxZoom = 20): Promise<THREE.Mesh | null> {
   const dLat = ((radius / R) * 180) / Math.PI;
   const dLon = dLat / Math.cos((lat * Math.PI) / 180);
-  const x0 = Math.floor(lon2x(lon - dLon, zoom)), x1 = Math.floor(lon2x(lon + dLon, zoom));
-  const y0 = Math.floor(lat2y(lat + dLat, zoom)), y1 = Math.floor(lat2y(lat - dLat, zoom));
+  let zoom = maxZoom, x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+  for (; zoom > 14; zoom--) {
+    x0 = Math.floor(lon2x(lon - dLon, zoom));
+    x1 = Math.floor(lon2x(lon + dLon, zoom));
+    y0 = Math.floor(lat2y(lat + dLat, zoom));
+    y1 = Math.floor(lat2y(lat - dLat, zoom));
+    if (Math.max(x1 - x0 + 1, y1 - y0 + 1) * TILE <= maxTex) break;
+  }
   const nx = x1 - x0 + 1, ny = y1 - y0 + 1;
-  if (nx * ny > 400) return null;
   const canvas = document.createElement("canvas");
   canvas.width = nx * TILE;
   canvas.height = ny * TILE;

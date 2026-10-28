@@ -17,6 +17,7 @@ Environment:
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -292,24 +293,32 @@ def osm(lat: float, lon: float, r: int = 350):
     key = OSM / f"{lat:.5f}_{lon:.5f}_{r}.json"
     if key.exists():
         return json.loads(key.read_text())
+    # A re-solved calibration moves the camera anchor by a few metres: reuse a cached area that covers this one.
+    for p in OSM.glob("*.json"):
+        try:
+            clat, clon, cr = (float(v) for v in p.stem.split("_"))
+        except ValueError:
+            continue
+        d = math.hypot((clat - lat) * 111320.0, (clon - lon) * 111320.0 * math.cos(math.radians(lat)))
+        if d + r <= cr + 50:
+            return json.loads(p.read_text())
     q = (f"[out:json][timeout:25];(way[\"highway\"](around:{r},{lat},{lon});"
          f"node[\"highway\"~\"traffic_signals|crossing|stop\"](around:{r},{lat},{lon}););out body geom;")
     data = urllib.parse.urlencode({"data": q}).encode()
     last = "no server answered"
-    for attempt in range(2):
-        for url in OVERPASS:
-            try:
-                req = urllib.request.Request(url, data=data, headers={"User-Agent": "junction-perception/0.2"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    j = json.loads(resp.read())
-                out = {"ways": [e for e in j.get("elements", []) if e.get("type") == "way" and e.get("geometry")],
-                       "nodes": [e for e in j.get("elements", []) if e.get("type") == "node"]}
-                if out["ways"]:
-                    key.write_text(json.dumps(out))
-                    return out
-            except Exception as e:  # busy mirror, timeout: try the next one
-                last = f"{url}: {e}"
-        time.sleep(2)
+    # One pass over the mirrors: the panel retries on its own and shows the aerial imagery meanwhile.
+    for url in OVERPASS:
+        try:
+            req = urllib.request.Request(url, data=data, headers={"User-Agent": "junction-perception/0.2"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                j = json.loads(resp.read())
+            out = {"ways": [e for e in j.get("elements", []) if e.get("type") == "way" and e.get("geometry")],
+                   "nodes": [e for e in j.get("elements", []) if e.get("type") == "node"]}
+            if out["ways"]:
+                key.write_text(json.dumps(out))
+                return out
+        except Exception as e:  # busy mirror, timeout: try the next one
+            last = f"{url}: {e}"
     raise HTTPException(503, f"OpenStreetMap is not reachable ({last})")
 
 

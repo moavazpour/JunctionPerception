@@ -69,7 +69,7 @@ export const useStore = create<State>((set) => ({
   events: [],
   selected: null,
   theme: load<ThemePref>("jp-theme", "system"),
-  mapMode: load<MapMode>("jp-mapmode", "stylized"),
+  mapMode: load<MapMode>("jp-mapmode", "aerial"),
   labels: load("jp-labels", true),
   occlusionLayer: load("jp-occ", false),
   videoCorner: load("jp-video-corner", "br"),

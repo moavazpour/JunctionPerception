@@ -47,7 +47,7 @@ export class Scene3D {
   private ground!: THREE.Mesh;
   private grid!: THREE.GridHelper;
   private anchor?: { lat: number; lon: number };
-  // "stylized": roads drawn from OpenStreetMap (default); "aerial": satellite imagery.
+  // "stylized": roads drawn from OpenStreetMap; "aerial": satellite imagery (default).
   mapMode: "stylized" | "aerial" = "stylized";
   theme: "dark" | "light" = "dark";
   private hemi!: THREE.HemisphereLight;
@@ -156,9 +156,11 @@ export class Scene3D {
     this.scene.background = new THREE.Color(bg);
     (this.scene.fog as THREE.Fog).color.setHex(bg);
     (this.ground.material as THREE.MeshStandardMaterial).color.setHex(stylized ? STYLE.ground : this.theme === "light" ? 0xd5d9de : 0x15181d);
-    this.grid.visible = !stylized && !this.aerial;
+    // Until (or unless) the road map is available, the aerial imagery stands in for it.
+    const showAerial = !stylized || !this.stylized;
+    this.grid.visible = showAerial && !this.aerial;
     if (this.stylized) this.stylized.visible = stylized;
-    if (this.aerial) this.aerial.visible = !stylized;
+    if (this.aerial) this.aerial.visible = showAerial;
     const a = this.anchor;
     if (!a) return;
     const key = `${a.lat.toFixed(6)},${a.lon.toFixed(6)}`;
@@ -174,13 +176,14 @@ export class Scene3D {
         }
         if (this.stylized) this.scene.remove(this.stylized);
         this.stylized = g;
-        g.visible = this.mapMode === "stylized";
         this.scene.add(g);
+        this.updateBaseMap();
       });
     }
-    if (!stylized && key !== this.aerialKey) {
+    if (showAerial && key !== this.aerialKey) {
       this.aerialKey = key;
-      aerialGround(a.lat, a.lon).then((m) => {
+      const maxTex = Math.min(this.renderer.capabilities.maxTextureSize, 8192);
+      aerialGround(a.lat, a.lon, maxTex).then((m) => {
         if (key !== this.aerialKey) return;
         if (!m) {
           this.aerialKey = "";
@@ -189,7 +192,7 @@ export class Scene3D {
         }
         if (this.aerial) this.scene.remove(this.aerial);
         this.aerial = m;
-        m.visible = this.mapMode === "aerial";
+        m.visible = this.mapMode === "aerial" || !this.stylized;
         this.grid.visible = false;
         this.scene.add(m);
       });

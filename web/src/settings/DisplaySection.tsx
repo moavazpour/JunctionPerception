@@ -16,7 +16,7 @@ export function DisplaySection() {
             ))}
           </div>
         </Row>
-        <Row label="Base map" hint="Map: roads, lanes and crossings drawn from OpenStreetMap. Aerial: satellite imagery.">
+        <Row label="Base map" hint="Map: roads, lanes and crossings drawn from OpenStreetMap. Aerial: Google satellite imagery (also shown while the road map cannot be loaded).">
           <div className="seg">
             <button data-on={s.mapMode === "stylized"} onClick={() => s.set({ mapMode: "stylized" })}>Map</button>
             <button data-on={s.mapMode === "aerial"} onClick={() => s.set({ mapMode: "aerial" })}>Aerial</button>
