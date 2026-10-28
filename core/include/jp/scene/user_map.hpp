@@ -22,6 +22,7 @@ struct UserMap {
     std::string id, name;
     std::vector<Eigen::Vector2d> pts;  // (lat, lon) in the direction of travel
     double width = 3.25;
+    bool enabled = true;  // a disabled lane is kept in the layout but not used
   };
   std::vector<LaneGeo> lanes;
   std::vector<std::array<Eigen::Vector2d, 2>> stop_lines;

@@ -33,6 +33,8 @@ export function SceneView() {
         s.setOcclusion(cur.occlusion ?? null, cur.occlusionLayer);
       if (cur.theme !== prev?.theme) s.setTheme(resolvedTheme(cur.theme));
       if (cur.mapMode !== prev?.mapMode) s.setMapMode(cur.mapMode);
+      if (cur.offLane !== prev?.offLane) s.offLane = cur.offLane;
+      if (cur.focusLanes !== prev?.focusLanes) s.setFocusLanes(cur.focusLanes);
       if (cur.userMap !== prev?.userMap) s.setSignalLayout(cur.userMap);
       if (cur.signals !== prev?.signals || cur.userMap !== prev?.userMap || cur.map !== prev?.map) s.setSignalStates(cur.signals);
       if (cur.labels !== prev?.labels) s.showAllLabels = cur.labels;

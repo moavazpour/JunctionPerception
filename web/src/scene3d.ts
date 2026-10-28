@@ -56,10 +56,17 @@ export class Scene3D {
   selected: number | null = null;
   showAllLabels = false;
   onSelect: (id: number | null) => void = () => {};
+  // Drawn lanes (scene frame) for the focus view: road users off them are shown, faded or hidden, and the
+  // map outside them is faded towards the background.
+  private userLanes: { pts: THREE.Vector2[]; half: number }[] = [];
+  private dim?: THREE.Mesh;
+  offLane: "show" | "ghost" | "hide" = "ghost";
+  private focusLanes = true;
 
   constructor(private host: HTMLElement) {
     // Logarithmic depth: the ground layers are centimetres apart and hundreds of metres away (no flicker).
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
+    // Stencil: the drawn lanes are cut out of the fade layer.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true, stencil: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -129,6 +136,31 @@ export class Scene3D {
     this.updateBaseMap();
   }
 
+  setFocusLanes(on: boolean) {
+    this.focusLanes = on;
+    this.updateDim();
+  }
+
+  // The fade layer follows the background colour, so the map outside the drawn lanes looks paler, not darker.
+  private updateDim() {
+    if (!this.dim) return;
+    this.dim.visible = this.focusLanes && this.userLanes.length > 0;
+    (this.dim.material as THREE.MeshBasicMaterial).color.copy(this.scene.background as THREE.Color);
+  }
+
+  // On (or within a metre of) a drawn lane.
+  private onUserLane(x: number, y: number) {
+    const p = new THREE.Vector2(x, y), d = new THREE.Vector2(), q = new THREE.Vector2();
+    for (const l of this.userLanes)
+      for (let i = 1; i < l.pts.length; i++) {
+        const a = l.pts[i - 1];
+        d.subVectors(l.pts[i], a);
+        const t = THREE.MathUtils.clamp(q.subVectors(p, a).dot(d) / Math.max(d.lengthSq(), 1e-9), 0, 1);
+        if (q.copy(a).addScaledVector(d, t).distanceTo(p) <= l.half + 1.0) return true;
+      }
+    return false;
+  }
+
   setTheme(t: "dark" | "light") {
     if (t === this.theme) return;
     this.theme = t;
@@ -155,6 +187,7 @@ export class Scene3D {
     const bg = stylized ? STYLE.background : plain;
     this.scene.background = new THREE.Color(bg);
     (this.scene.fog as THREE.Fog).color.setHex(bg);
+    this.updateDim();
     (this.ground.material as THREE.MeshStandardMaterial).color.setHex(stylized ? STYLE.ground : this.theme === "light" ? 0xd5d9de : 0x15181d);
     // Until (or unless) the road map is available, the aerial imagery stands in for it.
     const showAerial = !stylized || !this.stylized;
@@ -210,6 +243,20 @@ export class Scene3D {
     const light = this.theme === "light";
     const neutral = light ? 0x8a9099 : 0x2b2f36;
     let userIdx = 0;
+    this.userLanes = map.lanes
+      .filter((l) => l.source === "user" && l.centerline.length >= 2)
+      .map((l) => ({ pts: l.centerline.map(([x, y]) => new THREE.Vector2(x, y)), half: l.width / 2 }));
+    // Writes 1 into the stencil where a drawn lane is (no colour, drawn with the opaque pass, before the fade).
+    const maskMat = new THREE.MeshBasicMaterial({
+      colorWrite: false,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      stencilWrite: true,
+      stencilRef: 1,
+      stencilFunc: THREE.AlwaysStencilFunc,
+      stencilZPass: THREE.ReplaceStencilOp,
+    });
     for (const lane of map.lanes) {
       const user = lane.source === "user";
       const colour = user ? new THREE.Color(LANE_COLORS[userIdx++ % LANE_COLORS.length]).getHex() : neutral;
@@ -237,6 +284,7 @@ export class Scene3D {
       const ribbon = new THREE.Mesh(g, asphalt);
       ribbon.material.side = THREE.DoubleSide;
       this.mapGroup.add(ribbon);
+      if (user) this.mapGroup.add(new THREE.Mesh(g, maskMat));
       for (const edge of [left, right]) {
         const lg = new THREE.BufferGeometry().setFromPoints(edge.map((v) => v.clone().setY(0.03)));
         const line = new THREE.Line(lg, lineMat);
@@ -271,6 +319,23 @@ export class Scene3D {
         this.mapGroup.add(bar);
       }
     }
+    // Fade layer over the base map (below the lanes), except where the stencil marks a drawn lane.
+    this.dim = new THREE.Mesh(
+      new THREE.PlaneGeometry(3000, 3000),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        stencilWrite: true,
+        stencilRef: 1,
+        stencilFunc: THREE.NotEqualStencilFunc,
+        stencilZPass: THREE.KeepStencilOp,
+      }),
+    );
+    this.dim.rotation.x = -Math.PI / 2;
+    this.dim.position.y = 0.005;
+    this.mapGroup.add(this.dim);
+    this.updateDim();
     for (const cw of map.crosswalks) this.mapGroup.add(this.zebra(cw));
     for (const z of map.zones) {
       const shape = new THREE.Shape(z.polygon.map(([x, y]) => new THREE.Vector2(x, y)));
@@ -559,7 +624,7 @@ export class Scene3D {
     const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    const hits = ray.intersectObjects([...this.actors.values()].map((a) => a.group), true);
+    const hits = ray.intersectObjects([...this.actors.values()].filter((a) => a.group.visible).map((a) => a.group), true);
     let id: number | null = null;
     if (hits.length) {
       let o: THREE.Object3D | null = hits[0].object;
@@ -594,10 +659,16 @@ export class Scene3D {
       const base = a.model.userData.base as THREE.Vector3;
       a.model.scale.set(o.length / base.x, Math.max(o.height, 0.5) / base.y, o.width / base.z);
       const sel = this.selected === a.id;
+      const off = this.focusLanes && this.offLane !== "show" && this.userLanes.length > 0 && !this.onUserLane(px, py);
+      a.group.visible = !(off && this.offLane === "hide") || sel;
+      if (!a.group.visible) {
+        a.label.element.style.display = "none";
+        continue;
+      }
       a.glow.visible = sel || o.queued === true;
       a.glow.scale.set(o.length + 2.5, o.width + 2.5, 1);
       (a.glow.material as THREE.MeshBasicMaterial).opacity = sel ? 1 : 0.35;
-      const alpha = o.state === "predicted" ? 0.45 : 1;
+      const alpha = (o.state === "predicted" ? 0.45 : 1) * (off && !sel ? 0.25 : 1);
       if (a.model.userData.alpha !== alpha) {
         a.model.userData.alpha = alpha;
         a.model.traverse((m) => {
@@ -609,7 +680,7 @@ export class Scene3D {
         });
       }
       a.label.position.set(0, Math.max(o.height, 1.5) + 0.8, 0);
-      const showLabel = this.showAllLabels || sel;
+      const showLabel = (this.showAllLabels && !off) || sel;
       a.label.element.style.display = showLabel ? "" : "none";
       if (showLabel) {
         const eta = o.eta !== undefined && o.dist_to_stop !== undefined && o.dist_to_stop > 0 ? ` · ETA ${o.eta.toFixed(1)}s` : "";

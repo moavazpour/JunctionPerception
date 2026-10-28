@@ -8,6 +8,7 @@ import type {
 
 export type ThemePref = "system" | "light" | "dark";
 export type MapMode = "stylized" | "aerial";
+export type OffLane = "show" | "ghost" | "hide";
 
 const load = <T,>(key: string, fallback: T): T => {
   try {
@@ -50,6 +51,8 @@ export interface State {
   // Preferences (per browser).
   theme: ThemePref;
   mapMode: MapMode;
+  offLane: OffLane; // road users off the drawn lanes, in the 3D view
+  focusLanes: boolean; // fade the map outside the drawn lanes
   labels: boolean;
   occlusionLayer: boolean;
   videoCorner: "br" | "bl" | "tr" | "tl";
@@ -70,6 +73,8 @@ export const useStore = create<State>((set) => ({
   selected: null,
   theme: load<ThemePref>("jp-theme", "system"),
   mapMode: load<MapMode>("jp-mapmode", "aerial"),
+  offLane: load<OffLane>("jp-offlane", "ghost"),
+  focusLanes: load("jp-focus-lanes", true),
   labels: load("jp-labels", true),
   occlusionLayer: load("jp-occ", false),
   videoCorner: load("jp-video-corner", "br"),
@@ -82,6 +87,8 @@ export const useStore = create<State>((set) => ({
 useStore.subscribe((s, prev) => {
   if (s.theme !== prev.theme) save("jp-theme", s.theme);
   if (s.mapMode !== prev.mapMode) save("jp-mapmode", s.mapMode);
+  if (s.offLane !== prev.offLane) save("jp-offlane", s.offLane);
+  if (s.focusLanes !== prev.focusLanes) save("jp-focus-lanes", s.focusLanes);
   if (s.labels !== prev.labels) save("jp-labels", s.labels);
   if (s.occlusionLayer !== prev.occlusionLayer) save("jp-occ", s.occlusionLayer);
   if (s.videoCorner !== prev.videoCorner) save("jp-video-corner", s.videoCorner);

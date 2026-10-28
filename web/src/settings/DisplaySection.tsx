@@ -22,6 +22,18 @@ export function DisplaySection() {
             <button data-on={s.mapMode === "aerial"} onClick={() => s.set({ mapMode: "aerial" })}>Aerial</button>
           </div>
         </Row>
+        <Row label="Focus on drawn lanes" hint="Fade the map outside the lanes drawn in calibration, so the monitored lanes stand out.">
+          <Toggle on={s.focusLanes} onChange={(v) => s.set({ focusLanes: v })} />
+        </Row>
+        <Row label="Road users off the drawn lanes" hint="While focusing on the drawn lanes: road users off them are shown normally, as faint ghosts, or hidden.">
+          <div className="seg">
+            {(["show", "ghost", "hide"] as const).map((k) => (
+              <button key={k} data-on={s.offLane === k} onClick={() => s.set({ offLane: k })}>
+                {{ show: "Show", ghost: "Ghost", hide: "Hide" }[k]}
+              </button>
+            ))}
+          </div>
+        </Row>
         <Row label="Speed labels" hint="A speed tag above every road user (the selected one always has one).">
           <Toggle on={s.labels} onChange={(v) => s.set({ labels: v })} />
         </Row>

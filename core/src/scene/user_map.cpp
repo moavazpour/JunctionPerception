@@ -50,7 +50,8 @@ bool insidePolygon(const std::vector<Eigen::Vector2d>& poly, const Eigen::Vector
 nlohmann::json UserMap::toJson() const {
   nlohmann::json j;
   j["lanes"] = nlohmann::json::array();
-  for (const auto& l : lanes) j["lanes"].push_back({{"id", l.id}, {"name", l.name}, {"points", pts(l.pts)}, {"width", l.width}});
+  for (const auto& l : lanes)
+    j["lanes"].push_back({{"id", l.id}, {"name", l.name}, {"points", pts(l.pts)}, {"width", l.width}, {"enabled", l.enabled}});
   j["stop_lines"] = nlohmann::json::array();
   for (const auto& s : stop_lines) j["stop_lines"].push_back(pts(std::vector<Eigen::Vector2d>{s[0], s[1]}));
   j["crosswalks"] = nlohmann::json::array();
@@ -71,6 +72,7 @@ UserMap UserMap::fromJson(const nlohmann::json& j) {
     g.name = l.value("name", "");
     g.pts = pts(l.at("points"));
     g.width = std::clamp(l.value("width", 3.25), 1.0, 12.0);
+    g.enabled = l.value("enabled", true);
     ++k;
     if (g.pts.size() >= 2) m.lanes.push_back(g);
   }
@@ -108,6 +110,7 @@ SiteMap UserMap::build(const GeoAnchor& a, const std::string& name) const {
   std::vector<std::array<Eigen::Vector2d, 2>> stops;
   for (const auto& s : stop_lines) stops.push_back({enu(s[0]), enu(s[1])});
   for (const auto& g : lanes) {
+    if (!g.enabled) continue;
     Lane l;
     l.id = g.id;
     l.width = g.width;

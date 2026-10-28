@@ -2,7 +2,7 @@
 // crosswalks and the road area. Saved on the device (map/user/set) and used by the twin, the lane
 // statistics (queues, distance to the stop line, arrival time) and the calibration check.
 import L from "leaflet";
-import { Check, Eraser, Footprints, MoveRight, Save, Square, Trash2, Undo2 } from "lucide-react";
+import { Check, Eraser, Eye, EyeOff, Footprints, MoveRight, Save, Square, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBaseMap } from "../components/leaflet";
 import { enuToGeo, geoToEnu } from "../geo";
@@ -51,9 +51,12 @@ export function drawLayout(m: UserMap, layer: L.LayerGroup, opts: { faint?: bool
   m.roi.length >= 3 && L.polygon(m.roi, { color: "#3e6ae1", weight: 2, dashArray: "6 6", fillOpacity: 0.04, interactive: false }).addTo(layer);
   m.lanes.forEach((l, i) => {
     const c = LANE_COLORS[i % LANE_COLORS.length];
+    const on = l.enabled !== false;
     const rib = laneRibbon(l.points, l.width);
-    if (rib.length) L.polygon(rib, { color: c, weight: 1, fillColor: c, fillOpacity: opts.faint ? 0.18 : 0.3, interactive: false }).addTo(layer);
-    if (!opts.faint && l.points.length >= 2) arrows(l.points, c, layer);
+    // A disabled lane: outline only.
+    if (rib.length)
+      L.polygon(rib, { color: c, weight: 1, dashArray: on ? undefined : "4 4", fillColor: c, fillOpacity: !on ? 0.04 : opts.faint ? 0.18 : 0.3, interactive: false }).addTo(layer);
+    if (on && !opts.faint && l.points.length >= 2) arrows(l.points, c, layer);
     if (!opts.faint && l.points.length)
       L.tooltip({ permanent: true, direction: "center", className: "jp-tip" }).setLatLng(l.points[0]).setContent(l.id).addTo(layer);
   });
@@ -237,7 +240,14 @@ export function LayoutEditor() {
           <div className="card-title mb-2">Lanes ({m.lanes.length})</div>
           <ul className="space-y-1.5">
             {m.lanes.map((l, i) => (
-              <li key={l.id} className="flex items-center gap-2 text-sm">
+              <li key={l.id} className={`flex items-center gap-2 text-sm ${l.enabled === false ? "opacity-50" : ""}`}>
+                <button
+                  className="btn-ghost px-1 py-1"
+                  title={l.enabled === false ? "Disabled: kept in the layout but not used. Click to enable." : "Enabled. Click to disable this lane."}
+                  onClick={() => { setM({ ...m, lanes: m.lanes.map((x, j) => (j === i ? { ...x, enabled: x.enabled === false } : x)) }); setDirty(true); }}
+                >
+                  {l.enabled === false ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
                 <span className="h-3 w-3 rounded" style={{ background: LANE_COLORS[i % LANE_COLORS.length] }} />
                 <input
                   className="input w-20 py-0.5 text-xs"

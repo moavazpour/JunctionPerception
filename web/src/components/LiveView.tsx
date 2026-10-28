@@ -1,4 +1,4 @@
-import { Eye, Layers, Map as MapIcon, Satellite, Tag, Video } from "lucide-react";
+import { Eye, Focus, Layers, Map as MapIcon, Satellite, Tag, Video } from "lucide-react";
 import { useState } from "react";
 import { useStore } from "../store";
 import { SceneView, sceneView } from "./SceneView";
@@ -9,6 +9,7 @@ function Toolbar() {
   const mapMode = useStore((s) => s.mapMode);
   const labels = useStore((s) => s.labels);
   const occ = useStore((s) => s.occlusionLayer);
+  const focus = useStore((s) => s.focusLanes);
   const videoVisible = useStore((s) => s.videoVisible);
   const calibrated = useStore((s) => !!s.map);
   const set = useStore((s) => s.set);
@@ -48,6 +49,11 @@ function Toolbar() {
         <button data-on={labels} onClick={() => set({ labels: !labels })} title="Speed labels on every road user">
           <span className="flex items-center gap-1">
             <Tag size={12} /> Labels
+          </span>
+        </button>
+        <button data-on={focus} onClick={() => set({ focusLanes: !focus })} title="Fade the map and the road users outside the drawn lanes">
+          <span className="flex items-center gap-1">
+            <Focus size={12} /> Lanes
           </span>
         </button>
         <button data-on={occ} onClick={() => set({ occlusionLayer: !occ })} title="Areas the camera cannot see">

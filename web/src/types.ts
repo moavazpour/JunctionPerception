@@ -266,6 +266,7 @@ export interface UserLane {
   name?: string;
   points: [number, number][];
   width: number;
+  enabled?: boolean; // false: kept in the layout, not used (default true)
 }
 export interface SignalHead {
   id: string;
