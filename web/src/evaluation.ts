@@ -1,7 +1,7 @@
 // Accuracy of the twin against recorded ground truth (replayed dataset sites): road users matched per source
 // video frame, and the site's calibration compared with the dataset's reference calibration.
 import { create } from "zustand";
-import type { GroundTruth, GtObject } from "./api";
+import { api, json, type GroundTruth, type GtObject } from "./api";
 import { enuToGeo, geoToEnu, GroundCamera } from "./geo";
 import { useStore, type State } from "./store";
 import type { CameraJson, RoadUser } from "./types";
@@ -50,7 +50,40 @@ export function gtFrame(gt: GroundTruth, frame: number | undefined, cams: string
   return gt.frames[frame].filter((o) => o[9].some((c) => cams.includes(c)));
 }
 
-const headingDiff = (a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
+// Switches the site's twin source between the perception output and the recording (kept on the site manager).
+export async function setGtTwin(site: string, on: boolean) {
+  await api(`/sites/${site}/groundtruth/twin`, json("PUT", { on }));
+  const st = useStore.getState();
+  if (st.gt) st.set({ gt: { ...st.gt, twin: on }, objects: [], events: [], selected: null, sourceFrame: undefined });
+  useEval.getState().reset();
+}
+
+// Numeric ids for the recording's track ids, stable for the session.
+const gtIds = new Map<string, number>();
+
+// The recording's road users of one frame as twin road users (twin source "ground truth"): every road user some
+// camera of the site sees, in the frame of `anchor`. A missing speed comes from the previous frame.
+export function gtRoadUsers(gt: GroundTruth, frame: number, anchor: { lat: number; lon: number }): RoadUser[] {
+  if (frame < 0 || frame >= gt.frames.length) return [];
+  const prev = new Map(frame > 0 ? gt.frames[frame - 1].map((o) => [o[7], o] as const) : []);
+  return gt.frames[frame]
+    .filter((o) => o[9].length > 0)
+    .map((o) => {
+      const [x, y] = geoToEnu(anchor, o[0], o[1]);
+      let id = gtIds.get(o[7]);
+      if (id === undefined) gtIds.set(o[7], (id = gtIds.size + 1));
+      const p = prev.get(o[7]);
+      const speed = o[8] ?? (p ? Math.hypot(...geoToEnu({ lat: p[0], lon: p[1] }, o[0], o[1])) * gt.fps : 0);
+      return {
+        id, class: o[6] as RoadUser["class"], state: "tracked", x, y, lat: o[0], lon: o[1],
+        heading: o[2], yaw: ((90 - o[2]) * Math.PI) / 180, speed, speed_kmh: speed * 3.6, accel: 0, yaw_rate: 0,
+        length: o[3], width: o[4], height: o[5], sigma: { pos: 0, speed: 0, accel: 0 }, confidence: 1,
+        range: Math.hypot(x, y), age: 0, occluded: false, speed_valid: true, heading_valid: true,
+      };
+    });
+}
+
+const headingDiff =(a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 
 function evaluate(st: State) {
   const gt = st.gt;
@@ -118,7 +151,8 @@ export function startEvaluation() {
   started = true;
   useStore.subscribe((cur, prev) => {
     if (cur.site !== prev.site) useEval.getState().reset();
-    if (cur.gt && cur.sourceFrame !== prev.sourceFrame) evaluate(cur);
+    // A twin drawn from the ground truth itself has nothing to be measured against.
+    if (cur.gt && !cur.gt.twin && cur.sourceFrame !== prev.sourceFrame) evaluate(cur);
   });
 }
 

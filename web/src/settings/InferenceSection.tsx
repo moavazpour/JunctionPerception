@@ -1,11 +1,33 @@
 import { RotateCcw } from "lucide-react";
-import { CLASS_COLOR, CLASS_LABEL } from "../store";
+import { useState } from "react";
+import { setGtTwin } from "../evaluation";
+import { CLASS_COLOR, CLASS_LABEL, useStore } from "../store";
 import type { ObjectClass, Settings } from "../types";
 import { BACKENDS, INPUT_SIZES, RestartButton, Slider, SwitchStatus, useModelSettings } from "./modelSettings";
 import { NoSite, Page, Row, Toggle } from "./SettingsPage";
 
 const ALL: ObjectClass[] = ["car", "bus", "truck", "trailer", "motorcycle", "bicycle", "escooter", "pedestrian"];
 const DEFAULTS: Partial<Settings> = { confidence: 0.45, keypoint_confidence: 0.35, max_range_m: 250, max_fps: 15, preview_fps: 12, max_det: 300 };
+
+// Replayed dataset sites: draw the twin from the recorded ground truth instead of the perception output.
+function TwinSource() {
+  const gt = useStore((s) => s.gt);
+  const site = useStore((s) => s.site);
+  const [err, setErr] = useState("");
+  if (!gt || !site) return null;
+  const toggle = (on: boolean) => {
+    setErr("");
+    setGtTwin(site, on).catch((e) => setErr((e as Error).message));
+  };
+  return (
+    <section className="card px-5 py-2">
+      <Row label="Twin from ground truth" hint={`Road users in the twin come from the recorded labels of ${gt.dataset || "the dataset"}, frame by frame with the video, instead of from the detector. The twin shows a "ground truth" badge meanwhile, and accuracy is not measured.`}>
+        <Toggle on={!!gt.twin} onChange={toggle} />
+        {err && <span className="ml-3 text-xs text-bad">{err}</span>}
+      </Row>
+    </section>
+  );
+}
 
 // Model settings of the running site, persisted on the device. Model, backend and input size restart the site
 // with them (site manager, every camera from the first frame); the others apply within a frame (config/set).
@@ -21,8 +43,9 @@ export function InferenceSection() {
           After changing the model or its input: play the video again from its first frame with fresh tracks, so results can be compared from the same start.
         </span>
       </section>
+      <TwinSource />
       <section className="card px-5 py-2">
-        <Row label="Model" hint="Every trained detector in the models folder. A new model runs at its own input size; the site restarts with it.">
+        <Row label="Model"hint="Every trained detector in the models folder. A new model runs at its own input size; the site restarts with it.">
           <select className="input" value={s.model} onChange={(e) => change({ model: e.target.value })}>
             {(compute?.models ?? [s.model]).map((m) => (
               <option key={m} value={m}>{m}</option>

@@ -4,6 +4,7 @@
 // also publish <prefix>/<site>/fused/objects (the site manager's fusion), which then feeds the twin.
 import mqtt from "mqtt";
 import { geoToEnu } from "./geo";
+import { gtRoadUsers } from "./evaluation";
 import { CAMERA_FIELDS, useStore, type CameraState, type State } from "./store";
 import type { NearMiss, RoadUser } from "./types";
 
@@ -104,6 +105,15 @@ client.on("message", (topic, payload) => {
   }
   // While a model switch is in progress no road users are shown (the restarted cameras start over together).
   if (leaf === "objects" && st.switching) return;
+  // Twin source "ground truth" (replayed dataset site): the cameras' messages only say which video frame is shown;
+  // the road users of that frame come from the recording. The perception's safety events do not belong to them.
+  if (st.gt?.twin && (leaf === "objects" || leaf === "events/safety")) {
+    const f = m.source_frame;
+    const a = st.map?.camera_model?.anchor;
+    if (leaf === "objects" && camera !== FUSED && typeof f === "number" && f !== st.sourceFrame && a)
+      st.set({ objects: gtRoadUsers(st.gt, f, a), objectsAt: now(), objectsTs: m.ts, sourceFrame: f });
+    return;
+  }
   if (camera === FUSED) {
     if (leaf === "objects") st.set({ objects: toTwinFrame(m.objects, st), objectsAt: now(), objectsTs: m.ts, fusedAt: now(), sourceFrame: m.source_frame ?? undefined });
     return;
@@ -160,7 +170,8 @@ export function selectCamera(camera: string) {
   const st = useStore.getState();
   const fused = st.fusedAt > 0 && now() - st.fusedAt < FUSED_FRESH_S;
   const { objects, objectsAt, objectsTs, sourceFrame, ...rest }: CameraState = { ...EMPTY_CAMERA, objects: [], objectsAt: 0, healthAt: 0, ...st.cams[camera] };
-  st.set({ ...rest, ...(fused ? {} : { objects, objectsAt, objectsTs, sourceFrame }), camera });
+  // Fused road users and a ground-truth twin cover every camera: they stay.
+  st.set({ ...rest, ...(fused || st.gt?.twin ? {} : { objects, objectsAt, objectsTs, sourceFrame }), camera });
 }
 
 // Switching site: drop the previous site's state; retained topics refill it.

@@ -531,9 +531,27 @@ def groundtruth(sid: str):
         GT_CACHE.clear()
         GT_CACHE[key] = {"dataset": d.get("dataset", ""), "fps": d["cameras"][timeline].get("fps"), "frames": frames}
     out = dict(GT_CACHE[key])
+    out["twin"] = bool(g.get("twin", False))
     out["cameras"] = g["cameras"]
     out["calibration"] = {cam: json.loads((DATA / p).read_text()) for cam, p in g.get("calibration", {}).items()}
     return out
+
+
+class TwinIn(BaseModel):
+    on: bool
+
+
+@app.put("/api/sites/{sid}/groundtruth/twin")
+def groundtruth_twin(sid: str, t: TwinIn):
+    """Twin source of a replayed dataset site: its recorded ground truth (`groundtruth.twin: true`, a showcase of
+    the twin itself) or the perception output (default). Kept in the site YAML, so every viewer sees the same."""
+    p = _site(sid)
+    cfg = yaml.safe_load(p.read_text())
+    if not cfg.get("groundtruth"):
+        raise HTTPException(404, "this site has no ground truth")
+    cfg["groundtruth"]["twin"] = t.on
+    _save(p, cfg)
+    return {"twin": t.on}
 
 
 @app.get("/api/sites/{sid}/logs")

@@ -24,6 +24,7 @@ export interface GroundTruth {
   dataset: string;
   fps: number;
   frames: GtObject[][];
+  twin?: boolean; // the twin shows this recording instead of the perception output
   cameras: Record<string, string>; // our camera id -> dataset camera
   calibration: Record<string, import("./types").CameraJson>; // reference (dataset) calibration per camera
 }

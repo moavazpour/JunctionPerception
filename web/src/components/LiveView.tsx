@@ -14,6 +14,7 @@ function Toolbar() {
   const occ = useStore((s) => s.occlusionLayer);
   const focus = useStore((s) => s.focusLanes);
   const hasGt = useStore((s) => !!s.gt);
+  const gtTwin = useStore((s) => !!s.gt?.twin);
   const gtVisible = useStore((s) => s.gtVisible);
   const modelPanel = useStore((s) => s.modelPanel);
   const videoVisible = useStore((s) => s.videoVisible);
@@ -85,6 +86,11 @@ function Toolbar() {
           </span>
         </button>
       </div>
+      {gtTwin && (
+        <span className="rounded-lg bg-warn/90 px-2 py-1 text-[11px] font-semibold text-black shadow-card" title="Road users in the twin come from the recorded ground truth of the dataset, not from the detector (Settings, Detection)">
+          Twin: ground truth
+        </span>
+      )}
     </div>
   );
 }
