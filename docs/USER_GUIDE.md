@@ -112,6 +112,14 @@ distance to the stop line, the arrival time (with its acceleration) and whether 
 comfortably. Near-miss events (TTC, PET, DRAC, hard braking) are issued only with a trustworthy
 calibration.
 
+**Replayed dataset site (TUMTraf S110).** No detector detects reliably yet, so on a replayed dataset site
+the twin draws its road users from the dataset's labels by default: each video frame shows the labelled
+cars, trucks, cyclists and pedestrians at their recorded positions, with heading, size and speed. The
+toolbar shows a "dataset labels" badge. Both cameras play in lock-step and the twin follows the first
+camera's frame, so the videos and the twin show the same moment. The calibration is still the manual one
+from section 4. A YOLO detector is in training; once it detects reliably it replaces the labels (Settings,
+Detection, "Twin from dataset labels" off).
+
 ## 6. Good videos
 
 - Fixed camera, high up (5–15 m), looking along or across the road; avoid zooming or panning.

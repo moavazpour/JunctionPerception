@@ -4,7 +4,7 @@ Reports per class: counts, median dimensions, range distribution, heading spread
 well the projected cuboid agrees with the source's own 2D box (IoU of the projected 3D box with the
 labelled box2d), keypoints on the ground plane, and objects behind / outside the image.
 
-    python -m jpdata.qc ~/data/junction_perception/conv/kitti.jsonl [--overlays DIR --images ROOT --n 12]
+    python -m jpdata.qc ~/JunctionPerception/data/conv/kitti.jsonl [--overlays DIR --images ROOT --n 12]
 """
 from __future__ import annotations
 

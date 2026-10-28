@@ -4,7 +4,7 @@
 #  2. trains at 1280 px, validating on val
 #  3. evaluates the best checkpoint once on the held-out test split (2D keypoints, then 3D per source)
 set -eu
-J=/home/mo_avazpour/data/junction_perception
+J=/home/mo_avazpour/JunctionPerception/data
 M=$J/merged
 Y=$M/yolo
 R=$J/runs

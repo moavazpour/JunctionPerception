@@ -1,7 +1,7 @@
 """Draw converted labels (or predictions) on images to verify calibration and conversion.
 
-    python -m tools.visualize_labels --data ~/data/junction_perception/jp3d/train.jsonl \
-        --images ~/data/junction_perception/datasets/TUMTraf --out /tmp/vis --n 8
+    python -m tools.visualize_labels --data ~/JunctionPerception/data/jp3d/train.jsonl \
+        --images ~/JunctionPerception/data/datasets/TUMTraf --out /tmp/vis --n 8
 """
 from __future__ import annotations
 

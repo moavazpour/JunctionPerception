@@ -5,7 +5,7 @@ output [1, K, 6 + 9 * 3]: x1 y1 x2 y2 score class, then 9 keypoints (u, v, confi
 The TensorRT engine is built from this ONNX by the runtime on first start (cached next to it).
 
     python -m yolo3d.export --weights runs/jp_unified_y26s_960/weights/best.pt --imgsz 960 \
-        --out ~/data/junction_perception/models/jp_y26s_960.onnx [--dynamic]
+        --out ~/JunctionPerception/data/models/jp_y26s_960.onnx [--dynamic]
 """
 from __future__ import annotations
 

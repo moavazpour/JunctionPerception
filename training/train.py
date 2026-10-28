@@ -1,6 +1,6 @@
 """Train the ground-aware mono-3D detector.
 
-    python train.py --data ~/data/junction_perception/jp3d --images ~/data/junction_perception/datasets/TUMTraf \
+    python train.py --data ~/JunctionPerception/data/jp3d --images ~/JunctionPerception/data/datasets/TUMTraf \
                     --out runs/gc3d_dla34 --epochs 60
 """
 from __future__ import annotations

@@ -5,7 +5,7 @@ roadside poles, junction corners; heights 4-12 m, pitch 3-35 deg, horizontal FOV
 exact 3D boxes; visibility comes from the instance-segmentation camera. Output is the JP3D jsonl format.
 
     ~/carla/CarlaUE4.sh -RenderOffScreen -carla-rpc-port=2000 &
-    python tools/carla_gen.py --out ~/data/junction_perception/carla --maps Town03,Town05,Town10HD_Opt \
+    python tools/carla_gen.py --out ~/JunctionPerception/data/carla --maps Town03,Town05,Town10HD_Opt \
         --placements 60 --frames 25
 """
 from __future__ import annotations

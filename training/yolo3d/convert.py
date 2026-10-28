@@ -4,8 +4,8 @@ Keypoints (9): bottom centre, bottom corners front-left, front-right, rear-right
 same four on top. Visibility is 2 when the point projects inside the image in front of the camera.
 The box is the extent of the projected cuboid (what the runtime uses as the 2D box).
 
-    python -m yolo3d.convert --jp3d ~/data/junction_perception/jp3d --images ~/data/junction_perception/datasets/TUMTraf \
-        --extra ~/data/junction_perception/carla:~/data/junction_perception/carla --out ~/data/junction_perception/yolo3d
+    python -m yolo3d.convert --jp3d ~/JunctionPerception/data/jp3d --images ~/JunctionPerception/data/datasets/TUMTraf \
+        --extra ~/JunctionPerception/data/carla:~/JunctionPerception/data/carla --out ~/JunctionPerception/data/yolo3d
 """
 from __future__ import annotations
 

@@ -107,10 +107,13 @@ client.on("message", (topic, payload) => {
   if (leaf === "objects" && st.switching) return;
   // Twin source "ground truth" (replayed dataset site): the cameras' messages only say which video frame is shown;
   // the road users of that frame come from the recording. The perception's safety events do not belong to them.
+  // One camera keeps the clock (the recording's timeline camera): the cameras play in lock-step, but two clocks
+  // a frame apart at a frame boundary would make the twin step back and forth.
   if (st.gt?.twin && (leaf === "objects" || leaf === "events/safety")) {
     const f = m.source_frame;
     const a = st.map?.camera_model?.anchor;
-    if (leaf === "objects" && camera !== FUSED && typeof f === "number" && f !== st.sourceFrame && a)
+    const clock = Object.keys(st.gt.cameras)[0] ?? camera;
+    if (leaf === "objects" && camera === clock && typeof f === "number" && f !== st.sourceFrame && a)
       st.set({ objects: gtRoadUsers(st.gt, f, a), objectsAt: now(), objectsTs: m.ts, sourceFrame: f });
     return;
   }

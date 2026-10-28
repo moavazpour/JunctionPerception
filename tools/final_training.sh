@@ -5,7 +5,7 @@
 #  3. Trains on JP-Unified v2 (includes DAIR-V2X-I) at 1280 px, validating on real data.
 #  4. Evaluates the best checkpoint once on the held-out test split (per source).
 set -u
-J=~/data/junction_perception
+J=~/JunctionPerception/data
 R=$J/runs
 Y=$J/yolo_unified_v2
 P=~/miniconda3/envs/yolo/bin/python

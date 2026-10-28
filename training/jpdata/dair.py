@@ -12,7 +12,7 @@ the rectified camera P, and labels are expressed in that rectified camera:
   calib/virtuallidar_to_camera (infrastructure) | calib/lidar_to_camera (vehicle): R, t
 
     python -m jpdata.dair --root .../V2X-Seq-SPD --side infrastructure-side --images .../V2X-Seq-SPD-infrastructure-side-image \
-        --out dair_spd_infra.jsonl --undist ~/data/junction_perception/undist/dair_spd_infra
+        --out dair_spd_infra.jsonl --undist ~/JunctionPerception/data/undist/dair_spd_infra
 """
 from __future__ import annotations
 

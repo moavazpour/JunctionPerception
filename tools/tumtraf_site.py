@@ -10,7 +10,7 @@ Runs on the GPU server (numpy, opencv, scipy). Steps, each one a sub-command (`a
     check    project the ground truth through the CameraModel JSON and through the dataset's own
              LiDAR -> camera projection, and compare (pixels), with overlay images
 
-    python3 tools/tumtraf_site.py all --out ~/data/junction_perception/demo/tumtraf_s110
+    python3 tools/tumtraf_site.py all --out ~/JunctionPerception/data/demo/tumtraf_s110
 
 Frames:
     lidar    s110_lidar_ouster_south, the frame the labels are in
@@ -38,10 +38,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 HOME = Path.home()
-SRC = HOME / "data/junction_perception/raw/TUMTraf/R2/a9_dataset_r02_s03/a9_dataset_r02_s03"
-DEVKIT = HOME / "data/junction_perception/raw/TUMTraf/devkit/tum-traffic-dataset-dev-kit-main/calib"
-OUT = HOME / "data/junction_perception/demo/tumtraf_s110"
-VIDEOS = HOME / "data/junction_perception/demo/videos"
+SRC = HOME / "JunctionPerception/data/raw/TUMTraf/R2/a9_dataset_r02_s03/a9_dataset_r02_s03"
+DEVKIT = HOME / "JunctionPerception/data/raw/TUMTraf/devkit/tum-traffic-dataset-dev-kit-main/calib"
+OUT = HOME / "JunctionPerception/data/demo/tumtraf_s110"
+VIDEOS = HOME / "JunctionPerception/data/demo/videos"
 CAMS = {"south1": "s110_camera_basler_south1_8mm", "south2": "s110_camera_basler_south2_8mm"}
 W, H = 1920, 1200
 

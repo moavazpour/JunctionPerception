@@ -38,6 +38,25 @@ be trusted.
   - a web panel (React + Three.js): live 3D twin on an OpenStreetMap-drawn road map, live camera view,
     per-object class, speed and acceleration, statistics, light and dark theme, settings and calibration
 
+## Current focus and limitations
+
+The current focus is the digital twin of one intersection: **TUMTraf S110** (Garching, recording R02 s03,
+cameras south1 and south2).
+
+- **Road users come from the dataset's labels, not from a detector.** None of our detectors detects
+  reliably yet. The twin places every road user at its labelled position, frame by frame with the video
+  (`groundtruth.twin`, the default for replayed dataset sites; toggle in Settings, Detection). The
+  toolbar shows a "dataset labels" badge meanwhile.
+- **A YOLO detector is in training** to detect road users reliably. Once it does, its output replaces the
+  dataset labels as the twin's source; the rest of the twin (map, tracks, lanes, statistics) stays as it is.
+- **Calibration is manual**, done in the web panel (point pairs and lane lines between the camera image and
+  the aerial map). The dataset's own calibration is used only as a reference.
+- **Cameras play in lock-step.** Both videos start together on one shared clock and the twin follows one
+  camera's frame index, so all views and the twin show the same moment (the two recordings agree within
+  ±0.3 s per frame).
+- Accuracy against ground truth and the perception's safety events are not shown while the twin draws
+  from the labels.
+
 **Stack.** C++20 runtime with TensorRT 10 (GPU) or ONNX Runtime (CPU) and OpenCV, and a paho MQTT client;
 it ships as Docker images for x86/dGPU, CPU-only hosts and Jetson Orin. Models are trained in PyTorch and
 exported to ONNX. The web panel uses React, TypeScript, Tailwind, Three.js, Leaflet and Vite.

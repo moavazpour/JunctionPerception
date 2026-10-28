@@ -2,7 +2,7 @@
 ("bench") and model selection uses a held-out block of the training data ("sel"), split by 30 s
 time blocks so neighbouring frames never straddle the two sets.
 
-    python -m tools.make_splits --jp3d ~/data/junction_perception/jp3d --sel 0.1
+    python -m tools.make_splits --jp3d ~/JunctionPerception/data/jp3d --sel 0.1
 """
 from __future__ import annotations
 

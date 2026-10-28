@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # End-to-end TUMTraf benchmark of the deployed engine (TensorRT FP16 through the C++ runtime code path).
 #   tools/run_benchmark.sh <run_dir> [split...]
-# Expects: ~/data/junction_perception/{jp3d,datasets/TUMTraf,models} and the junction-perception:build image.
+# Expects: ~/JunctionPerception/data/{jp3d,datasets/TUMTraf,models} and the junction-perception:build image.
 set -euo pipefail
 RUN=${1:?run dir with best.pt}
 shift || true
 SPLITS=${*:-"val test"}
-D=$HOME/data/junction_perception
+D=$HOME/JunctionPerception/data
 PY=$HOME/miniconda3/envs/jp/bin/python
 OUT=$RUN/bench
 mkdir -p "$OUT"

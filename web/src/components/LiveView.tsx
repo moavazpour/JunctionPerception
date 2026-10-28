@@ -87,8 +87,8 @@ function Toolbar() {
         </button>
       </div>
       {gtTwin && (
-        <span className="rounded-lg bg-warn/90 px-2 py-1 text-[11px] font-semibold text-black shadow-card" title="Road users in the twin come from the recorded ground truth of the dataset, not from the detector (Settings, Detection)">
-          Twin: ground truth
+        <span className="rounded-lg bg-warn/90 px-2 py-1 text-[11px] font-semibold text-black shadow-card" title="Road users in the twin come from the dataset's labels, frame by frame with the video, not from the detector: no detector detects reliably yet. A YOLO detector is in training and will take their place (Settings, Detection)">
+          Twin: dataset labels
         </span>
       )}
     </div>

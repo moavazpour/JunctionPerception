@@ -1,7 +1,7 @@
 """Convert TUMTraf R02 (Intersection) and R04 (V2X) into JP3D jsonl splits.
 
 Usage:
-    python -m tools.convert_tumtraf --root ~/data/junction_perception/datasets/TUMTraf --out ~/data/junction_perception/jp3d
+    python -m tools.convert_tumtraf --root ~/JunctionPerception/data/datasets/TUMTraf --out ~/JunctionPerception/data/jp3d
 """
 from __future__ import annotations
 

@@ -4,8 +4,8 @@ visual check. Images are numbered; index.csv maps numbers to files.
 Drawing: 2D box and class, the projected cuboid from keypoints 1-8 (bottom FL FR RR RL, top FL FR RR
 RL), front edge in red, bottom centre (k0) as a white dot. Keypoints with visibility 0 are not drawn.
 
-    python -m yolo3d.visualize_yolo --root ~/data/junction_perception/yolo_unified_v3 \
-        --out ~/data/junction_perception/qc/yolo_v3_check --per_source 40
+    python -m yolo3d.visualize_yolo --root ~/JunctionPerception/data/yolo_unified_v3 \
+        --out ~/JunctionPerception/data/qc/yolo_v3_check --per_source 40
 """
 from __future__ import annotations
 

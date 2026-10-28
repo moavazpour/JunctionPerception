@@ -21,7 +21,7 @@ function TwinSource() {
   };
   return (
     <section className="card px-5 py-2">
-      <Row label="Twin from ground truth" hint={`Road users in the twin come from the recorded labels of ${gt.dataset || "the dataset"}, frame by frame with the video, instead of from the detector. The twin shows a "ground truth" badge meanwhile, and accuracy is not measured.`}>
+      <Row label="Twin from dataset labels" hint={`Road users in the twin come from the recorded labels of ${gt.dataset || "the dataset"}, frame by frame with the video, instead of from the detector (the default: no detector detects reliably yet; a YOLO detector is in training and will replace the labels). The twin shows a "dataset labels" badge meanwhile, and accuracy is not measured.`}>
         <Toggle on={!!gt.twin} onChange={toggle} />
         {err && <span className="ml-3 text-xs text-bad">{err}</span>}
       </Row>
@@ -45,7 +45,7 @@ export function InferenceSection() {
       </section>
       <TwinSource />
       <section className="card px-5 py-2">
-        <Row label="Model"hint="Every trained detector in the models folder. A new model runs at its own input size; the site restarts with it.">
+        <Row label="Model" hint="Every trained detector in the models folder. A new model runs at its own input size; the site restarts with it.">
           <select className="input" value={s.model} onChange={(e) => change({ model: e.target.value })}>
             {(compute?.models ?? [s.model]).map((m) => (
               <option key={m} value={m}>{m}</option>

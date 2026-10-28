@@ -6,9 +6,9 @@
 #  4. replay TUMTraf S110 south2 with auto-calibration and compare against the dev-kit ground truth
 #  5. run the test-site video end to end (calibration, tracks, ETA, events) and summarise the metadata
 #
-#   RUN=~/data/junction_perception/runs/jp_unified_y26s_960 tools/deploy_model.sh
+#   RUN=~/JunctionPerception/data/runs/jp_unified_y26s_960 tools/deploy_model.sh
 set -eu
-J=/home/mo_avazpour/data/junction_perception
+J=/home/mo_avazpour/JunctionPerception/data
 RUN=${RUN:-$J/runs/jp_unified_y26s_960}
 IMGSZ=${IMGSZ:-960}
 NAME=${NAME:-jp_y26s_960}

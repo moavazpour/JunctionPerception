@@ -10,8 +10,8 @@ Frames are sampled every --every seconds, undistorted, and the labels expressed 
 The mask video gives a foreground mask: objects whose projected box is < 10 % foreground are hidden
 behind something and become ignore regions.
 
-    python -m jpdata.lumpi --labels ~/data/junction_perception/raw/LUMPI/x/Label \
-        --videos M0=~/data/.../LUMPI/v/1,M1=~/data/.../v/2,... --out lumpi.jsonl --undist ~/data/junction_perception/undist/lumpi
+    python -m jpdata.lumpi --labels ~/JunctionPerception/data/raw/LUMPI/x/Label \
+        --videos M0=~/data/.../LUMPI/v/1,M1=~/data/.../v/2,... --out lumpi.jsonl --undist ~/JunctionPerception/data/undist/lumpi
 """
 from __future__ import annotations
 

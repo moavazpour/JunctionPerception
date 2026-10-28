@@ -2,8 +2,8 @@
 against the dev-kit ground truth).
 
     python -m tools.make_tumtraf_video \
-        --images ~/data/junction_perception/raw/TUMTraf/R2/a9_dataset_r02_s03/a9_dataset_r02_s03/images/s110_camera_basler_south2_8mm \
-        --out ~/data/junction_perception/raw/test_videos/tumtraf_s03_south2_8mm.mp4
+        --images ~/JunctionPerception/data/raw/TUMTraf/R2/a9_dataset_r02_s03/a9_dataset_r02_s03/images/s110_camera_basler_south2_8mm \
+        --out ~/JunctionPerception/data/raw/test_videos/tumtraf_s03_south2_8mm.mp4
 """
 from __future__ import annotations
 

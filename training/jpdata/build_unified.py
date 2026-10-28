@@ -1,8 +1,8 @@
 """Merge converted sources into JP-Unified, run QC, split 80/10/10 by group and export YOLO pose data.
 
-    python -m jpdata.build_unified --out ~/data/junction_perception/unified \
-        --src tumtraf_i=~/data/junction_perception/jp3d/all.jsonl:~/data/junction_perception/datasets/TUMTraf \
-        --src carla=~/data/junction_perception/carla/all.jsonl:~/data/junction_perception/carla \
+    python -m jpdata.build_unified --out ~/JunctionPerception/data/unified \
+        --src tumtraf_i=~/JunctionPerception/data/jp3d/all.jsonl:~/JunctionPerception/data/datasets/TUMTraf \
+        --src carla=~/JunctionPerception/data/carla/all.jsonl:~/JunctionPerception/data/carla \
         --src kitti=~/.../kitti.jsonl:~/.../KITTI/object
 """
 from __future__ import annotations

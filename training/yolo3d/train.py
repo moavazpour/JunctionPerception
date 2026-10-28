@@ -1,7 +1,7 @@
 """Train YOLO26-pose on projected 3D-box keypoints.
 
-    python -m yolo3d.train --data ~/data/junction_perception/yolo3d/data.yaml --model yolo26m-pose.pt \
-        --out ~/data/junction_perception/runs --name y26m_kp3d --epochs 60
+    python -m yolo3d.train --data ~/JunctionPerception/data/yolo3d/data.yaml --model yolo26m-pose.pt \
+        --out ~/JunctionPerception/data/runs --name y26m_kp3d --epochs 60
 """
 from __future__ import annotations
 

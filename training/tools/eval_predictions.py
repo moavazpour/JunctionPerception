@@ -1,6 +1,6 @@
 """Evaluate camera-frame 3D predictions (from jp_bench or the PyTorch model) against a JP3D split.
 
-    python -m tools.eval_predictions --gt ~/data/junction_perception/jp3d/test.jsonl --pred preds.jsonl \
+    python -m tools.eval_predictions --gt ~/JunctionPerception/data/jp3d/test.jsonl --pred preds.jsonl \
         --out report.json [--by camera|release]
 """
 from __future__ import annotations

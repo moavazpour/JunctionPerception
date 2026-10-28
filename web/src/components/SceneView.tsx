@@ -39,7 +39,8 @@ export function SceneView() {
       if (cur.gtVisible !== prev?.gtVisible || cur.gt !== prev?.gt || (cur.gtVisible && cur.sourceFrame !== prev?.sourceFrame)) {
         const a = cur.map?.camera_model?.anchor;
         s.setGroundTruth(
-          cur.gtVisible && cur.gt && a
+          // A twin drawn from the ground truth already shows it: no grey duplicates.
+          cur.gtVisible && cur.gt && !cur.gt.twin && a
             ? gtFrame(cur.gt, cur.sourceFrame, coveredCameras(cur)).map((o) => {
                 const [x, y] = geoToEnu(a, o[0], o[1]);
                 return { x, y, yaw: ((90 - o[2]) * Math.PI) / 180, length: o[3], width: o[4], height: o[5] };

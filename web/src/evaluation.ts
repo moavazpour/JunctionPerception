@@ -83,7 +83,7 @@ export function gtRoadUsers(gt: GroundTruth, frame: number, anchor: { lat: numbe
     });
 }
 
-const headingDiff =(a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
+const headingDiff = (a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 
 function evaluate(st: State) {
   const gt = st.gt;

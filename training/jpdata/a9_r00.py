@@ -6,7 +6,7 @@ R00 sequences s03/s04 contain LiDAR only and are skipped. R01 camera labels are 
 pseudo-cuboids (vertical edges forced vertical, parallel faces), not metric projections, so they are
 not used (see docs/DATASET.md).
 
-    python -m jpdata.a9_r00 --root ~/data/junction_perception/raw/TUMTraf/a9x --out a9_r00.jsonl
+    python -m jpdata.a9_r00 --root ~/JunctionPerception/data/raw/TUMTraf/a9x --out a9_r00.jsonl
 """
 from __future__ import annotations
 
