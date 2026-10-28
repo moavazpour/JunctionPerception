@@ -15,7 +15,8 @@ export function useGroundTruth() {
     if (!site) return;
     let live = true;
     api<GroundTruth>(`/sites/${site}/groundtruth`)
-      .then((gt) => live && set({ gt }))
+      // A ground-truth twin replaces what the perception sent before the recording arrived.
+      .then((gt) => live && set({ gt, ...(gt.twin ? { objects: [], events: [], selected: null } : {}) }))
       .catch(() => live && set({ gt: null }));
     return () => {
       live = false;
