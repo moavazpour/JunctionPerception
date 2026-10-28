@@ -1,27 +1,4 @@
-  // `ts`: time of the frame the list describes, on the publisher's clock. Mapped to the local clock through the
-  // smallest transport delay seen (it follows a slowly growing delay and jumps to a shorter one), so the spacing of
-  // the states is the spacing of the video frames, not of their arrival.
-  updateObjects(objs: RoadUser[], now: number, ts?: number) {
-    let t = now;
-    if (ts !== undefined) {
-      const d = now - ts;
-      this.clockOff = this.clockOff === undefined || Math.abs(d - this.clockOff) > 1 ? d : Math.min(d, this.clockOff + 0.002);
-      t = ts + this.clockOff;
-    }
-    const seen = new Set<number>();
-    for (const o of objs) {
-      seen.add(o.id);
-      let a = this.actors.get(o.id);
-      if (!a) a = this.create(o);
-      else if (a.cls !== o.class) this.restyle(a, o.class);
-      a.target = o;
-      a.received = now;
-      a.seen = now;
-      const last = a.samples[a.samples.length - 1];
-      if (last && t <= last.t) a.samples.pop();
-      a.samples.push({ t, x: o.x, y: o.y, yaw: o.yaw, speed: o.speed });
-      while (a.samples.length > 2 && a.samples[1].t < t - RENDER_DELAY_S - 1) a.samples.shift();
-    }import * as THREE from "three";
+import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { aerialGround } from "./aerial";
@@ -564,18 +541,29 @@ export class Scene3D {
 
   // ------------------------------------------------------------------ dynamic state
 
-  updateObjects(objs: RoadUser[], now: number) {
+  // `ts`: time of the frame the list describes, on the publisher's clock. Mapped to the local clock through the
+  // smallest transport delay seen (it follows a slowly growing delay and jumps to a shorter one), so the spacing of
+  // the states is the spacing of the video frames, not of their arrival.
+  updateObjects(objs: RoadUser[], now: number, ts?: number) {
+    let t = now;
+    if (ts !== undefined) {
+      const d = now - ts;
+      this.clockOff = this.clockOff === undefined || Math.abs(d - this.clockOff) > 1 ? d : Math.min(d, this.clockOff + 0.002);
+      t = ts + this.clockOff;
+    }
     const seen = new Set<number>();
     for (const o of objs) {
       seen.add(o.id);
       let a = this.actors.get(o.id);
-      if (!a || a.cls !== o.class) {
-        if (a) this.remove(a);
-        a = this.create(o);
-      }
+      if (!a) a = this.create(o);
+      else if (a.cls !== o.class) this.restyle(a, o.class);
       a.target = o;
       a.received = now;
       a.seen = now;
+      const last = a.samples[a.samples.length - 1];
+      if (last && t <= last.t) a.samples.pop();
+      a.samples.push({ t, x: o.x, y: o.y, yaw: o.yaw, speed: o.speed });
+      while (a.samples.length > 2 && a.samples[1].t < t - RENDER_DELAY_S - 1) a.samples.shift();
     }
     for (const a of [...this.actors.values()]) if (!seen.has(a.id) && now - a.seen > 0.6) this.remove(a);
   }
