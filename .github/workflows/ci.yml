@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [cpp, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build development image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile.dev
+          tags: jp-dev:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restore dependency caches
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: deps-${{ matrix.target }}-${{ hashFiles('vcpkg.json', 'web/package-lock.json', 'docker/Dockerfile.dev') }}
+          restore-keys: deps-${{ matrix.target }}-
+
+      - name: Build, lint and test
+        run: scripts/in_docker.sh scripts/build_and_test.sh ${{ matrix.target }} release
