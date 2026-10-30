@@ -43,7 +43,7 @@ TEST(ClassCatalog, RepositoryConfigIsValid) {
                             "MOTORCYCLE", "BICYCLE", "PEDESTRIAN", "OTHER"}) {
     EXPECT_TRUE(catalog.map("tumtraf", label).has_value()) << label;
   }
-  for (const char* label : {"car", "truck", "bus", "motorcycle", "bicycle", "person"}) {
+  for (const char* label : {"car", "truck", "bus", "motorcycle", "bicycle", "person", "train"}) {
     EXPECT_TRUE(catalog.map("coco", label).has_value()) << label;
   }
 }

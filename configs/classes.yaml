@@ -18,6 +18,8 @@ classes:
 
 sources:
   # COCO classes of the pretrained detector; COCO classes not listed here are dropped.
+  # COCO has no emergency or special vehicle class: such vehicles are detected as car, truck
+  # or bus, and road vehicles without a dedicated twin class (train, e.g. trams) become other.
   coco:
     car: car
     truck: truck
@@ -25,6 +27,7 @@ sources:
     motorcycle: motorcycle
     bicycle: bicycle
     person: pedestrian
+    train: other
   # TUMTraf Intersection R02 label types.
   tumtraf:
     CAR: car
