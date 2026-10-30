@@ -68,6 +68,27 @@ TEST(ControlPointFit, NeedsFourFitPoints) {
                std::invalid_argument);
 }
 
+TEST(ControlPointFit, ProjectionFromKnownCameraCentreMatchesTheCamera) {
+  const auto projection = test_projection();
+  const auto fit = jp::calibration::fit_control_points(points_on_ground(projection), 1920, 1080);
+  const auto calibration = jp::calibration::calibration_from_fit(fit, "test", 1920, 1080,
+                                                                 Eigen::Vector2d(5.0, -20.0), 9.0);
+  ASSERT_TRUE(calibration.ground_projection.has_value());
+  EXPECT_DOUBLE_EQ(calibration.camera_height_m, 9.0);
+  EXPECT_LT((jp::calibration::camera_center(*calibration.ground_projection) -
+             Eigen::Vector3d(5.0, -20.0, 9.0))
+                .norm(),
+            1e-6);
+  // Points above the ground (e.g. the top of a vehicle) land where the true camera sees them.
+  for (const Eigen::Vector4d& point :
+       {Eigen::Vector4d(0, 20, 1.5, 1), Eigen::Vector4d(12, 35, 3, 1)}) {
+    const Eigen::Vector2d expected = (projection * point).hnormalized();
+    const Eigen::Vector3d image = *calibration.ground_projection * point;
+    EXPECT_GT(image.z(), 0.0);
+    EXPECT_LT((image.hnormalized() - expected).norm(), 1e-3);
+  }
+}
+
 TEST(ControlPoints, FilesRoundTrip) {
   const jp::core::GeoAnchor anchor({48.1760, 11.5556, 512.0});
   const auto projection = test_projection();

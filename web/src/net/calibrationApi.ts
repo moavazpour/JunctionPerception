@@ -51,8 +51,13 @@ export function fitControlPoints(points: ControlPoint[]): Promise<FitResult> {
 export function saveCalibration(
   points: ControlPoint[],
   cameraPosition: [number, number] | null,
+  cameraHeight: number | null,
 ): Promise<FitResult> {
-  return post<FitResult>('/api/calibration/save', { points, camera_position_m: cameraPosition });
+  return post<FitResult>('/api/calibration/save', {
+    points,
+    camera_position_m: cameraPosition,
+    camera_height_m: cameraPosition ? cameraHeight : null,
+  });
 }
 
 export function saveZones(zones: ZoneCollection): Promise<ZoneCollection> {

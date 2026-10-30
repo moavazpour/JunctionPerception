@@ -31,4 +31,12 @@ namespace jp::calibration {
 [[nodiscard]] std::optional<Eigen::Matrix<double, 3, 4>> projection_from_homography(
     const Eigen::Matrix3d& ground_to_image, int width_px, int height_px);
 
+/// Camera projection (ground frame -> pixels) consistent with a ground-to-image homography and a
+/// known camera centre (x, y, height): the third column follows from P * (centre, 1) = 0. Needs
+/// no intrinsics, so it also works where the homography cannot constrain the focal length (long
+/// lenses, control points along a single road). Empty if the centre is on the ground plane.
+[[nodiscard]] std::optional<Eigen::Matrix<double, 3, 4>> projection_from_camera_center(
+    const Eigen::Matrix3d& ground_to_image, const Eigen::Vector3d& center, int width_px,
+    int height_px);
+
 }  // namespace jp::calibration

@@ -100,4 +100,27 @@ Eigen::Matrix3d normalized_homography(const Eigen::Matrix3d& h) {
   return h / h(2, 2);
 }
 
+std::optional<Eigen::Matrix<double, 3, 4>> projection_from_camera_center(
+    const Eigen::Matrix3d& ground_to_image, const Eigen::Vector3d& center, int width_px,
+    int height_px) {
+  if (std::abs(center.z()) < kEpsilon) {
+    return std::nullopt;
+  }
+  Eigen::Matrix<double, 3, 4> projection;
+  projection.col(0) = ground_to_image.col(0);
+  projection.col(1) = ground_to_image.col(1);
+  projection.col(2) =
+      -(ground_to_image * Eigen::Vector3d(center.x(), center.y(), 1.0)) / center.z();
+  projection.col(3) = ground_to_image.col(2);
+  // Ground points in front of the camera need positive depth: check the image centre's ray.
+  const Eigen::Vector3d center_ground =
+      ground_to_image.inverse() * Eigen::Vector3d(0.5 * width_px, 0.5 * height_px, 1.0);
+  if ((projection * Eigen::Vector4d(center_ground.x() / center_ground.z(),
+                                    center_ground.y() / center_ground.z(), 0.0, 1.0))
+          .z() < 0.0) {
+    projection = -projection;
+  }
+  return projection;
+}
+
 }  // namespace jp::calibration

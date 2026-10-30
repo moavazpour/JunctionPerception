@@ -5,8 +5,8 @@
 #include <Eigen/LU>
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <fstream>
+#include <limits>
 #include <opencv2/calib3d.hpp>
 #include <stdexcept>
 
@@ -125,7 +125,8 @@ ControlPointFit fit_control_points(const std::vector<ControlPoint>& points, int 
 
 GroundCalibration calibration_from_fit(const ControlPointFit& fit, const std::string& camera,
                                        int width_px, int height_px,
-                                       const std::optional<Eigen::Vector2d>& camera_position) {
+                                       const std::optional<Eigen::Vector2d>& camera_position,
+                                       std::optional<double> camera_height_m) {
   GroundCalibration calibration;
   calibration.camera = camera;
   calibration.width_px = width_px;
@@ -140,6 +141,13 @@ GroundCalibration calibration_from_fit(const ControlPointFit& fit, const std::st
   if (camera_position) {
     calibration.camera_ground_position_m = *camera_position;
   }
+  if (camera_position && camera_height_m) {
+    const Eigen::Vector3d center(camera_position->x(), camera_position->y(), *camera_height_m);
+    calibration.camera_height_m = *camera_height_m;
+    calibration.ground_projection =
+        projection_from_camera_center(fit.image_to_ground.inverse(), center, width_px, height_px);
+    calibration.ground_projection_estimated = calibration.ground_projection.has_value();
+  }
   return calibration;
 }
 
@@ -150,13 +158,14 @@ void write_ground_calibration(const std::filesystem::path& path,
   root["image_size_px"] = flow_pair(calibration.width_px, calibration.height_px);
   root["source"] = "control_points.yaml";
   root["image_to_ground"] = matrix_node(calibration.image_to_ground);
-  root["ground_to_image"] = matrix_node(normalized_homography(calibration.image_to_ground.inverse()));
+  root["ground_to_image"] =
+      matrix_node(normalized_homography(calibration.image_to_ground.inverse()));
   if (calibration.ground_projection) {
     root["ground_projection"] = matrix_node(*calibration.ground_projection);
     root["ground_projection_estimated"] = calibration.ground_projection_estimated;
   }
-  root["camera_ground_position_m"] = flow_pair(calibration.camera_ground_position_m.x(),
-                                               calibration.camera_ground_position_m.y());
+  root["camera_ground_position_m"] =
+      flow_pair(calibration.camera_ground_position_m.x(), calibration.camera_ground_position_m.y());
   root["camera_height_m"] = calibration.camera_height_m;
   YAML::Node check;
   check["fit_points"] = fit.fit_points;

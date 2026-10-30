@@ -73,6 +73,7 @@ class CalibrationApp {
   private fit: FitResult | null = null;
   private projection: Projection | null = null;
   private cameraOverride: [number, number] | null = null;
+  private cameraHeight: number | null = null;
   private zones: EditableZone[] = [];
   private drawing: Point[] = [];
   private image = new Image();
@@ -104,6 +105,11 @@ class CalibrationApp {
         : 'crosswalk',
       polygon: (f.geometry.coordinates[0] ?? []).slice(0, -1).map(([x = 0, y = 0]) => [x, y]),
     }));
+    // A camera pose set by hand earlier stays until it is changed.
+    if (scene.camera_ground_position_m && scene.camera_height_m && scene.camera_height_m > 0) {
+      this.cameraOverride = scene.camera_ground_position_m;
+      this.cameraHeight = scene.camera_height_m;
+    }
     this.bindControls();
     this.loadImages();
   }
@@ -124,6 +130,14 @@ class CalibrationApp {
     element('#apply').addEventListener('click', () => void this.apply());
     element('#suggest').addEventListener('click', () => this.suggestCrossings());
     element('#finish-zone').addEventListener('click', () => this.finishZone());
+    const height = element<HTMLInputElement>('#camera-height input');
+    if (this.cameraHeight !== null) {
+      height.value = String(this.cameraHeight);
+    }
+    height.addEventListener('change', () => {
+      const value = Number.parseFloat(height.value);
+      this.cameraHeight = Number.isFinite(value) && value > 0 ? value : null;
+    });
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && this.mode === 'zones') {
         this.finishZone();
@@ -183,13 +197,14 @@ class CalibrationApp {
       button.classList.toggle('active', button.dataset['mode'] === mode);
     }
     element('#zone-actions').hidden = mode !== 'zones';
+    element('#camera-height').hidden = mode !== 'camera';
     const hints: Record<Mode, string> = {
       points:
         'Click a point in the camera image, then the same point on the map (road markings, kerb corners). Use at least 8 points spread over the scene; every fourth point is a check point. Wheel: zoom, drag: pan.',
       zones:
         'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
       camera:
-        'The camera position is estimated from the control points. Click on the map to set it by hand.',
+        'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };
     element('#hint').textContent = hints[mode];
     this.renderList();
@@ -382,7 +397,7 @@ class CalibrationApp {
       });
       saved.push(`${this.zones.length} zones`);
       if (this.fit) {
-        const fit = await saveCalibration(this.points, this.cameraOverride);
+        const fit = await saveCalibration(this.points, this.cameraOverride, this.cameraHeight);
         saved.push(`calibration (RMS ${fit.fit_rms_m.toFixed(2)} m); Apply to restart with it`);
       }
       this.message(`Saved ${saved.join(' and ')}.`);

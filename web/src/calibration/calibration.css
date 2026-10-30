@@ -139,6 +139,24 @@ body.calibration {
   font: inherit;
 }
 
+.field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field[hidden] {
+  display: none;
+}
+
+.field input {
+  width: 80px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+
 .actions {
   display: flex;
   gap: 6px;
