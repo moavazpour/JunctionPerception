@@ -6,10 +6,12 @@ add_executable(jp_tests
     core/assignment_test.cpp
     core/class_catalog_test.cpp
     core/config_and_statistics_test.cpp
+    core/geodesy_test.cpp
     io/frame_source_test.cpp
     benchmark/openlabel_test.cpp
     benchmark/label_fusion_test.cpp
     calibration/ground_geometry_test.cpp
+    calibration/control_points_test.cpp
     detection/detection_test.cpp
     detection/rider_association_test.cpp
     tracking/byte_tracker_test.cpp

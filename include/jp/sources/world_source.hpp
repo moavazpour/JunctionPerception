@@ -22,7 +22,8 @@ struct SourceFrame {
   std::int64_t index = 0;
   std::int64_t timestamp_ns = 0;
   std::vector<core::WorldObject> objects;
-  cv::Mat image;  ///< BGR; empty if not requested or not available.
+  cv::Mat image;      ///< BGR for display (live: with tracked boxes); empty if not requested.
+  cv::Mat raw_image;  ///< BGR without overlays, for calibration; empty if not requested.
 };
 
 /// Producer of world frames: "live" (camera pipeline), "oracle" (benchmark ground truth) or
@@ -48,10 +49,11 @@ class WorldSource {
 [[nodiscard]] core::WorldObject to_world_object(const localization::LocalizedObject& object,
                                                 const core::ClassCatalog& catalog);
 
-/// Camera video through the perception pipeline.
+/// Camera video through the perception pipeline; without a ground calibration (a scene not yet
+/// calibrated) objects are tracked in the image only and no world objects are produced.
 [[nodiscard]] std::unique_ptr<WorldSource> make_live_source(
     const std::filesystem::path& video, const core::PipelineConfig& config,
-    const core::ClassCatalog& catalog, const calibration::GroundCalibration& ground);
+    const core::ClassCatalog& catalog, const std::optional<calibration::GroundCalibration>& ground);
 
 /// TUMTraf south LiDAR labels of a sequence, in the scene's ground frame; velocities from the
 /// label positions over time, headings from the box orientation; images of the scene camera.

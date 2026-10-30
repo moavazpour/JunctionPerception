@@ -1,0 +1,92 @@
+#include "jp/calibration/control_points.hpp"
+
+#include <gtest/gtest.h>
+
+#include <Eigen/Geometry>
+#include <numbers>
+#include <stdexcept>
+
+#include "jp/calibration/ground_homography.hpp"
+
+namespace {
+
+using jp::calibration::ControlPoint;
+
+// Camera 9 m above (5, -20) looking north and down, square pixels, centred principal point.
+Eigen::Matrix<double, 3, 4> test_projection() {
+  const Eigen::Matrix3d axes = (Eigen::Matrix3d() << 1, 0, 0, 0, 0, -1, 0, 1, 0).finished();
+  const Eigen::Matrix3d rotation =
+      Eigen::AngleAxisd(0.4, Eigen::Vector3d::UnitX()).toRotationMatrix() * axes;
+  const Eigen::Vector3d position(5.0, -20.0, 9.0);
+  Eigen::Matrix<double, 3, 4> extrinsics;
+  extrinsics.leftCols<3>() = rotation;
+  extrinsics.col(3) = -(rotation * position);
+  Eigen::Matrix3d k;
+  k << 1400, 0, 960, 0, 1400, 540, 0, 0, 1;
+  return k * extrinsics;
+}
+
+std::vector<ControlPoint> points_on_ground(const Eigen::Matrix<double, 3, 4>& p) {
+  std::vector<ControlPoint> points;
+  int i = 0;
+  for (double x = -10; x <= 20; x += 7.5) {
+    for (double y = 5; y <= 45; y += 10) {
+      const Eigen::Vector2d pixel = (p * Eigen::Vector4d(x, y, 0, 1)).hnormalized();
+      points.push_back({"p" + std::to_string(i), pixel, {x, y}, i % 4 == 3});
+      ++i;
+    }
+  }
+  return points;
+}
+
+TEST(ControlPointFit, RecoversHomographyAndCamera) {
+  const auto projection = test_projection();
+  const auto points = points_on_ground(projection);
+  const auto fit = jp::calibration::fit_control_points(points, 1920, 1080);
+  EXPECT_EQ(fit.inliers, fit.fit_points);
+  EXPECT_LT(fit.fit_rms_m, 1e-6);
+  ASSERT_TRUE(fit.check_max_m.has_value());
+  EXPECT_LT(*fit.check_max_m, 1e-6);
+  ASSERT_TRUE(fit.camera_position.has_value());
+  EXPECT_LT((*fit.camera_position - Eigen::Vector3d(5.0, -20.0, 9.0)).norm(), 1e-3);
+}
+
+TEST(ControlPointFit, FlagsAnOutlierAndReportsItsError) {
+  auto points = points_on_ground(test_projection());
+  points[1].world += Eigen::Vector2d(4.0, 0.0);  // a mis-clicked fit point
+  const auto fit = jp::calibration::fit_control_points(points, 1920, 1080);
+  EXPECT_FALSE(fit.residuals[1].inlier);
+  EXPECT_NEAR(fit.residuals[1].error_m, 4.0, 0.01);
+  EXPECT_LT(fit.fit_rms_m, 1e-6);
+}
+
+TEST(ControlPointFit, NeedsFourFitPoints) {
+  auto points = points_on_ground(test_projection());
+  points.resize(4);
+  points[3].check = true;
+  EXPECT_THROW(static_cast<void>(jp::calibration::fit_control_points(points, 1920, 1080)),
+               std::invalid_argument);
+}
+
+TEST(ControlPoints, FilesRoundTrip) {
+  const jp::core::GeoAnchor anchor({48.1760, 11.5556, 512.0});
+  const auto projection = test_projection();
+  const auto points = points_on_ground(projection);
+  const auto dir = std::filesystem::temp_directory_path() / "jp_control_points_test";
+  jp::calibration::write_control_points(dir / "control_points.yaml", points, anchor);
+  const auto loaded = jp::calibration::load_control_points(dir / "control_points.yaml", anchor);
+  ASSERT_EQ(loaded.size(), points.size());
+  EXPECT_LT((loaded[3].world - points[3].world).norm(), 1e-3);
+  EXPECT_TRUE(loaded[3].check);
+
+  const auto fit = jp::calibration::fit_control_points(points, 1920, 1080);
+  const auto calibration = jp::calibration::calibration_from_fit(fit, "test", 1920, 1080);
+  jp::calibration::write_ground_calibration(dir / "ground_homography.yaml", calibration, fit);
+  const auto read = jp::calibration::load_ground_calibration(dir / "ground_homography.yaml");
+  EXPECT_TRUE(read.image_to_ground.isApprox(calibration.image_to_ground, 1e-9));
+  EXPECT_TRUE(read.ground_projection_estimated);
+  EXPECT_NEAR(read.camera_height_m, 9.0, 1e-3);
+  std::filesystem::remove_all(dir);
+}
+
+}  // namespace

@@ -118,3 +118,20 @@ TEST(EventDetector, FlagsTurningVehicles) {
 }
 
 }  // namespace
+
+namespace {
+
+TEST(Zones, Wgs84RoundTripWithGeoAnchor) {
+  const jp::core::GeoAnchor anchor({48.1760, 11.5556, 512.0});
+  const std::vector<jp::vru::Zone> zones = {
+      {"crosswalk_e", "crosswalk", {{30, 10}, {42, 10}, {42, 14}, {30, 14}}}};
+  const auto text = jp::vru::zones_to_geojson(zones, &anchor);
+  EXPECT_EQ(text.find("coordinate_frame"), std::string::npos);  // WGS84 is the default
+  const auto back = jp::vru::parse_zones(text, &anchor);
+  ASSERT_EQ(back.size(), 1U);
+  ASSERT_EQ(back[0].polygon.size(), 4U);
+  EXPECT_LT((back[0].polygon[2] - Eigen::Vector2d(42, 14)).norm(), 0.01);
+  EXPECT_TRUE(back[0].contains({36, 12}));
+}
+
+}  // namespace

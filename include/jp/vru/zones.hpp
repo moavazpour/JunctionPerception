@@ -6,6 +6,9 @@
 #include <string_view>
 #include <vector>
 
+#include "jp/core/geodesy.hpp"
+#include "jp/core/scene_config.hpp"
+
 namespace jp::vru {
 
 /// A named area of the scene in world coordinates (metres).
@@ -18,11 +21,21 @@ struct Zone {
   [[nodiscard]] bool contains(const Eigen::Vector2d& point) const;
 };
 
-/// Parses a zones GeoJSON FeatureCollection of Polygon features with properties "id" and "type".
-/// The foreign member "coordinate_frame" selects the coordinates: "scene_ground" (metres in the
-/// scene's ground frame) is supported; WGS84 zones (the GeoJSON default) need the scene's geo
-/// anchor and are rejected until it is configured. Throws std::runtime_error on invalid input.
-[[nodiscard]] std::vector<Zone> parse_zones(std::string_view geojson);
-[[nodiscard]] std::vector<Zone> load_zones(const std::filesystem::path& path);
+/// Parses a zones GeoJSON FeatureCollection of Polygon features with properties "id" and "type"
+/// into world coordinates. Positions are WGS84 longitude/latitude (the GeoJSON default) and are
+/// converted with the scene's geo anchor; scenes without one may store metres in their ground
+/// frame, declared by the foreign member "coordinate_frame": "scene_ground".
+/// Throws std::runtime_error on invalid input or WGS84 zones without a geo anchor.
+[[nodiscard]] std::vector<Zone> parse_zones(std::string_view geojson,
+                                            const core::GeoAnchor* anchor = nullptr);
+[[nodiscard]] std::vector<Zone> load_zones(const std::filesystem::path& path,
+                                           const core::GeoAnchor* anchor = nullptr);
+
+/// Zones of a scene (zones.geojson, converted with its geo anchor); empty if it has none.
+[[nodiscard]] std::vector<Zone> load_scene_zones(const core::SceneConfig& scene);
+
+/// Zones as GeoJSON: WGS84 with a geo anchor, otherwise metres in the scene ground frame.
+[[nodiscard]] std::string zones_to_geojson(const std::vector<Zone>& zones,
+                                           const core::GeoAnchor* anchor = nullptr);
 
 }  // namespace jp::vru

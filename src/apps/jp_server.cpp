@@ -3,13 +3,13 @@
 #include <CLI/CLI.hpp>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
+#include <optional>
 #include <string>
 
 #include "jp/calibration/ground_calibration.hpp"
 #include "jp/core/class_catalog.hpp"
 #include "jp/core/pipeline_config.hpp"
+#include "jp/core/scene_config.hpp"
 #include "jp/core/version.hpp"
 #include "jp/server/twin_server.hpp"
 #include "jp/sources/world_source.hpp"
@@ -28,22 +28,18 @@ struct ServerArgs {
   std::string input;
 };
 
-std::string read_text(const std::filesystem::path& path) {
-  std::ifstream in(path);
-  std::ostringstream text;
-  text << in.rdbuf();
-  return text.str();
-}
-
 std::unique_ptr<jp::sources::WorldSource> make_source(
     const std::string& mode, const std::filesystem::path& input,
     const jp::core::PipelineConfig& pipeline, const jp::core::ClassCatalog& catalog,
-    const jp::calibration::GroundCalibration& ground) {
+    const std::optional<jp::calibration::GroundCalibration>& ground) {
   if (mode == "live") {
     return jp::sources::make_live_source(input, pipeline, catalog, ground);
   }
   if (mode == "oracle") {
-    return jp::sources::make_oracle_source(input, catalog, ground);
+    if (!ground) {
+      throw std::runtime_error("oracle mode needs a calibrated benchmark scene");
+    }
+    return jp::sources::make_oracle_source(input, catalog, *ground);
   }
   return jp::sources::make_replay_source(input);
 }
@@ -71,20 +67,20 @@ void run(const ServerArgs& args) {
   const auto pipeline =
       jp::core::load_pipeline_config(args.pipeline, std::filesystem::current_path());
   const auto catalog = jp::core::ClassCatalog::load(args.classes);
-  const auto ground =
-      jp::calibration::load_ground_calibration(startup.scene / "ground_homography.yaml");
-  const auto zones_path = startup.scene / "zones.geojson";
-  const std::string zones_text =
-      std::filesystem::exists(zones_path) ? read_text(zones_path) : std::string();
-  auto zones = zones_text.empty() ? std::vector<jp::vru::Zone>{} : jp::vru::parse_zones(zones_text);
-  spdlog::info("scene {}: {} zones; source {} from {}", startup.scene.filename().string(),
-               zones.size(), startup.mode, input.string());
+  jp::server::ServedScene scene;
+  scene.config = jp::core::load_scene_config(startup.scene);
+  if (std::filesystem::exists(scene.config.calibration_path())) {
+    scene.ground = jp::calibration::load_ground_calibration(scene.config.calibration_path());
+  }
+  scene.zones = jp::vru::load_scene_zones(scene.config);
+  spdlog::info("scene {}: {}, {} zones; source {} from {}", scene.config.scene_id,
+               scene.ground ? "calibrated" : "not calibrated", scene.zones.size(), startup.mode,
+               input.string());
 
-  const std::string scene_id = startup.scene.filename().string();
-  jp::server::TwinServer server(
-      config.server, scene_id, jp::server::scene_description(scene_id, ground, zones_text, catalog),
-      make_source(startup.mode, input, pipeline, catalog, ground),
-      jp::vru::EventDetector(std::move(zones), jp::vru::event_options(pipeline.events)));
+  auto source = make_source(startup.mode, input, pipeline, catalog, scene.ground);
+  jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events));
+  jp::server::TwinServer server(config.server, std::move(scene), catalog, std::move(source),
+                                std::move(events));
   server.run();
 }
 

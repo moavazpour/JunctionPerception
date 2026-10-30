@@ -12,7 +12,11 @@
     {
       "name": "opencv4",
       "default-features": false,
-      "features": ["ffmpeg", "jpeg", "png"]
+      "features": ["calib3d", "ffmpeg", "jpeg", "png"]
+    },
+    {
+      "name": "proj",
+      "default-features": false
     },
     "spdlog",
     "yaml-cpp"

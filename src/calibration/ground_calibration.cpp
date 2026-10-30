@@ -45,6 +45,8 @@ GroundCalibration parse_ground_calibration(std::string_view yaml_text) {
     calibration.camera_height_m = root["camera_height_m"].as<double>();
     if (root["ground_projection"]) {
       calibration.ground_projection = matrix_of(root["ground_projection"], 3, 4);
+      calibration.ground_projection_estimated =
+          root["ground_projection_estimated"] && root["ground_projection_estimated"].as<bool>();
     } else {
       calibration.ground_projection = projection_from_homography(
           calibration.image_to_ground.inverse(), calibration.width_px, calibration.height_px);

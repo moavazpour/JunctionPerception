@@ -18,6 +18,7 @@
 #include "jp/calibration/ground_calibration.hpp"
 #include "jp/core/class_catalog.hpp"
 #include "jp/core/pipeline_config.hpp"
+#include "jp/core/scene_config.hpp"
 #include "jp/core/rigid_transform.hpp"
 #include "jp/core/statistics.hpp"
 #include "jp/core/version.hpp"
@@ -236,14 +237,11 @@ class RunStatistics {
 // World states with zones and events, one JSON line per frame (source "live").
 class WorldOutput {
  public:
-  WorldOutput(const std::filesystem::path& path, std::string scene_id,
-              const std::filesystem::path& scene_dir, const jp::core::EventSettings& events,
-              jp::core::ClassCatalog catalog)
+  WorldOutput(const std::filesystem::path& path, const std::filesystem::path& scene_dir,
+              const jp::core::EventSettings& events, jp::core::ClassCatalog catalog)
       : writer_(path),
-        scene_id_(std::move(scene_id)),
-        events_(std::filesystem::exists(scene_dir / "zones.geojson")
-                    ? jp::vru::load_zones(scene_dir / "zones.geojson")
-                    : std::vector<jp::vru::Zone>{},
+        scene_id_(scene_dir.filename().string()),
+        events_(jp::vru::load_scene_zones(jp::core::load_scene_config(scene_dir)),
                 jp::vru::event_options(events)),
         catalog_(std::move(catalog)) {}
 
@@ -304,8 +302,7 @@ void run(const RunArgs& args) {
   std::optional<WorldOutput> world;
   if (!args.world_jsonl.empty()) {
     const std::filesystem::path scene_dir(args.scene);
-    world.emplace(args.world_jsonl, scene_dir.filename().string(), scene_dir, config.events,
-                  catalog);
+    world.emplace(args.world_jsonl, scene_dir, config.events, catalog);
   }
 
   jp::sources::PerceptionPipeline pipeline(config, catalog, ground);

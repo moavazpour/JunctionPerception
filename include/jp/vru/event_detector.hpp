@@ -56,6 +56,8 @@ class EventDetector {
 
   /// Forgets all state (e.g. after seeking in a recording).
   void reset();
+  /// Replaces the zones; running events end through the usual debouncing.
+  void set_zones(std::vector<Zone> zones) { zones_ = std::move(zones); }
 
   [[nodiscard]] const std::vector<Zone>& zones() const { return zones_; }
 

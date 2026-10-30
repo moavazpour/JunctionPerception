@@ -13,6 +13,7 @@
 #include "jp/sources/perception_pipeline.hpp"
 #include "jp/sources/world_source.hpp"
 #include "jp/twin/bev_plot.hpp"
+#include "jp/twin/debug_overlay.hpp"
 #include "jp/twin/world_state_json.hpp"
 
 namespace jp::sources {
@@ -24,7 +25,8 @@ constexpr double kNanosecondsPerSecond = 1e9;
 class LiveSource final : public WorldSource {
  public:
   LiveSource(std::filesystem::path video, const core::PipelineConfig& config,
-             const core::ClassCatalog& catalog, const calibration::GroundCalibration& ground)
+             const core::ClassCatalog& catalog,
+             const std::optional<calibration::GroundCalibration>& ground)
       : video_(std::move(video)),
         catalog_(catalog),
         pipeline_(config, catalog, ground),
@@ -43,8 +45,12 @@ class LiveSource final : public WorldSource {
       out.objects.push_back(to_world_object(object, catalog_));
     }
     if (with_image) {
-      // The side panel shows the camera image with the tracked boxes and their IDs.
-      out.image = twin::draw_tracks(frame->image, result.objects, "");
+      // The side panel shows the camera image with the tracked boxes and their IDs (only the
+      // detections while the scene is not calibrated).
+      out.image = pipeline_.localizes()
+                      ? twin::draw_tracks(frame->image, result.objects, "")
+                      : twin::draw_detections(frame->image, result.detections, "");
+      out.raw_image = std::move(frame->image);
     }
     return out;
   }
@@ -119,6 +125,7 @@ class OracleSource final : public WorldSource {
     SourceFrame frame = frames_[position_];
     if (with_image) {
       frame.image = cv::imread(image_paths_[position_].string(), cv::IMREAD_COLOR);
+      frame.raw_image = frame.image;
     }
     ++position_;
     return frame;
@@ -229,7 +236,7 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
 std::unique_ptr<WorldSource> make_live_source(const std::filesystem::path& video,
                                               const core::PipelineConfig& config,
                                               const core::ClassCatalog& catalog,
-                                              const calibration::GroundCalibration& ground) {
+                                              const std::optional<calibration::GroundCalibration>& ground) {
   return std::make_unique<LiveSource>(video, config, catalog, ground);
 }
 
