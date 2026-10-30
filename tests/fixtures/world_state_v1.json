@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "scene_id": "tumtraf_s110_south1",
+  "frame": 1234,
+  "timestamp_ns": 1651673060123456789,
+  "source": "live",
+  "objects": [
+    {
+      "id": 17,
+      "class": "car",
+      "vru": false,
+      "rider": false,
+      "x": 12.31,
+      "y": -4.02,
+      "vx": 0.0,
+      "vy": 6.2,
+      "heading_rad": 1.5708,
+      "speed_mps": 6.2,
+      "confidence": 0.81,
+      "zones": [],
+      "turning": false
+    },
+    {
+      "id": 42,
+      "class": "pedestrian",
+      "vru": true,
+      "rider": false,
+      "x": 14.0,
+      "y": -2.5,
+      "vx": -1.1,
+      "vy": 0.0,
+      "heading_rad": null,
+      "speed_mps": 1.1,
+      "confidence": 0.66,
+      "zones": ["crosswalk_n"],
+      "turning": false
+    }
+  ],
+  "events": [
+    {
+      "id": 3,
+      "type": "VRU_VEHICLE_CONFLICT",
+      "state": "active",
+      "object_ids": [17, 42],
+      "min_distance_m": 1.4,
+      "time_to_closest_s": 1.2,
+      "zone": "crosswalk_n"
+    },
+    {
+      "id": 4,
+      "type": "VRU_ON_CROSSWALK",
+      "state": "ended",
+      "object_ids": [42],
+      "min_distance_m": null,
+      "time_to_closest_s": null,
+      "zone": "crosswalk_n"
+    }
+  ]
+}
