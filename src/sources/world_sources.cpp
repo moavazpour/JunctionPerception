@@ -12,6 +12,7 @@
 #include "jp/io/frame_source.hpp"
 #include "jp/sources/perception_pipeline.hpp"
 #include "jp/sources/world_source.hpp"
+#include "jp/twin/bev_plot.hpp"
 #include "jp/twin/world_state_json.hpp"
 
 namespace jp::sources {
@@ -42,7 +43,8 @@ class LiveSource final : public WorldSource {
       out.objects.push_back(to_world_object(object, catalog_));
     }
     if (with_image) {
-      out.image = std::move(frame->image);
+      // The side panel shows the camera image with the tracked boxes and their IDs.
+      out.image = twin::draw_tracks(frame->image, result.objects, "");
     }
     return out;
   }
