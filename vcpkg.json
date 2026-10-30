@@ -11,7 +11,7 @@
     {
       "name": "opencv4",
       "default-features": false,
-      "features": ["jpeg", "png"]
+      "features": ["ffmpeg", "jpeg", "png"]
     },
     "spdlog",
     "yaml-cpp"
