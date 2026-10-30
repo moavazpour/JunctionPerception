@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "jp/core/assignment.hpp"
+#include "jp/core/statistics.hpp"
 
 namespace jp::benchmark {
 
@@ -135,15 +136,6 @@ PlanarPose fit_pose(const std::vector<MatchedPair>& pairs) {
   return pose;
 }
 
-double percentile(std::vector<double> values, double fraction) {
-  if (values.empty()) {
-    return 0.0;
-  }
-  const auto k = static_cast<std::size_t>(fraction * static_cast<double>(values.size() - 1));
-  std::ranges::nth_element(values, values.begin() + static_cast<std::ptrdiff_t>(k));
-  return values[k];
-}
-
 }  // namespace
 
 Eigen::Isometry3d PlanarPose::isometry() const {
@@ -211,9 +203,9 @@ RegistrationResult register_label_sets(const FramePairs& frames,
     }
   }
   result.matched_pairs = bev_errors.size();
-  result.median_bev_error_m = percentile(bev_errors, 0.5);
-  result.p90_bev_error_m = percentile(bev_errors, 0.9);
-  result.median_height_error_m = percentile(height_errors, 0.5);
+  result.median_bev_error_m = core::percentile(bev_errors, 0.5);
+  result.p90_bev_error_m = core::percentile(bev_errors, 0.9);
+  result.median_height_error_m = core::percentile(height_errors, 0.5);
   return result;
 }
 

@@ -1,0 +1,7 @@
+# Perception pipeline settings. Paths are relative to the repository root.
+detection:
+  model: models/yolo26s_1280.onnx  # end-to-end YOLO26 export (tools/export_yolo26.py)
+  confidence_threshold: 0.25
+  execution_provider: cuda         # cuda (falls back to cpu if unavailable) or cpu
+  cuda_device: 0
+  class_source: coco               # label source in configs/classes.yaml

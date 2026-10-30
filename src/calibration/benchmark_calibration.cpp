@@ -15,6 +15,7 @@
 #include "jp/benchmark/tumtraf_sequence.hpp"
 #include "jp/calibration/ground_homography.hpp"
 #include "jp/core/rigid_transform.hpp"
+#include "jp/core/statistics.hpp"
 
 namespace jp::calibration {
 
@@ -26,15 +27,6 @@ constexpr double kGridSpacingM = 10.0;
 constexpr int kGridHalfLines = 12;
 constexpr int kGridHalfSteps = 120;
 constexpr double kGridStepM = 1.0;
-
-double percentile(std::vector<double> values, double fraction) {
-  if (values.empty()) {
-    return 0.0;
-  }
-  const auto k = static_cast<std::size_t>(fraction * static_cast<double>(values.size() - 1));
-  std::ranges::nth_element(values, values.begin() + static_cast<std::ptrdiff_t>(k));
-  return values[k];
-}
 
 // Pixel of a sensor-frame point if it lies in front of the camera and inside the image.
 std::optional<Eigen::Vector2d> visible_pixel(const benchmark::CameraCalibration& camera,
@@ -241,10 +233,10 @@ BenchmarkCameraCalibration calibrate_benchmark_camera(
       sum += e;
     }
     check.mean_m = sum / static_cast<double>(errors.size());
-    check.median_m = percentile(errors, 0.5);
-    check.p90_m = percentile(errors, 0.9);
+    check.median_m = core::percentile(errors, 0.5);
+    check.p90_m = core::percentile(errors, 0.9);
     check.max_m = *std::ranges::max_element(errors);
-    check.median_height_above_plane_m = percentile(heights, 0.5);
+    check.median_height_above_plane_m = core::percentile(heights, 0.5);
   }
   for (std::size_t b = 0; b + 1 < kDistanceBinEdgesM.size(); ++b) {
     DistanceBin bin{kDistanceBinEdgesM.at(b), kDistanceBinEdgesM.at(b + 1)};
@@ -255,8 +247,8 @@ BenchmarkCameraCalibration calibrate_benchmark_camera(
       }
     }
     bin.objects = in_bin.size();
-    bin.median_m = percentile(in_bin, 0.5);
-    bin.p90_m = percentile(in_bin, 0.9);
+    bin.median_m = core::percentile(in_bin, 0.5);
+    bin.p90_m = core::percentile(in_bin, 0.9);
     if (bin.objects > 0) {
       check.by_distance.push_back(bin);
     }

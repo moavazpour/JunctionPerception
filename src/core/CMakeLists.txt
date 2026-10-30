@@ -1,4 +1,5 @@
-add_library(jp_core version.cpp assignment.cpp class_catalog.cpp)
+add_library(jp_core version.cpp assignment.cpp class_catalog.cpp pipeline_config.cpp
+    statistics.cpp)
 add_library(jp::core ALIAS jp_core)
 
 target_include_directories(jp_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
