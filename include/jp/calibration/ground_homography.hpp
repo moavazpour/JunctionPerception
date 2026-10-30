@@ -24,4 +24,11 @@ namespace jp::calibration {
 /// Homography normalised to h(2, 2) = 1.
 [[nodiscard]] Eigen::Matrix3d normalized_homography(const Eigen::Matrix3d& h);
 
+/// Recovers a full camera projection (ground frame -> pixels) from a ground-to-image homography,
+/// assuming square pixels and the principal point at the image centre: the focal length follows
+/// from the orthogonality of the rotation columns, the third column from their cross product.
+/// Empty if the homography is not consistent with such a camera.
+[[nodiscard]] std::optional<Eigen::Matrix<double, 3, 4>> projection_from_homography(
+    const Eigen::Matrix3d& ground_to_image, int width_px, int height_px);
+
 }  // namespace jp::calibration

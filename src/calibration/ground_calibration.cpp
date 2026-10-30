@@ -2,9 +2,12 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <Eigen/LU>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+
+#include "jp/calibration/ground_homography.hpp"
 
 namespace jp::calibration {
 
@@ -40,6 +43,13 @@ GroundCalibration parse_ground_calibration(std::string_view yaml_text) {
     const YAML::Node position = root["camera_ground_position_m"];
     calibration.camera_ground_position_m = {position[0].as<double>(), position[1].as<double>()};
     calibration.camera_height_m = root["camera_height_m"].as<double>();
+    if (root["ground_projection"]) {
+      calibration.ground_projection = matrix_of(root["ground_projection"], 3, 4);
+    } else {
+      calibration.ground_projection = projection_from_homography(
+          calibration.image_to_ground.inverse(), calibration.width_px, calibration.height_px);
+      calibration.ground_projection_estimated = calibration.ground_projection.has_value();
+    }
     if (root["sensor_from_ground"]) {
       Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
       pose.matrix() = matrix_of(root["sensor_from_ground"], 4, 4);

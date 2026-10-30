@@ -43,6 +43,8 @@ struct BenchmarkCameraCalibration {
   Eigen::Isometry3d sensor_from_ground = Eigen::Isometry3d::Identity();
   Eigen::Matrix3d ground_to_image = Eigen::Matrix3d::Identity();
   Eigen::Matrix3d image_to_ground = Eigen::Matrix3d::Identity();
+  /// Full camera projection from ground-frame coordinates (m) to homogeneous pixels.
+  Eigen::Matrix<double, 3, 4> ground_projection = Eigen::Matrix<double, 3, 4>::Zero();
   Eigen::Vector2d camera_ground_position_m = Eigen::Vector2d::Zero();
   double camera_height_m = 0.0;
   GroundCheck check;

@@ -197,6 +197,7 @@ BenchmarkCameraCalibration calibrate_benchmark_camera(
   result.ground_to_image =
       ground_to_image_homography(camera.projection(), result.sensor_from_ground);
   result.image_to_ground = normalized_homography(result.ground_to_image.inverse());
+  result.ground_projection = camera.projection() * result.sensor_from_ground.matrix();
 
   const Eigen::Isometry3d ground_from_sensor = core::rigid_inverse(result.sensor_from_ground);
   const Eigen::Vector3d camera_in_ground =
@@ -280,6 +281,7 @@ void write_ground_homography(const std::filesystem::path& path,
   root["source_sequence"] = source_sequence;
   root["image_to_ground"] = matrix_node(calibration.image_to_ground);
   root["ground_to_image"] = matrix_node(calibration.ground_to_image);
+  root["ground_projection"] = matrix_node(calibration.ground_projection);
   root["sensor_from_ground"] = matrix_node(calibration.sensor_from_ground.matrix());
   root["camera_ground_position_m"].push_back(calibration.camera_ground_position_m.x());
   root["camera_ground_position_m"].push_back(calibration.camera_ground_position_m.y());
