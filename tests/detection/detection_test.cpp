@@ -74,8 +74,8 @@ TEST(YoloOutput, ParsesClassNamesMetadata) {
 TEST(ClassMapping, KeepsMappedDetectionsOnly) {
   const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
 classes:
-  car: {length_m: 4.5, width_m: 1.8, vru: false}
-  pedestrian: {length_m: 0.5, width_m: 0.5, vru: true}
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
+  pedestrian: {length_m: 0.5, width_m: 0.5, height_m: 1.5, vru: true}
 sources:
   coco: {car: car, person: pedestrian}
 )yaml");

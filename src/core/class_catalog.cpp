@@ -17,7 +17,8 @@ ClassCatalog ClassCatalog::from_yaml(std::string_view yaml_text) {
     for (const auto& entry : root["classes"]) {
       const YAML::Node& value = entry.second;
       catalog.classes_.push_back({entry.first.as<std::string>(), value["length_m"].as<double>(),
-                                  value["width_m"].as<double>(), value["vru"].as<bool>()});
+                                  value["width_m"].as<double>(), value["height_m"].as<double>(),
+                                  value["vru"].as<bool>()});
     }
     for (const auto& source : root["sources"]) {
       auto& mapping = catalog.sources_[source.first.as<std::string>()];

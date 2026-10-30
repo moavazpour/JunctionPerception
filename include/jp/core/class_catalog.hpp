@@ -14,6 +14,7 @@ struct ClassInfo {
   std::string name;
   double length_m = 0.0;
   double width_m = 0.0;
+  double height_m = 0.0;
   bool vru = false;  ///< Vulnerable road user.
 };
 
