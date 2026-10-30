@@ -104,11 +104,11 @@ class TrackIds {
   std::map<std::size_t, std::int64_t> ids_;
 };
 
-std::vector<MergedObject> merge_frame(const std::vector<Cuboid>& south, const FrameMatches& fm,
-                                      TrackIds& track_ids) {
+std::vector<GroundTruthObject> merge_frame(const std::vector<Cuboid>& south, const FrameMatches& fm,
+                                           TrackIds& track_ids) {
   std::vector<bool> south_used(south.size(), false);
   std::vector<bool> north_used(fm.north_moved.size(), false);
-  std::vector<MergedObject> objects;
+  std::vector<GroundTruthObject> objects;
   for (const auto& [si, ni] : fm.matches) {
     south_used[si] = true;
     north_used[ni] = true;
@@ -151,20 +151,6 @@ MergedSequence merge_label_sets(const FramePairs& frames, const PlanarPose& sout
   }
   result.statistics.tracks = track_ids.count();
   return result;
-}
-
-SequenceGroundTruth merged_ground_truth(const TumtrafSequence& sequence,
-                                        const RegistrationOptions& registration_options,
-                                        const MergeOptions& merge_options) {
-  std::vector<std::pair<std::vector<Cuboid>, std::vector<Cuboid>>> pairs;
-  pairs.reserve(sequence.size());
-  for (const auto& frame : sequence.frames()) {
-    pairs.emplace_back(frame.south_objects, frame.north_objects);
-  }
-  SequenceGroundTruth truth;
-  truth.registration = register_label_sets(pairs, registration_options);
-  truth.merged = merge_label_sets(pairs, truth.registration.south_from_north, merge_options);
-  return truth;
 }
 
 }  // namespace jp::benchmark

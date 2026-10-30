@@ -12,6 +12,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "jp/benchmark/tumtraf_sequence.hpp"
 #include "jp/calibration/ground_homography.hpp"
 #include "jp/core/rigid_transform.hpp"
 
@@ -112,7 +113,7 @@ class GroundPainter {
     }
   }
 
-  void draw_footprint(const benchmark::MergedObject& object, const Plane& ground) {
+  void draw_footprint(const benchmark::GroundTruthObject& object, const Plane& ground) {
     std::vector<cv::Point> polygon;
     for (const auto& corner : object.box.bottom_corners()) {
       const Eigen::Vector3d on_ground = ground_from_sensor_ * ground.project(corner);
@@ -167,7 +168,7 @@ class GroundPainter {
 
 }  // namespace
 
-PlaneFit fit_ground_plane(const std::vector<std::vector<benchmark::MergedObject>>& frames,
+PlaneFit fit_ground_plane(const std::vector<std::vector<benchmark::GroundTruthObject>>& frames,
                           const PlaneFitOptions& options) {
   std::vector<Eigen::Vector3d> points;
   for (const auto& frame : frames) {
@@ -178,9 +179,9 @@ PlaneFit fit_ground_plane(const std::vector<std::vector<benchmark::MergedObject>
   return fit_plane(points, options);
 }
 
-PlaneFit fit_ground_plane_in_view(const std::vector<std::vector<benchmark::MergedObject>>& frames,
-                                  const benchmark::CameraCalibration& camera,
-                                  const PlaneFitOptions& options) {
+PlaneFit fit_ground_plane_in_view(
+    const std::vector<std::vector<benchmark::GroundTruthObject>>& frames,
+    const benchmark::CameraCalibration& camera, const PlaneFitOptions& options) {
   std::vector<Eigen::Vector3d> points;
   for (const auto& frame : frames) {
     for (const auto& object : frame) {
@@ -195,7 +196,7 @@ PlaneFit fit_ground_plane_in_view(const std::vector<std::vector<benchmark::Merge
 
 BenchmarkCameraCalibration calibrate_benchmark_camera(
     const benchmark::CameraCalibration& camera, const Plane& ground,
-    const std::vector<std::vector<benchmark::MergedObject>>& frames) {
+    const std::vector<std::vector<benchmark::GroundTruthObject>>& frames) {
   BenchmarkCameraCalibration result;
   result.camera = camera.name;
   result.width_px = camera.width_px;
@@ -266,7 +267,7 @@ BenchmarkCameraCalibration calibrate_benchmark_camera(
 cv::Mat draw_ground_truth_overlay(const cv::Mat& image,
                                   const BenchmarkCameraCalibration& calibration,
                                   const benchmark::CameraCalibration& camera, const Plane& ground,
-                                  const std::vector<benchmark::MergedObject>& objects) {
+                                  const std::vector<benchmark::GroundTruthObject>& objects) {
   GroundPainter painter(image, calibration, camera);
   painter.draw_grid();
   for (const auto& object : objects) {

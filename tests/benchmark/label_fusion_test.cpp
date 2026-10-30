@@ -4,6 +4,7 @@
 #include <numbers>
 #include <random>
 
+#include "jp/benchmark/ground_truth.hpp"
 #include "jp/benchmark/label_merge.hpp"
 #include "jp/benchmark/label_registration.hpp"
 
@@ -99,6 +100,17 @@ TEST(LabelMerge, KeepsBothSetsAndUnifiesTracks) {
   }
   // A track keeps its ID whichever label set supplies the box.
   EXPECT_EQ(merged.frames.front().front().track_id, merged.frames.back().front().track_id);
+}
+
+}  // namespace
+
+namespace {
+
+TEST(GroundTruthLabels, ParsesSelection) {
+  using jp::benchmark::GroundTruthLabels;
+  EXPECT_EQ(jp::benchmark::parse_ground_truth_labels("south"), GroundTruthLabels::kSouth);
+  EXPECT_EQ(jp::benchmark::parse_ground_truth_labels("merged"), GroundTruthLabels::kMerged);
+  EXPECT_FALSE(jp::benchmark::parse_ground_truth_labels("north").has_value());
 }
 
 }  // namespace

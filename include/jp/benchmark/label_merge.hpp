@@ -6,17 +6,16 @@
 
 #include "jp/benchmark/label_registration.hpp"
 #include "jp/benchmark/openlabel.hpp"
-#include "jp/benchmark/tumtraf_sequence.hpp"
 
 namespace jp::benchmark {
 
 /// Which label set(s) a merged object was found in.
 enum class LabelSource : std::uint8_t { kSouth, kNorth, kBoth };
 
-/// Ground-truth object after merging both label sets, in the south LiDAR frame.
-struct MergedObject {
+/// Ground-truth object in the south LiDAR frame.
+struct GroundTruthObject {
   std::int64_t track_id = 0;  ///< Stable over the sequence; shared by matched south/north tracks.
-  Cuboid box;                 ///< Box of the label set that observed the object with more points.
+  Cuboid box;                 ///< For merged objects: the box with more LiDAR points.
   LabelSource source = LabelSource::kSouth;
 };
 
@@ -35,7 +34,7 @@ struct MergeStatistics {
 };
 
 struct MergedSequence {
-  std::vector<std::vector<MergedObject>> frames;
+  std::vector<std::vector<GroundTruthObject>> frames;
   MergeStatistics statistics;
 };
 
@@ -46,16 +45,5 @@ struct MergedSequence {
 [[nodiscard]] MergedSequence merge_label_sets(
     const std::vector<std::pair<std::vector<Cuboid>, std::vector<Cuboid>>>& frames,
     const PlanarPose& south_from_north, const MergeOptions& options = {});
-
-/// Ground truth of a sequence: registration of the north label set onto the south one and the
-/// merged objects of every frame (south LiDAR frame).
-struct SequenceGroundTruth {
-  RegistrationResult registration;
-  MergedSequence merged;
-};
-
-[[nodiscard]] SequenceGroundTruth merged_ground_truth(
-    const TumtrafSequence& sequence, const RegistrationOptions& registration_options = {},
-    const MergeOptions& merge_options = {});
 
 }  // namespace jp::benchmark

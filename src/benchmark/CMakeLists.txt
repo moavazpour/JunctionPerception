@@ -1,4 +1,5 @@
-add_library(jp_benchmark openlabel.cpp tumtraf_sequence.cpp label_registration.cpp label_merge.cpp)
+add_library(jp_benchmark openlabel.cpp tumtraf_sequence.cpp label_registration.cpp label_merge.cpp
+    ground_truth.cpp)
 add_library(jp::benchmark ALIAS jp_benchmark)
 
 target_link_libraries(jp_benchmark

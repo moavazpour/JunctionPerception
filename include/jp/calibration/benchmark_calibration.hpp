@@ -50,27 +50,27 @@ struct BenchmarkCameraCalibration {
 
 /// Fits the ground plane to the bottom centres of all ground-truth boxes (south LiDAR frame).
 [[nodiscard]] PlaneFit fit_ground_plane(
-    const std::vector<std::vector<benchmark::MergedObject>>& frames,
+    const std::vector<std::vector<benchmark::GroundTruthObject>>& frames,
     const PlaneFitOptions& options = {});
 
 /// Fits the ground plane to the bottom centres of the ground-truth boxes a camera sees, so that
 /// the plane approximates the ground in that camera's view.
 [[nodiscard]] PlaneFit fit_ground_plane_in_view(
-    const std::vector<std::vector<benchmark::MergedObject>>& frames,
+    const std::vector<std::vector<benchmark::GroundTruthObject>>& frames,
     const benchmark::CameraCalibration& camera, const PlaneFitOptions& options = {});
 
 /// Builds the ground homography of a camera from its projection matrix and the ground plane,
 /// and evaluates it on the ground-truth boxes the camera sees.
 [[nodiscard]] BenchmarkCameraCalibration calibrate_benchmark_camera(
     const benchmark::CameraCalibration& camera, const Plane& ground,
-    const std::vector<std::vector<benchmark::MergedObject>>& frames);
+    const std::vector<std::vector<benchmark::GroundTruthObject>>& frames);
 
 /// Draws ground-truth footprints (mapped through the ground homography), track IDs, classes and
 /// a 10 m ground grid onto a camera image.
 [[nodiscard]] cv::Mat draw_ground_truth_overlay(
     const cv::Mat& image, const BenchmarkCameraCalibration& calibration,
     const benchmark::CameraCalibration& camera, const Plane& ground,
-    const std::vector<benchmark::MergedObject>& objects);
+    const std::vector<benchmark::GroundTruthObject>& objects);
 
 /// Writes the calibration as ground_homography.yaml.
 void write_ground_homography(const std::filesystem::path& path,
