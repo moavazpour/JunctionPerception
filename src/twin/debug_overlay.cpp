@@ -2,10 +2,11 @@
 
 #include <algorithm>
 #include <format>
-#include <map>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 #include <stdexcept>
+
+#include "jp/twin/class_colors.hpp"
 
 namespace jp::twin {
 
@@ -14,44 +15,36 @@ namespace {
 constexpr double kFontScale = 0.55;
 constexpr int kLabelHeight = 18;
 
-cv::Scalar color_of(const std::string& twin_class) {
-  static const std::map<std::string, cv::Scalar, std::less<>> colors = {
-      {"car", {80, 200, 80}},
-      {"van", {80, 220, 200}},
-      {"truck", {60, 140, 255}},
-      {"trailer", {40, 90, 200}},
-      {"bus", {200, 120, 40}},
-      {"pedestrian", {60, 60, 240}},
-      {"bicycle", {240, 80, 220}},
-      {"motorcycle", {180, 60, 180}},
-      {"emergency_vehicle", {0, 0, 160}},
-      {"other", {160, 160, 160}}};
-  const auto it = colors.find(twin_class);
-  return it == colors.end() ? cv::Scalar(255, 255, 255) : it->second;
-}
-
 }  // namespace
 
-cv::Mat draw_detections(const cv::Mat& image, const std::vector<detection::Detection>& detections,
-                        const std::string& status_line) {
-  cv::Mat canvas = image.clone();
-  for (const auto& d : detections) {
-    const cv::Scalar color = color_of(d.twin_class);
-    const cv::Rect box(d.box);
-    cv::rectangle(canvas, box, color, 2, cv::LINE_AA);
-    const std::string label =
-        std::format("{}{} {:.2f}", d.twin_class.empty() ? d.source_label : d.twin_class,
-                    d.rider ? " +rider" : "", d.score);
-    const cv::Point anchor(box.x, std::max(box.y - 4, kLabelHeight));
-    cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, cv::Scalar(0, 0, 0), 3,
-                cv::LINE_AA);
-    cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, color, 1, cv::LINE_AA);
-  }
+void draw_labeled_box(cv::Mat& canvas, const cv::Rect2f& box, const std::string& label,
+                      const cv::Scalar& color) {
+  const cv::Rect pixels(box);
+  cv::rectangle(canvas, pixels, color, 2, cv::LINE_AA);
+  const cv::Point anchor(pixels.x, std::max(pixels.y - 4, kLabelHeight));
+  cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, cv::Scalar(0, 0, 0), 3,
+              cv::LINE_AA);
+  cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, color, 1, cv::LINE_AA);
+}
+
+void draw_status_line(cv::Mat& canvas, const std::string& status_line) {
   const cv::Point origin(12, 28);
   cv::putText(canvas, status_line, origin, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 0), 4,
               cv::LINE_AA);
   cv::putText(canvas, status_line, origin, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 255, 255),
               2, cv::LINE_AA);
+}
+
+cv::Mat draw_detections(const cv::Mat& image, const std::vector<detection::Detection>& detections,
+                        const std::string& status_line) {
+  cv::Mat canvas = image.clone();
+  for (const auto& d : detections) {
+    const std::string label =
+        std::format("{}{} {:.2f}", d.twin_class.empty() ? d.source_label : d.twin_class,
+                    d.rider ? " +rider" : "", d.score);
+    draw_labeled_box(canvas, d.box, label, class_color(d.twin_class));
+  }
+  draw_status_line(canvas, status_line);
   return canvas;
 }
 

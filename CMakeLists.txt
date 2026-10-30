@@ -34,6 +34,8 @@ add_subdirectory(src/io)
 add_subdirectory(src/benchmark)
 add_subdirectory(src/calibration)
 add_subdirectory(src/detection)
+add_subdirectory(src/tracking)
+add_subdirectory(src/localization)
 add_subdirectory(src/twin)
 add_subdirectory(src/apps)
 

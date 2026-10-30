@@ -10,6 +10,13 @@
 
 namespace jp::twin {
 
+/// Draws a box with a text label above it.
+void draw_labeled_box(cv::Mat& canvas, const cv::Rect2f& box, const std::string& label,
+                      const cv::Scalar& color);
+
+/// Draws a status text line at the top left.
+void draw_status_line(cv::Mat& canvas, const std::string& status_line);
+
 /// Draws detections (box, twin class, score) and a text line at the top onto a copy of the image.
 [[nodiscard]] cv::Mat draw_detections(const cv::Mat& image,
                                       const std::vector<detection::Detection>& detections,

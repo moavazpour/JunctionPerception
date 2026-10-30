@@ -1,7 +1,7 @@
 # Perception pipeline settings. Paths are relative to the repository root.
 detection:
   model: models/yolo26s_1280.onnx  # end-to-end YOLO26 export (tools/export_yolo26.py)
-  confidence_threshold: 0.25
+  confidence_threshold: 0.1        # low enough for the tracker's second association stage
   execution_provider: cuda         # cuda (falls back to cpu if unavailable) or cpu
   cuda_device: 0
   class_source: coco               # label source in configs/classes.yaml
@@ -10,3 +10,24 @@ detection:
     enabled: true
     min_person_overlap: 0.2        # share of the person box overlapping the two-wheeler box
     min_feet_depth: 0.25           # person's feet below this fraction of the two-wheeler height
+
+# ByteTrack in image space.
+tracking:
+  high_score: 0.5                  # first association stage
+  low_score: 0.1                   # second stage: low-score detections to recent tracks
+  new_track_score: 0.6             # unmatched detections from this score start a track
+  high_match_min_iou: 0.2
+  low_match_min_iou: 0.5
+  tentative_match_min_iou: 0.3
+  confirm_frames: 3                # consecutive matches before a track gets an ID
+  max_missed_frames: 15            # frames without a match before a track is dropped
+  min_rider_votes: 1.0             # ridden detections (summed scores) to keep a rider's class
+
+# Ground-plane localization.
+localization:
+  bias_correction: true            # visible contact point -> footprint centre
+  acceleration_std_mps2: 2.0       # process noise of the constant-velocity Kalman filter
+  measurement_std_m: 0.3           # position measurement std at the camera
+  measurement_std_per_m: 0.01      # added std per metre of distance from the camera
+  heading_min_speed_mps: 0.5       # below this speed the last heading is held
+  forget_after_s: 5.0
