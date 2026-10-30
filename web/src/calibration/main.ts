@@ -19,9 +19,12 @@ import { PanZoomCanvas, type View2D } from './panZoom';
 
 type Mode = 'points' | 'zones' | 'camera';
 
+const ZONE_TYPES = ['crosswalk', 'lane', 'intersection'] as const;
+type ZoneType = (typeof ZONE_TYPES)[number];
+
 interface EditableZone {
   id: string;
-  type: 'crosswalk' | 'intersection';
+  type: ZoneType;
   polygon: Point[];
 }
 
@@ -96,7 +99,9 @@ class CalibrationApp {
     );
     this.zones = scene.zones.features.map((f) => ({
       id: f.properties.id,
-      type: f.properties.type === 'intersection' ? 'intersection' : 'crosswalk',
+      type: (ZONE_TYPES as readonly string[]).includes(f.properties.type)
+        ? (f.properties.type as ZoneType)
+        : 'crosswalk',
       polygon: (f.geometry.coordinates[0] ?? []).slice(0, -1).map(([x = 0, y = 0]) => [x, y]),
     }));
     this.bindControls();
@@ -182,7 +187,7 @@ class CalibrationApp {
       points:
         'Click a point in the camera image, then the same point on the map (road markings, kerb corners). Use at least 8 points spread over the scene; every fourth point is a check point. Wheel: zoom, drag: pan.',
       zones:
-        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events.',
+        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
       camera:
         'The camera position is estimated from the control points. Click on the map to set it by hand.',
     };
@@ -311,14 +316,14 @@ class CalibrationApp {
     id.value = zone.id;
     id.addEventListener('change', () => (zone.id = id.value.trim() || zone.id));
     const type = document.createElement('select');
-    for (const value of ['crosswalk', 'intersection']) {
+    for (const value of ZONE_TYPES) {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = value;
       option.selected = zone.type === value;
       type.append(option);
     }
-    type.addEventListener('change', () => (zone.type = type.value as EditableZone['type']));
+    type.addEventListener('change', () => (zone.type = type.value as ZoneType));
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.textContent = 'Remove';
@@ -363,26 +368,28 @@ class CalibrationApp {
     this.redraw();
   }
 
+  /** Saves the zones and, once enough fit points exist, the calibration. */
   private async save(): Promise<void> {
+    const saved: string[] = [];
     try {
-      if (this.mode === 'zones') {
-        await saveZones({
-          type: 'FeatureCollection',
-          coordinate_frame: 'scene_ground',
-          features: this.zones.map((z) => ({
-            properties: { id: z.id, type: z.type },
-            geometry: { type: 'Polygon', coordinates: [[...z.polygon, z.polygon[0] as Point]] },
-          })),
-        });
-        this.message(`Saved ${this.zones.length} zones; events use them right away.`);
-      } else {
+      await saveZones({
+        type: 'FeatureCollection',
+        coordinate_frame: 'scene_ground',
+        features: this.zones.map((z) => ({
+          properties: { id: z.id, type: z.type },
+          geometry: { type: 'Polygon', coordinates: [[...z.polygon, z.polygon[0] as Point]] },
+        })),
+      });
+      saved.push(`${this.zones.length} zones`);
+      if (this.fit) {
         const fit = await saveCalibration(this.points, this.cameraOverride);
-        this.message(
-          `Calibration saved (RMS ${fit.fit_rms_m.toFixed(2)} m). Apply to restart the server with it.`,
-        );
+        saved.push(`calibration (RMS ${fit.fit_rms_m.toFixed(2)} m); Apply to restart with it`);
       }
+      this.message(`Saved ${saved.join(' and ')}.`);
     } catch (error) {
-      this.message((error as Error).message);
+      this.message(
+        `${saved.length > 0 ? `Saved ${saved.join(', ')}; then: ` : ''}${(error as Error).message}`,
+      );
     }
   }
 

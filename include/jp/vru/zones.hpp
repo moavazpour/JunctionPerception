@@ -14,7 +14,7 @@ namespace jp::vru {
 /// A named area of the scene in world coordinates (metres).
 struct Zone {
   std::string id;    ///< e.g. "crosswalk_n".
-  std::string type;  ///< "crosswalk" or "intersection".
+  std::string type;  ///< "crosswalk", "lane" or "intersection".
   std::vector<Eigen::Vector2d> polygon;
 
   /// Point-in-polygon test (even-odd rule); points on the boundary may go either way.
