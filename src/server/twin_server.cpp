@@ -121,7 +121,8 @@ TwinServer::Impl::Impl(ServerOptions server_options, ServedScene served_scene,
       scene(std::move(served_scene)) {}
 
 void TwinServer::Impl::register_playback_routes() {
-  CROW_ROUTE(app, "/api/status")([this] {
+  CROW_ROUTE(app, "/api/status")
+  ([this] {
     const std::scoped_lock lock(status_mutex);
     return json_response(status);
   });
@@ -149,7 +150,8 @@ void TwinServer::Impl::register_playback_routes() {
       .onopen([this](crow::websocket::connection& c) { video_clients.add(&c); })
       .onclose([this](crow::websocket::connection& c, const std::string& /*reason*/,
                       std::uint16_t /*code*/) { video_clients.remove(&c); });
-  CROW_ROUTE(app, "/")([this](const crow::request& /*request*/, crow::response& response) {
+  CROW_ROUTE(app, "/")
+  ([this](const crow::request& /*request*/, crow::response& response) {
     serve_file(options.web_root, "index.html", response);
   });
   CROW_ROUTE(app, "/<path>")
@@ -159,7 +161,7 @@ void TwinServer::Impl::register_playback_routes() {
 }
 
 TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
-                                                    Clock::time_point started) {
+                                                     Clock::time_point started) {
   core::WorldState state;
   state.scene_id = scene.config.scene_id;
   state.frame = frame.index;
@@ -205,10 +207,10 @@ void TwinServer::Impl::wait_until_due(std::int64_t timestamp_ns) {
   if (!pace_origin) {
     pace_origin.emplace(Clock::now(), timestamp_ns);
   }
-  const auto due = pace_origin->first +
-                   std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
-                       static_cast<double>(timestamp_ns - pace_origin->second) * 1e-9 /
-                       options.speed));
+  const auto due =
+      pace_origin->first +
+      std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+          static_cast<double>(timestamp_ns - pace_origin->second) * 1e-9 / options.speed));
   if (Clock::now() - due > kMaxLag) {
     pace_origin.emplace(Clock::now(), timestamp_ns);
   } else {

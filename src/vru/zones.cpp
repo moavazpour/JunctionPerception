@@ -109,7 +109,8 @@ std::string zones_to_geojson(const std::vector<Zone>& zones, const core::GeoAnch
     for (const auto& corner : corners) {
       if (anchor != nullptr) {
         const auto geo = anchor->to_geo(corner);
-        ring.push_back({rounded(geo.lon_deg, kDegreeDecimals), rounded(geo.lat_deg, kDegreeDecimals)});
+        ring.push_back(
+            {rounded(geo.lon_deg, kDegreeDecimals), rounded(geo.lat_deg, kDegreeDecimals)});
       } else {
         ring.push_back({rounded(corner.x(), kMetreDecimals), rounded(corner.y(), kMetreDecimals)});
       }

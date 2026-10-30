@@ -26,7 +26,8 @@ TEST(GeoAnchor, EastAndNorthPointTheRightWay) {
 
 TEST(GeoAnchor, RoundTrip) {
   const jp::core::GeoAnchor anchor({48.1760, 11.5556, 512.0});
-  for (const Eigen::Vector2d& world : {Eigen::Vector2d(120.5, -80.25), Eigen::Vector2d(-250, 300)}) {
+  for (const Eigen::Vector2d& world :
+       {Eigen::Vector2d(120.5, -80.25), Eigen::Vector2d(-250, 300)}) {
     const auto geo = anchor.to_geo(world);
     EXPECT_LT((anchor.to_world(geo.lat_deg, geo.lon_deg) - world).norm(), 1e-4);
   }

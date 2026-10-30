@@ -50,8 +50,7 @@ struct ServedScene {
 /// JSON description of a scene for the frontend: image size, calibration summary, geo anchor,
 /// map manifest location, zones (GeoJSON in the world frame) and the class catalog.
 [[nodiscard]] std::string scene_description(const ServedScene& scene,
-                                            const core::ClassCatalog& catalog,
-                                            bool has_map);
+                                            const core::ClassCatalog& catalog, bool has_map);
 
 /// Plays a world source in real time and publishes it:
 ///   GET  /api/scene                scene description

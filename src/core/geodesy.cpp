@@ -50,8 +50,7 @@ GeoAnchor::GeoAnchor(GeoPoint origin)
     : origin_(origin), projection_(std::make_shared<const Projection>(origin)) {}
 
 Eigen::Vector2d GeoAnchor::to_world(double lat_deg, double lon_deg) const {
-  const PJ_COORD enu =
-      projection_->apply(PJ_FWD, proj_coord(lon_deg, lat_deg, origin_.alt_m, 0.0));
+  const PJ_COORD enu = projection_->apply(PJ_FWD, proj_coord(lon_deg, lat_deg, origin_.alt_m, 0.0));
   return {enu.enu.e, enu.enu.n};
 }
 

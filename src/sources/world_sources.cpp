@@ -233,10 +233,10 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
   return out;
 }
 
-std::unique_ptr<WorldSource> make_live_source(const std::filesystem::path& video,
-                                              const core::PipelineConfig& config,
-                                              const core::ClassCatalog& catalog,
-                                              const std::optional<calibration::GroundCalibration>& ground) {
+std::unique_ptr<WorldSource> make_live_source(
+    const std::filesystem::path& video, const core::PipelineConfig& config,
+    const core::ClassCatalog& catalog,
+    const std::optional<calibration::GroundCalibration>& ground) {
   return std::make_unique<LiveSource>(video, config, catalog, ground);
 }
 
