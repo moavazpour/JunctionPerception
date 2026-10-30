@@ -9,6 +9,7 @@
 #include "jp/server/twin_server.hpp"
 #include "jp/sources/world_source.hpp"
 #include "jp/twin/world_state_json.hpp"
+#include "jp/vru/zones.hpp"
 
 namespace {
 
@@ -20,15 +21,20 @@ TEST(ServerConfig, RepositoryConfigIsValid) {
               config.startup.mode == "replay");
 }
 
-TEST(ServerConfig, SceneDescriptionCarriesZonesAndClasses) {
-  const auto ground = jp::calibration::load_ground_calibration(
-      JP_SOURCE_DIR "/scenes/tumtraf_s110_south1/ground_homography.yaml");
+TEST(ServerConfig, SceneDescriptionCarriesCalibrationZonesAndClasses) {
+  jp::server::ServedScene scene;
+  scene.config = jp::core::load_scene_config(JP_SOURCE_DIR "/scenes/tumtraf_s110_south1");
+  scene.ground = jp::calibration::load_ground_calibration(scene.config.calibration_path());
+  scene.zones = jp::vru::load_scene_zones(scene.config);
   const auto catalog = jp::core::ClassCatalog::load(JP_SOURCE_DIR "/configs/classes.yaml");
-  const auto text = jp::server::scene_description(
-      "tumtraf_s110_south1", ground, R"({"type": "FeatureCollection", "features": []})", catalog);
-  const auto description = nlohmann::json::parse(text);
+  const auto description =
+      nlohmann::json::parse(jp::server::scene_description(scene, catalog, false));
   EXPECT_EQ(description["scene_id"], "tumtraf_s110_south1");
-  EXPECT_EQ(description["zones"]["type"], "FeatureCollection");
+  EXPECT_EQ(description["calibrated"], true);
+  EXPECT_TRUE(description["geo_anchor"].is_null());
+  EXPECT_TRUE(description["map"].is_null());
+  EXPECT_EQ(description["zones"]["coordinate_frame"], "scene_ground");
+  EXPECT_EQ(description["zones"]["features"].size(), 2U);
   EXPECT_EQ(description["classes"].size(), catalog.classes().size());
 }
 

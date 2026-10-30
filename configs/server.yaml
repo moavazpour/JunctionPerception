@@ -4,6 +4,7 @@ server:
                           # LAN address of the host only
   port: 8080
   web_root: web/dist      # built frontend
+  map_cache: map_cache    # map layers per scene (tools/prepare_map_data.py)
 
 # Camera images for the side panel (WebSocket /ws/video).
 video:
