@@ -3,5 +3,17 @@
   "name": "junction-perception",
   "version": "0.1.0",
   "builtin-baseline": "5d4a3dc90c0b3773f3bac81bf41297b54328f471",
-  "dependencies": ["cli11", "gtest"]
+  "dependencies": [
+    "cli11",
+    "eigen3",
+    "gtest",
+    "nlohmann-json",
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["jpeg", "png"]
+    },
+    "spdlog",
+    "yaml-cpp"
+  ]
 }
