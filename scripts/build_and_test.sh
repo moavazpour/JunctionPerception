@@ -27,6 +27,7 @@ build_web() {
 case "${target}" in
     cpp) build_cpp ;;
     web) build_web ;;
-    all) build_cpp && build_web ;;
+    # Separate commands: `set -e` does not apply inside functions called from an `&&` list.
+    all) build_cpp; build_web ;;
     *) echo "unknown target '${target}' (expected cpp, web or all)" >&2; exit 2 ;;
 esac
