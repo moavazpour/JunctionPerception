@@ -84,8 +84,11 @@ export async function sendPlayback(command: PlaybackCommand): Promise<void> {
 }
 
 const RECONNECT_DELAY_MS = 1000;
+// A connection without messages for this long is replaced; this also recovers connections to a
+// restarted server that were never reported as closed. Paused playback just reconnects quietly.
+const STALE_AFTER_MS = 5000;
 
-/** WebSocket that reconnects after the connection drops. */
+/** WebSocket that reconnects after the connection drops or goes silent. */
 function openSocket(
   path: string,
   binary: boolean,
@@ -98,9 +101,21 @@ function openSocket(
     if (binary) {
       socket.binaryType = 'arraybuffer';
     }
-    socket.onopen = () => onConnection(true);
-    socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => onMessage(event.data);
+    let watchdog = 0;
+    const arm = (): void => {
+      clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => socket.close(), STALE_AFTER_MS);
+    };
+    socket.onopen = () => {
+      onConnection(true);
+      arm();
+    };
+    socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {
+      arm();
+      onMessage(event.data);
+    };
     socket.onclose = () => {
+      clearTimeout(watchdog);
       onConnection(false);
       setTimeout(connect, RECONNECT_DELAY_MS);
     };
