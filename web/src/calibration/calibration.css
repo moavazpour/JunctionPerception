@@ -55,6 +55,7 @@ body.calibration {
   display: grid;
   flex: 1;
   grid-template-columns: 1fr 1fr 320px;
+  grid-template-rows: minmax(0, 1fr);
   gap: 1px;
   min-height: 0;
   background: var(--line);
@@ -80,7 +81,7 @@ body.calibration {
 }
 
 .pane canvas {
-  flex: 1;
+  flex: 1 1 0;
   width: 100%;
   min-height: 0;
   cursor: crosshair;
@@ -99,6 +100,7 @@ body.calibration {
 .sidebar .hint,
 .sidebar .summary,
 .sidebar .message {
+  position: static;
   margin: 0;
   color: var(--muted);
 }

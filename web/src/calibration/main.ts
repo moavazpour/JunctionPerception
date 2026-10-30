@@ -34,7 +34,7 @@ const COLORS = {
   zoneEdge: '#2f7cf6',
   drawing: '#f59e0b',
   camera: '#2b2f35',
-  road: 'rgba(80, 80, 80, 0.35)',
+  road: 'rgba(255, 255, 255, 0.55)',
 };
 const RESTART_RELOAD_MS = 6000;
 const MARKER_RADIUS = 6;
