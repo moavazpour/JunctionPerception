@@ -1,0 +1,74 @@
+{
+  "type": "FeatureCollection",
+  "coordinate_frame": "scene_ground",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "crosswalk_n",
+        "type": "crosswalk"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              33.436,
+              -13.237
+            ],
+            [
+              33.331,
+              -17.436
+            ],
+            [
+              20.037,
+              -19.279
+            ],
+            [
+              19.298,
+              -14.906
+            ],
+            [
+              33.436,
+              -13.237
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "crosswalk_s",
+        "type": "crosswalk"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              14.959,
+              -15.479
+            ],
+            [
+              15.274,
+              -19.7
+            ],
+            [
+              7.704,
+              -20.495
+            ],
+            [
+              7.943,
+              -17.068
+            ],
+            [
+              14.959,
+              -15.479
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

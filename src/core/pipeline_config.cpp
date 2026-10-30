@@ -72,6 +72,17 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     l.measurement_std_per_m = localization["measurement_std_per_m"].as<double>();
     l.heading_min_speed_mps = localization["heading_min_speed_mps"].as<double>();
     l.forget_after_s = localization["forget_after_s"].as<double>();
+
+    const YAML::Node events = section(root, "events");
+    EventSettings& e = config.events;
+    e.crosswalk_min_frames = events["crosswalk_min_frames"].as<int>();
+    e.conflict_horizon_s = events["conflict_horizon_s"].as<double>();
+    e.conflict_step_s = events["conflict_step_s"].as<double>();
+    e.conflict_distance_m = events["conflict_distance_m"].as<double>();
+    e.conflict_min_frames = events["conflict_min_frames"].as<int>();
+    e.end_frames = events["end_frames"].as<int>();
+    e.turning_window_s = events["turning_window_s"].as<double>();
+    e.turning_threshold_deg = events["turning_threshold_deg"].as<double>();
   } catch (const YAML::Exception& error) {
     throw std::runtime_error(std::string("invalid pipeline config: ") + error.what());
   }

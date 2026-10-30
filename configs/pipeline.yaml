@@ -34,3 +34,14 @@ localization:
   measurement_std_per_m: 0.01      # added std per metre of distance from the camera
   heading_min_speed_mps: 0.5       # below this speed the last heading is held
   forget_after_s: 5.0
+
+# VRU zones and events.
+events:
+  crosswalk_min_frames: 3          # VRU_ON_CROSSWALK: frames inside a crosswalk zone to start
+  conflict_horizon_s: 3.0          # VRU_VEHICLE_CONFLICT: constant-velocity prediction horizon
+  conflict_step_s: 0.1
+  conflict_distance_m: 2.0         # predicted VRU-vehicle distance below which a conflict exists
+  conflict_min_frames: 2           # frames in conflict to start the event
+  end_frames: 3                    # frames without the condition before an event ends
+  turning_window_s: 2.0            # a vehicle is turning if its heading changed by more than
+  turning_threshold_deg: 20.0      # this over the window

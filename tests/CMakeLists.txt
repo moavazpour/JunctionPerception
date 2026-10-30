@@ -14,10 +14,14 @@ add_executable(jp_tests
     detection/rider_association_test.cpp
     tracking/byte_tracker_test.cpp
     localization/localization_test.cpp
-    localization/box_fit_test.cpp)
+    localization/box_fit_test.cpp
+    twin/world_state_json_test.cpp
+    vru/zones_events_test.cpp
+    server/server_config_test.cpp)
 target_compile_definitions(jp_tests PRIVATE JP_EXPECTED_VERSION="${PROJECT_VERSION}"
     JP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(jp_tests PRIVATE jp::core jp::io jp::benchmark jp::calibration
-    jp::detection jp::tracking jp::localization opencv_imgcodecs GTest::gtest_main jp_warnings)
+    jp::detection jp::tracking jp::localization jp::twin jp::vru jp::sources jp::server
+    nlohmann_json::nlohmann_json opencv_imgcodecs GTest::gtest_main jp_warnings)
 
 gtest_discover_tests(jp_tests)

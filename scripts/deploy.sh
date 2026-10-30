@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pushes main to GitHub and to the server's working copy, then builds and tests on the server.
+# Pushes main to GitHub and to the server's working copy, builds and tests on the server, then
+# restarts the twin server and checks that it answers.
 # Configuration comes from deploy.env in the repository root (see deploy.env.example).
 # Usage: scripts/deploy.sh [cpp|web|all]
 set -euo pipefail
@@ -14,9 +15,10 @@ if [[ ! -f deploy.env ]]; then
 fi
 # shellcheck source=/dev/null
 source deploy.env
-: "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}" "${DEPLOY_PATH:?}"
+: "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}" "${DEPLOY_PATH:?}" "${DEPLOY_DATA_ROOT:?}"
 ssh_bin="${DEPLOY_SSH:-ssh}"
 remote="${DEPLOY_USER}@${DEPLOY_HOST}"
+port="${DEPLOY_SERVER_PORT:-8080}"
 
 if [[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]]; then
     echo "deploy runs from main only" >&2
@@ -33,4 +35,16 @@ git push "${remote}:${DEPLOY_PATH}" main
 
 "${ssh_bin}" "${remote}" "cd '${DEPLOY_PATH}' \
     && scripts/setup_server.sh \
-    && scripts/in_docker.sh scripts/build_and_test.sh '${target}' release"
+    && scripts/in_docker.sh scripts/build_and_test.sh '${target}' release \
+    && JP_SERVER_ADDRESS='${DEPLOY_HOST}' JP_SERVER_PORT='${port}' \
+       JP_DATA_ROOT='${DEPLOY_DATA_ROOT}' scripts/run_server.sh"
+
+for _ in $(seq 1 30); do
+    if curl -fsS "http://${DEPLOY_HOST}:${port}/api/status" >/dev/null 2>&1; then
+        echo "server up: http://${DEPLOY_HOST}:${port}"
+        exit 0
+    fi
+    sleep 2
+done
+echo "server did not answer on http://${DEPLOY_HOST}:${port}" >&2
+exit 1

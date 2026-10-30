@@ -44,12 +44,25 @@ struct LocalizationSettings {
   double forget_after_s = 5.0;
 };
 
+/// VRU zone and event detection (see configs/pipeline.yaml).
+struct EventSettings {
+  int crosswalk_min_frames = 3;
+  double conflict_horizon_s = 3.0;
+  double conflict_step_s = 0.1;
+  double conflict_distance_m = 2.0;
+  int conflict_min_frames = 2;
+  int end_frames = 3;
+  double turning_window_s = 2.0;
+  double turning_threshold_deg = 20.0;
+};
+
 /// Settings of configs/pipeline.yaml.
 struct PipelineConfig {
   DetectionSettings detection;
   RiderSettings riders;
   TrackingSettings tracking;
   LocalizationSettings localization;
+  EventSettings events;
 };
 
 /// Parses the YAML text; relative paths are resolved against `base_dir`.

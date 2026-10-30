@@ -25,9 +25,14 @@
 #include "jp/detection/rider_association.hpp"
 #include "jp/io/frame_source.hpp"
 #include "jp/localization/track_localizer.hpp"
+#include "jp/sources/perception_pipeline.hpp"
+#include "jp/sources/world_source.hpp"
 #include "jp/tracking/byte_tracker.hpp"
 #include "jp/twin/bev_plot.hpp"
 #include "jp/twin/debug_overlay.hpp"
+#include "jp/twin/world_state_json.hpp"
+#include "jp/vru/event_detector.hpp"
+#include "jp/vru/zones.hpp"
 
 namespace {
 
@@ -43,36 +48,11 @@ struct RunArgs {
   std::string bev;
   std::string reference_sequence;
   std::string tracks_csv;
+  std::string world_jsonl;
   std::string bias_correction;
   std::int64_t max_frames = 0;
   std::int64_t warmup_frames = 10;
 };
-
-jp::tracking::TrackerOptions tracker_options(const jp::core::TrackingSettings& s) {
-  jp::tracking::TrackerOptions o;
-  o.high_score = s.high_score;
-  o.low_score = s.low_score;
-  o.new_track_score = s.new_track_score;
-  o.high_match_min_iou = s.high_match_min_iou;
-  o.low_match_min_iou = s.low_match_min_iou;
-  o.tentative_match_min_iou = s.tentative_match_min_iou;
-  o.confirm_frames = s.confirm_frames;
-  o.max_missed_frames = s.max_missed_frames;
-  o.min_rider_votes = s.min_rider_votes;
-  return o;
-}
-
-jp::localization::LocalizerOptions localizer_options(const jp::core::LocalizationSettings& s) {
-  jp::localization::LocalizerOptions o;
-  o.contact_model =
-      jp::localization::parse_contact_model(s.bias_correction).value_or(o.contact_model);
-  o.acceleration_std_mps2 = s.acceleration_std_mps2;
-  o.measurement_std_m = s.measurement_std_m;
-  o.measurement_std_per_m = s.measurement_std_per_m;
-  o.heading_min_speed_mps = s.heading_min_speed_mps;
-  o.forget_after_s = s.forget_after_s;
-  return o;
-}
 
 // Benchmark ground truth of every frame as ground-plane footprints of the scene.
 References reference_footprints(const std::filesystem::path& sequence_dir,
@@ -99,66 +79,6 @@ References reference_footprints(const std::filesystem::path& sequence_dir,
   return frames;
 }
 
-// Detection -> rider association -> tracking -> ground-plane localization for one frame.
-class Pipeline {
- public:
-  struct Result {
-    std::vector<jp::detection::Detection> detections;
-    std::vector<jp::tracking::TrackedObject> tracks;
-    std::vector<jp::localization::LocalizedObject> objects;
-    double elapsed_ms = 0.0;
-  };
-
-  Pipeline(const jp::core::PipelineConfig& config, const jp::core::ClassCatalog& catalog,
-           const std::optional<jp::calibration::GroundCalibration>& ground)
-      : config_(config),
-        catalog_(catalog),
-        detector_(jp::detection::make_onnx_detector(
-            {config.detection.model, config.detection.confidence_threshold,
-             config.detection.use_cuda, config.detection.cuda_device})),
-        tracker_(tracker_options(config.tracking)) {
-    riders_.min_person_overlap = config.riders.min_person_overlap;
-    riders_.min_feet_depth = config.riders.min_feet_depth;
-    if (ground) {
-      std::optional<jp::localization::CameraModel> camera;
-      if (ground->ground_projection) {
-        camera = jp::localization::CameraModel{*ground->ground_projection, ground->width_px,
-                                               ground->height_px};
-      }
-      localizer_.emplace(ground->image_to_ground, ground->camera_ground_position_m, camera, catalog,
-                         localizer_options(config.localization));
-    }
-  }
-
-  Result process(const jp::io::Frame& frame) {
-    const auto start = std::chrono::steady_clock::now();
-    Result result;
-    result.detections = jp::detection::map_to_twin_classes(detector_->detect(frame.image), catalog_,
-                                                           config_.detection.class_source);
-    if (config_.riders.enabled) {
-      result.detections = jp::detection::associate_riders(std::move(result.detections), riders_);
-    }
-    result.tracks = tracker_.update(result.detections);
-    if (localizer_) {
-      result.objects = localizer_->update(result.tracks, frame.timestamp_ns);
-    }
-    result.elapsed_ms =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    return result;
-  }
-
-  [[nodiscard]] const jp::detection::Detector& detector() const { return *detector_; }
-  [[nodiscard]] bool localizes() const { return localizer_.has_value(); }
-
- private:
-  jp::core::PipelineConfig config_;
-  jp::core::ClassCatalog catalog_;
-  std::unique_ptr<jp::detection::Detector> detector_;
-  jp::detection::RiderAssociationOptions riders_;
-  jp::tracking::ByteTracker tracker_;
-  std::optional<jp::localization::TrackLocalizer> localizer_;
-};
-
 // Debug outputs: overlay video, top-down video, CSV of localized tracks.
 class Sinks {
  public:
@@ -178,8 +98,8 @@ class Sinks {
     }
   }
 
-  void write(const jp::io::Frame& frame, const Pipeline::Result& result, bool localized,
-             const std::string& status) {
+  void write(const jp::io::Frame& frame, const jp::sources::PerceptionPipeline::Result& result,
+             bool localized, const std::string& status) {
     if (!args_.overlay.empty()) {
       if (!overlay_) {
         overlay_ =
@@ -252,7 +172,7 @@ class RunStatistics {
  public:
   explicit RunStatistics(std::int64_t warmup_frames) : warmup_frames_(warmup_frames) {}
 
-  void record(const jp::io::Frame& frame, const Pipeline::Result& result,
+  void record(const jp::io::Frame& frame, const jp::sources::PerceptionPipeline::Result& result,
               const jp::detection::DetectorTimings& timings) {
     ++frames_;
     if (frame.index >= warmup_frames_) {
@@ -313,6 +233,55 @@ class RunStatistics {
   std::map<std::int64_t, std::string> track_classes_;
 };
 
+// World states with zones and events, one JSON line per frame (source "live").
+class WorldOutput {
+ public:
+  WorldOutput(const std::filesystem::path& path, std::string scene_id,
+              const std::filesystem::path& scene_dir, const jp::core::EventSettings& events,
+              jp::core::ClassCatalog catalog)
+      : writer_(path),
+        scene_id_(std::move(scene_id)),
+        events_(std::filesystem::exists(scene_dir / "zones.geojson")
+                    ? jp::vru::load_zones(scene_dir / "zones.geojson")
+                    : std::vector<jp::vru::Zone>{},
+                jp::vru::event_options(events)),
+        catalog_(std::move(catalog)) {}
+
+  void write(const jp::io::Frame& frame,
+             const std::vector<jp::localization::LocalizedObject>& objects) {
+    jp::core::WorldState state;
+    state.scene_id = scene_id_;
+    state.frame = frame.index;
+    state.timestamp_ns = frame.timestamp_ns;
+    state.source = "live";
+    for (const auto& object : objects) {
+      state.objects.push_back(jp::sources::to_world_object(object, catalog_));
+    }
+    state.events = events_.update(state.objects, frame.timestamp_ns);
+    for (const auto& event : state.events) {
+      if (event.state == "ended") {
+        ++events_per_type_[event.type];
+      }
+    }
+    writer_.write(state);
+  }
+
+  void log() const {
+    spdlog::info("  {} zones; completed events{}", events_.zones().size(),
+                 events_per_type_.empty() ? ": none" : ":");
+    for (const auto& [type, count] : events_per_type_) {
+      spdlog::info("    {:<24} {:6d}", type, count);
+    }
+  }
+
+ private:
+  jp::twin::JsonlWriter writer_;
+  std::string scene_id_;
+  jp::vru::EventDetector events_;
+  jp::core::ClassCatalog catalog_;
+  std::map<std::string, std::size_t> events_per_type_;
+};
+
 void run(const RunArgs& args) {
   auto config = jp::core::load_pipeline_config(args.config, std::filesystem::current_path());
   if (!args.bias_correction.empty()) {
@@ -327,12 +296,19 @@ void run(const RunArgs& args) {
       spdlog::info("camera model estimated from the ground homography");
     }
   }
-  if ((!args.bev.empty() || !args.tracks_csv.empty() || !args.reference_sequence.empty()) &&
+  if ((!args.bev.empty() || !args.tracks_csv.empty() || !args.reference_sequence.empty() ||
+       !args.world_jsonl.empty()) &&
       !ground) {
-    throw std::runtime_error("--bev, --tracks-csv and --reference need --scene");
+    throw std::runtime_error("--bev, --tracks-csv, --world-jsonl and --reference need --scene");
+  }
+  std::optional<WorldOutput> world;
+  if (!args.world_jsonl.empty()) {
+    const std::filesystem::path scene_dir(args.scene);
+    world.emplace(args.world_jsonl, scene_dir.filename().string(), scene_dir, config.events,
+                  catalog);
   }
 
-  Pipeline pipeline(config, catalog, ground);
+  jp::sources::PerceptionPipeline pipeline(config, catalog, ground);
   const auto source = jp::io::open_frame_source(args.source, args.image_sequence_fps);
   spdlog::info("model {} on {}; source {} ({:.2f} fps, {} frames); bias correction {}",
                config.detection.model.string(), pipeline.detector().backend(), args.source,
@@ -357,8 +333,15 @@ void run(const RunArgs& args) {
                     static_cast<double>(frame->timestamp_ns) * 1e-9, result.detections.size(),
                     result.tracks.size(), result.elapsed_ms, pipeline.detector().backend());
     sinks.write(*frame, result, pipeline.localizes(), status);
+    if (world) {
+      world->write(*frame, result.objects);
+    }
   }
   statistics.log(pipeline.detector().backend());
+  if (world) {
+    world->log();
+    spdlog::info("wrote {}", args.world_jsonl);
+  }
   sinks.log_paths();
 }
 
@@ -381,6 +364,8 @@ int main(int argc, char** argv) {
   app.add_option("--reference", args.reference_sequence,
                  "TUMTraf sequence folder whose labels are drawn in the top-down video");
   app.add_option("--tracks-csv", args.tracks_csv, "Write localized tracks per frame (CSV)");
+  app.add_option("--world-jsonl", args.world_jsonl,
+                 "Write world states with zones and events per frame (JSONL)");
   app.add_option("--bias-correction", args.bias_correction,
                  "Override the contact model of the config: box_fit, ray_offset or none")
       ->check(CLI::IsMember({"box_fit", "ray_offset", "none"}));

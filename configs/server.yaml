@@ -1,0 +1,22 @@
+# Twin server settings (jp_server). Paths are relative to the repository root.
+server:
+  bind_address: 0.0.0.0   # inside the container; scripts/run_server.sh publishes the port on the
+                          # LAN address of the host only
+  port: 8080
+  web_root: web/dist      # built frontend
+
+# Camera images for the side panel (WebSocket /ws/video).
+video:
+  max_fps: 5
+  width_px: 960
+  jpeg_quality: 70
+
+playback:
+  loop: true              # restart recordings at the end
+  speed: 1.0              # relative to the recording's timestamps
+
+# Scene and world source at startup; --scene, --mode and --input override them.
+startup:
+  scene: scenes/tumtraf_s110_south1
+  mode: live              # live (camera pipeline), oracle (benchmark labels) or replay (JSONL)
+  input: a9_dataset_r02_s03_s110_camera_basler_south1_8mm.mp4  # under the data root

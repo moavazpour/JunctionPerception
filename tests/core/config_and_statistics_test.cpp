@@ -21,6 +21,9 @@ tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min
            max_missed_frames: 15, min_rider_votes: 1.0}
 localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
                measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
+events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
+         conflict_distance_m: 2.0, conflict_min_frames: 2, end_frames: 3, turning_window_s: 2.0,
+         turning_threshold_deg: 20.0}
 )yaml",
                                                       "/repo");
   EXPECT_EQ(config.detection.model, std::filesystem::path("/repo/models/m.onnx"));
@@ -47,6 +50,9 @@ tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min
            max_missed_frames: 15, min_rider_votes: 1.0}
 localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
                measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
+events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
+         conflict_distance_m: 2.0, conflict_min_frames: 2, end_frames: 3, turning_window_s: 2.0,
+         turning_threshold_deg: 20.0}
 )yaml",
                                                                  "/repo")),
                std::runtime_error);
