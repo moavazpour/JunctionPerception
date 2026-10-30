@@ -1,0 +1,14 @@
+# Benchmark scene: camera south1 of the TUMTraf Intersection R02 recordings (S110 gantry).
+# Paths are relative to the dataset root (JP_DATA_ROOT).
+scene_id: tumtraf_s110_south1
+kind: benchmark
+image_size_px: [1920, 1200]
+source:
+  dataset: tumtraf_intersection_r02
+  camera: s110_camera_basler_south1_8mm
+  sequences: [a9_dataset_r02_s01, a9_dataset_r02_s02, a9_dataset_r02_s03, a9_dataset_r02_s04]
+  video_pattern: "{sequence}_s110_camera_basler_south1_8mm.mp4"
+# Ground frame: metric plane fitted to the ground-truth boxes seen by this camera, defined in
+# the south LiDAR frame of the labels (see ground_homography.yaml). The geo anchor is set once
+# the scene is aligned to the map with control points.
+calibration: ground_homography.yaml
