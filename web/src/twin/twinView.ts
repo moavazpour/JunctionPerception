@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 
 import type { ClassInfo, SceneDescription } from '../net/client';
+import type { MapData } from '../map/mapData';
+import { buildBuildingLayer, buildOrthoLayer, buildStylizedLayer } from '../map/mapLayers';
 import type { WorldState } from '../net/schema';
 import { BevCameraRig } from './cameraRig';
 import { WorldInterpolator } from './interpolation';
@@ -11,6 +13,8 @@ const GRID_SPACING_M = 10;
 const GRID_EXTENT_M = 400;
 const INITIAL_VIEW_M = 90;
 const HALO_PULSE_HZ = 1.2;
+
+export type BaseLayer = 'map' | 'ortho';
 
 interface TrackedMesh {
   objectClass: string;
@@ -38,11 +42,14 @@ export function eventParticipants(state: WorldState): { conflict: Set<number>; a
   return { conflict, any };
 }
 
-/** Centre of all zone corners, or the camera position for scenes without zones. */
+/**
+ * Centre of all zone corners; without zones the camera position, or the world origin (the geo
+ * anchor) for scenes that are not calibrated yet.
+ */
 function initialCenter(scene: SceneDescription): { x: number; y: number } {
-  const corners = scene.zones?.features.flatMap((f) => f.geometry.coordinates[0] ?? []) ?? [];
+  const corners = scene.zones.features.flatMap((f) => f.geometry.coordinates[0] ?? []);
   if (corners.length === 0) {
-    const [x, y] = scene.camera_ground_position_m;
+    const [x, y] = scene.camera_ground_position_m ?? [0, 0];
     return { x, y };
   }
   const sum = corners.reduce((acc, [x = 0, y = 0]) => ({ x: acc.x + x, y: acc.y + y }), {
@@ -62,6 +69,10 @@ export class TwinView {
   private readonly rig: BevCameraRig;
   private readonly sun = new THREE.DirectionalLight(0xffffff, 1.4);
   private readonly interpolator = new WorldInterpolator();
+  private grid: THREE.LineSegments | null = null;
+  private stylized: THREE.Group | null = null;
+  private buildings: THREE.Group | null = null;
+  private ortho: THREE.Mesh | null = null;
   private readonly meshes = new Map<number, TrackedMesh>();
   private readonly classes = new Map<string, ClassInfo>();
   private readonly fallbackClass: ClassInfo = {
@@ -86,13 +97,15 @@ export class TwinView {
     this.scene.background = new THREE.Color(PALETTE.background);
 
     const center = initialCenter(description);
-    const [cameraX, cameraY] = description.camera_ground_position_m;
+    const camera = description.camera_ground_position_m;
     this.rig = new BevCameraRig(canvas, {
       centerX: center.x,
       centerY: center.y,
       viewHeightM: INITIAL_VIEW_M,
       // The camera's viewing direction points up on screen, as in the camera image.
-      rotationRad: Math.atan2(center.y - cameraY, center.x - cameraX) - Math.PI / 2,
+      rotationRad: camera
+        ? Math.atan2(center.y - camera[1], center.x - camera[0]) - Math.PI / 2
+        : 0,
     });
     this.addLights(center);
     this.addGround(center);
@@ -101,6 +114,37 @@ export class TwinView {
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop(() => this.render());
+  }
+
+  /** Adds the map layers of the scene; the stylized map is shown first. */
+  setMap(map: MapData): void {
+    this.stylized = buildStylizedLayer(map);
+    this.buildings = buildBuildingLayer(map);
+    this.ortho = buildOrthoLayer(map);
+    this.scene.add(this.stylized, this.buildings);
+    if (this.ortho) {
+      this.scene.add(this.ortho);
+    }
+    this.showLayer('map');
+  }
+
+  /** Base layer: stylized map (with grid) or orthophoto. */
+  showLayer(layer: BaseLayer): void {
+    if (this.stylized) {
+      this.stylized.visible = layer === 'map';
+    }
+    if (this.ortho) {
+      this.ortho.visible = layer === 'ortho';
+    }
+    if (this.grid) {
+      this.grid.visible = layer === 'map';
+    }
+  }
+
+  showBuildings(visible: boolean): void {
+    if (this.buildings) {
+      this.buildings.visible = visible;
+    }
   }
 
   /** Feeds a new world state. */
@@ -150,16 +194,15 @@ export class TwinView {
       points.push(new THREE.Vector3(x0 - GRID_EXTENT_M, y0 + d, 0.01));
       points.push(new THREE.Vector3(x0 + GRID_EXTENT_M, y0 + d, 0.01));
     }
-    this.scene.add(
-      new THREE.LineSegments(
-        new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({ color: PALETTE.grid }),
-      ),
+    this.grid = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: PALETTE.grid }),
     );
+    this.scene.add(this.grid);
   }
 
   private addZones(description: SceneDescription): void {
-    for (const feature of description.zones?.features ?? []) {
+    for (const feature of description.zones.features) {
       const ring = feature.geometry.coordinates[0] ?? [];
       const shape = new THREE.Shape(ring.map(([x = 0, y = 0]) => new THREE.Vector2(x, y)));
       const fill = new THREE.Mesh(
@@ -179,6 +222,9 @@ export class TwinView {
   }
 
   private addCameraMarker(description: SceneDescription): void {
+    if (!description.camera_ground_position_m) {
+      return;
+    }
     const [x, y] = description.camera_ground_position_m;
     const marker = new THREE.Mesh(
       new THREE.ConeGeometry(1.2, 2.4, 3),

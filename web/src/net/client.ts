@@ -21,11 +21,15 @@ export interface ZoneCollection {
 
 export interface SceneDescription {
   scene_id: string;
-  camera: string;
+  kind: string;
   image_size_px: [number, number];
-  camera_ground_position_m: [number, number];
-  camera_height_m: number;
-  zones: ZoneCollection | null;
+  calibrated: boolean;
+  camera_ground_position_m: [number, number] | null;
+  camera_height_m: number | null;
+  geo_anchor: { lat_deg: number; lon_deg: number; alt_m: number } | null;
+  /** URL of the map manifest, or null if the scene has no map layers. */
+  map: string | null;
+  zones: ZoneCollection;
   classes: ClassInfo[];
 }
 

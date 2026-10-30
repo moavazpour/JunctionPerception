@@ -12,7 +12,14 @@
         <header class="title">
           <span class="product">JunctionPerception</span>
           <span id="scene-id" class="scene"></span>
+          <a class="tool-link" href="/calibrate.html">Calibration and zones</a>
         </header>
+        <div id="layers" class="layers" hidden>
+          <button type="button" data-layer="map" class="active">Map</button>
+          <button type="button" data-layer="ortho">Orthophoto</button>
+          <label><input id="buildings" type="checkbox" checked /> Buildings</label>
+        </div>
+        <p id="attribution" class="attribution"></p>
         <footer class="playback">
           <button id="play" type="button">Pause</button>
           <input id="seek" type="range" min="0" max="0" value="0" aria-label="Seek" />

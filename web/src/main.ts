@@ -1,7 +1,9 @@
 import './style.css';
 
+import { loadMapData } from './map/mapData';
 import { fetchScene, fetchStatus, subscribeVideo, subscribeWorld } from './net/client';
 import { TwinView } from './twin/twinView';
+import { setupLayerControls } from './ui/layers';
 import { SidePanel } from './ui/sidePanel';
 
 const STATUS_INTERVAL_MS = 1000;
@@ -14,6 +16,11 @@ async function start(): Promise<void> {
   const scene = await fetchScene();
   const view = new TwinView(canvas, scene);
   const panel = new SidePanel(scene.scene_id);
+  if (scene.map) {
+    const map = await loadMapData(scene.map);
+    view.setMap(map);
+    setupLayerControls(view, map);
+  }
 
   let connected = false;
   subscribeWorld(

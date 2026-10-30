@@ -1,0 +1,152 @@
+body.calibration {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.toolbar .back {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+.toolbar button,
+.sidebar button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.toolbar button.primary {
+  border-color: var(--text);
+  background: var(--text);
+  color: #fff;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.workspace {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 1fr 1fr 320px;
+  gap: 1px;
+  min-height: 0;
+  background: var(--line);
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--background);
+}
+
+.pane h2 {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.note {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.pane canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  cursor: crosshair;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.sidebar .hint,
+.sidebar .summary,
+.sidebar .message {
+  margin: 0;
+  color: var(--muted);
+}
+
+.sidebar .summary {
+  color: var(--text);
+}
+
+.items {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.items li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.items li span {
+  flex: 1;
+}
+
+.items input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+}
+
+.actions[hidden] {
+  display: none;
+}
+
+.sidebar .attribution {
+  position: static;
+  align-items: flex-start;
+}

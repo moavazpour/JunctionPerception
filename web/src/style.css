@@ -209,3 +209,73 @@ h2 {
     border-top: 1px solid var(--line);
   }
 }
+
+.tool-link {
+  margin-left: 8px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+  pointer-events: auto;
+}
+
+.layers {
+  position: absolute;
+  top: 48px;
+  left: 20px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 80%);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 8%);
+  font-size: 13px;
+}
+
+.layers[hidden] {
+  display: none;
+}
+
+.layers button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.layers button.active {
+  background: var(--text);
+  color: #fff;
+}
+
+.layers button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.layers label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 0 6px;
+}
+
+.attribution {
+  position: absolute;
+  right: 20px;
+  bottom: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.attribution a {
+  color: var(--muted);
+  text-decoration: none;
+}
