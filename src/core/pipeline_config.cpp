@@ -27,6 +27,13 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     config.detection.use_cuda = provider == "cuda";
     config.detection.cuda_device = detection["cuda_device"].as<int>();
     config.detection.class_source = detection["class_source"].as<std::string>();
+    const YAML::Node riders = detection["rider_association"];
+    if (!riders) {
+      throw std::runtime_error("pipeline config has no detection.rider_association section");
+    }
+    config.riders.enabled = riders["enabled"].as<bool>();
+    config.riders.min_person_overlap = riders["min_person_overlap"].as<float>();
+    config.riders.min_feet_depth = riders["min_feet_depth"].as<float>();
   } catch (const YAML::Exception& error) {
     throw std::runtime_error(std::string("invalid pipeline config: ") + error.what());
   }

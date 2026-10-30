@@ -15,12 +15,15 @@ detection:
   execution_provider: cpu
   cuda_device: 1
   class_source: coco
+  rider_association: {enabled: true, min_person_overlap: 0.3, min_feet_depth: 0.25}
 )yaml",
                                                       "/repo");
   EXPECT_EQ(config.detection.model, std::filesystem::path("/repo/models/m.onnx"));
   EXPECT_FLOAT_EQ(config.detection.confidence_threshold, 0.4F);
   EXPECT_FALSE(config.detection.use_cuda);
   EXPECT_EQ(config.detection.cuda_device, 1);
+  EXPECT_TRUE(config.riders.enabled);
+  EXPECT_FLOAT_EQ(config.riders.min_person_overlap, 0.3F);
 }
 
 TEST(PipelineConfig, RejectsUnknownProvider) {
@@ -31,6 +34,7 @@ detection:
   execution_provider: tpu
   cuda_device: 0
   class_source: coco
+  rider_association: {enabled: true, min_person_overlap: 0.3, min_feet_depth: 0.25}
 )yaml",
                                                                  "/repo")),
                std::runtime_error);

@@ -14,9 +14,17 @@ struct DetectionSettings {
   std::string class_source = "coco";
 };
 
+/// Merging of persons with the bicycle or motorcycle they ride.
+struct RiderSettings {
+  bool enabled = true;
+  float min_person_overlap = 0.2F;
+  float min_feet_depth = 0.25F;
+};
+
 /// Settings of configs/pipeline.yaml.
 struct PipelineConfig {
   DetectionSettings detection;
+  RiderSettings riders;
 };
 
 /// Parses the YAML text; relative paths are resolved against `base_dir`.

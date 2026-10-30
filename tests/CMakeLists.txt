@@ -10,7 +10,8 @@ add_executable(jp_tests
     benchmark/openlabel_test.cpp
     benchmark/label_fusion_test.cpp
     calibration/ground_geometry_test.cpp
-    detection/detection_test.cpp)
+    detection/detection_test.cpp
+    detection/rider_association_test.cpp)
 target_compile_definitions(jp_tests PRIVATE JP_EXPECTED_VERSION="${PROJECT_VERSION}"
     JP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(jp_tests PRIVATE jp::core jp::io jp::benchmark jp::calibration

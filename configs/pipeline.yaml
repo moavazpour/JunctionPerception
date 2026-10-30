@@ -5,3 +5,8 @@ detection:
   execution_provider: cuda         # cuda (falls back to cpu if unavailable) or cpu
   cuda_device: 0
   class_source: coco               # label source in configs/classes.yaml
+  # A person riding a detected bicycle or motorcycle becomes one two-wheeler object.
+  rider_association:
+    enabled: true
+    min_person_overlap: 0.2        # share of the person box overlapping the two-wheeler box
+    min_feet_depth: 0.25           # person's feet below this fraction of the two-wheeler height

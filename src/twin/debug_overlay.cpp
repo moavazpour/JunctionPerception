@@ -40,7 +40,8 @@ cv::Mat draw_detections(const cv::Mat& image, const std::vector<detection::Detec
     const cv::Rect box(d.box);
     cv::rectangle(canvas, box, color, 2, cv::LINE_AA);
     const std::string label =
-        std::format("{} {:.2f}", d.twin_class.empty() ? d.source_label : d.twin_class, d.score);
+        std::format("{}{} {:.2f}", d.twin_class.empty() ? d.source_label : d.twin_class,
+                    d.rider ? " +rider" : "", d.score);
     const cv::Point anchor(box.x, std::max(box.y - 4, kLabelHeight));
     cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, cv::Scalar(0, 0, 0), 3,
                 cv::LINE_AA);

@@ -1,4 +1,4 @@
-add_library(jp_detection letterbox.cpp yolo_output.cpp onnx_detector.cpp)
+add_library(jp_detection letterbox.cpp yolo_output.cpp onnx_detector.cpp rider_association.cpp)
 add_library(jp::detection ALIAS jp_detection)
 
 target_link_libraries(jp_detection

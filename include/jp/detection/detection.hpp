@@ -12,6 +12,7 @@ struct Detection {
   int source_class = -1;     ///< Class index of the detector (e.g. COCO).
   std::string source_label;  ///< Class name of the detector, e.g. "person".
   std::string twin_class;    ///< Twin class after mapping, e.g. "pedestrian"; empty if unmapped.
+  bool rider = false;        ///< Two-wheeler merged with the person riding it.
 };
 
 }  // namespace jp::detection

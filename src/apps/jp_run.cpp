@@ -16,6 +16,7 @@
 #include "jp/core/statistics.hpp"
 #include "jp/core/version.hpp"
 #include "jp/detection/detector.hpp"
+#include "jp/detection/rider_association.hpp"
 #include "jp/io/frame_source.hpp"
 #include "jp/twin/debug_overlay.hpp"
 
@@ -50,6 +51,9 @@ void run(const RunArgs& args) {
   const auto detector = jp::detection::make_onnx_detector(
       {config.detection.model, config.detection.confidence_threshold, config.detection.use_cuda,
        config.detection.cuda_device});
+  jp::detection::RiderAssociationOptions rider_options;
+  rider_options.min_person_overlap = config.riders.min_person_overlap;
+  rider_options.min_feet_depth = config.riders.min_feet_depth;
   const auto source = jp::io::open_frame_source(args.source, args.image_sequence_fps);
   spdlog::info("model {} on {}; source {} ({:.2f} fps, {} frames)", config.detection.model.string(),
                detector->backend(), args.source, source->fps(), source->frame_count().value_or(-1));
@@ -65,6 +69,9 @@ void run(const RunArgs& args) {
     const auto start = std::chrono::steady_clock::now();
     auto detections = jp::detection::map_to_twin_classes(detector->detect(frame->image), catalog,
                                                          config.detection.class_source);
+    if (config.riders.enabled) {
+      detections = jp::detection::associate_riders(std::move(detections), rider_options);
+    }
     const double frame_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     ++frames;
@@ -77,7 +84,7 @@ void run(const RunArgs& args) {
       timings.frame.push_back(frame_ms);
     }
     for (const auto& d : detections) {
-      ++per_class[d.twin_class];
+      ++per_class[d.rider ? d.twin_class + " (with rider)" : d.twin_class];
     }
 
     if (!args.overlay.empty()) {
