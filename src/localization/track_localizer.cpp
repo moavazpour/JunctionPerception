@@ -13,10 +13,25 @@ constexpr double kNanosecondsPerSecond = 1e9;
 
 }  // namespace
 
+std::optional<ContactModel> parse_contact_model(std::string_view text) {
+  if (text == "none") {
+    return ContactModel::kNone;
+  }
+  if (text == "ray_offset") {
+    return ContactModel::kRayOffset;
+  }
+  if (text == "box_fit") {
+    return ContactModel::kBoxFit;
+  }
+  return std::nullopt;
+}
+
 TrackLocalizer::TrackLocalizer(Eigen::Matrix3d image_to_ground, Eigen::Vector2d camera_position,
-                               core::ClassCatalog catalog, LocalizerOptions options)
+                               std::optional<CameraModel> camera, core::ClassCatalog catalog,
+                               LocalizerOptions options)
     : image_to_ground_(std::move(image_to_ground)),
       camera_position_(std::move(camera_position)),
+      camera_(std::move(camera)),
       catalog_(std::move(catalog)),
       options_(options) {}
 
@@ -30,7 +45,6 @@ std::vector<LocalizedObject> TrackLocalizer::update(
       continue;
     }
     const auto& info = catalog_.info(track.twin_class);
-    const Footprint footprint{info.length_m, info.width_m};
     const double sigma = options_.measurement_std_m +
                          (options_.measurement_std_per_m * (*contact - camera_position_).norm());
 
@@ -38,9 +52,7 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     const std::optional<double> held_heading =
         it == states_.end() ? std::nullopt : it->second.heading_rad;
     const Eigen::Vector2d measured =
-        options_.bias_correction
-            ? correct_contact_bias(*contact, camera_position_, footprint, held_heading)
-            : *contact;
+        footprint_center(*contact, track.detection.box, info, held_heading);
 
     if (it == states_.end()) {
       it = states_
@@ -77,6 +89,22 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     return timestamp_ns - entry.second.filter.timestamp_ns() > forget_ns;
   });
   return objects;
+}
+
+Eigen::Vector2d TrackLocalizer::footprint_center(const Eigen::Vector2d& contact,
+                                                 const cv::Rect2f& box, const core::ClassInfo& info,
+                                                 std::optional<double> heading_rad) const {
+  if (options_.contact_model == ContactModel::kNone) {
+    return contact;
+  }
+  const Eigen::Vector2d offset = correct_contact_bias(
+      contact, camera_position_, Footprint{info.length_m, info.width_m}, heading_rad);
+  if (options_.contact_model == ContactModel::kRayOffset || !camera_) {
+    return offset;
+  }
+  const auto fitted = fit_footprint_center(
+      *camera_, box, ObjectSize{info.length_m, info.width_m, info.height_m}, heading_rad, offset);
+  return fitted.value_or(offset);
 }
 
 }  // namespace jp::localization

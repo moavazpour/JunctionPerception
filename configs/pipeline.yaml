@@ -25,7 +25,10 @@ tracking:
 
 # Ground-plane localization.
 localization:
-  bias_correction: true            # visible contact point -> footprint centre
+  # Visible contact point (box bottom centre) -> footprint centre: box_fit fits a class-sized
+  # box to the detection with the camera model, ray_offset shifts along the camera ray by the
+  # class footprint, none keeps the contact point.
+  bias_correction: box_fit
   acceleration_std_mps2: 2.0       # process noise of the constant-velocity Kalman filter
   measurement_std_m: 0.3           # position measurement std at the camera
   measurement_std_per_m: 0.01      # added std per metre of distance from the camera

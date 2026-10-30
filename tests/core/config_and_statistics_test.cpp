@@ -19,7 +19,7 @@ detection:
 tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min_iou: 0.2,
            low_match_min_iou: 0.5, tentative_match_min_iou: 0.3, confirm_frames: 3,
            max_missed_frames: 15, min_rider_votes: 1.0}
-localization: {bias_correction: false, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
+localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
                measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
 )yaml",
                                                       "/repo");
@@ -30,7 +30,7 @@ localization: {bias_correction: false, acceleration_std_mps2: 2.0, measurement_s
   EXPECT_TRUE(config.riders.enabled);
   EXPECT_FLOAT_EQ(config.riders.min_person_overlap, 0.3F);
   EXPECT_EQ(config.tracking.confirm_frames, 3);
-  EXPECT_FALSE(config.localization.bias_correction);
+  EXPECT_EQ(config.localization.bias_correction, "none");
 }
 
 TEST(PipelineConfig, RejectsUnknownProvider) {
@@ -45,7 +45,7 @@ detection:
 tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min_iou: 0.2,
            low_match_min_iou: 0.5, tentative_match_min_iou: 0.3, confirm_frames: 3,
            max_missed_frames: 15, min_rider_votes: 1.0}
-localization: {bias_correction: false, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
+localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
                measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
 )yaml",
                                                                  "/repo")),

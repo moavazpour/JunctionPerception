@@ -1,4 +1,4 @@
-add_library(jp_localization ground_projection.cpp bev_kalman.cpp track_localizer.cpp)
+add_library(jp_localization ground_projection.cpp bev_kalman.cpp box_fit.cpp track_localizer.cpp)
 add_library(jp::localization ALIAS jp_localization)
 
 target_link_libraries(jp_localization

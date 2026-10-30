@@ -13,7 +13,8 @@ add_executable(jp_tests
     detection/detection_test.cpp
     detection/rider_association_test.cpp
     tracking/byte_tracker_test.cpp
-    localization/localization_test.cpp)
+    localization/localization_test.cpp
+    localization/box_fit_test.cpp)
 target_compile_definitions(jp_tests PRIVATE JP_EXPECTED_VERSION="${PROJECT_VERSION}"
     JP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(jp_tests PRIVATE jp::core jp::io jp::benchmark jp::calibration

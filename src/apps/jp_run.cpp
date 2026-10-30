@@ -43,7 +43,7 @@ struct RunArgs {
   std::string bev;
   std::string reference_sequence;
   std::string tracks_csv;
-  bool no_bias_correction = false;
+  std::string bias_correction;
   std::int64_t max_frames = 0;
   std::int64_t warmup_frames = 10;
 };
@@ -64,7 +64,8 @@ jp::tracking::TrackerOptions tracker_options(const jp::core::TrackingSettings& s
 
 jp::localization::LocalizerOptions localizer_options(const jp::core::LocalizationSettings& s) {
   jp::localization::LocalizerOptions o;
-  o.bias_correction = s.bias_correction;
+  o.contact_model =
+      jp::localization::parse_contact_model(s.bias_correction).value_or(o.contact_model);
   o.acceleration_std_mps2 = s.acceleration_std_mps2;
   o.measurement_std_m = s.measurement_std_m;
   o.measurement_std_per_m = s.measurement_std_per_m;
@@ -119,7 +120,12 @@ class Pipeline {
     riders_.min_person_overlap = config.riders.min_person_overlap;
     riders_.min_feet_depth = config.riders.min_feet_depth;
     if (ground) {
-      localizer_.emplace(ground->image_to_ground, ground->camera_ground_position_m, catalog,
+      std::optional<jp::localization::CameraModel> camera;
+      if (ground->ground_projection) {
+        camera = jp::localization::CameraModel{*ground->ground_projection, ground->width_px,
+                                               ground->height_px};
+      }
+      localizer_.emplace(ground->image_to_ground, ground->camera_ground_position_m, camera, catalog,
                          localizer_options(config.localization));
     }
   }
@@ -309,14 +315,17 @@ class RunStatistics {
 
 void run(const RunArgs& args) {
   auto config = jp::core::load_pipeline_config(args.config, std::filesystem::current_path());
-  if (args.no_bias_correction) {
-    config.localization.bias_correction = false;
+  if (!args.bias_correction.empty()) {
+    config.localization.bias_correction = args.bias_correction;
   }
   const auto catalog = jp::core::ClassCatalog::load(args.classes);
   std::optional<jp::calibration::GroundCalibration> ground;
   if (!args.scene.empty()) {
     ground = jp::calibration::load_ground_calibration(std::filesystem::path(args.scene) /
                                                       "ground_homography.yaml");
+    if (ground->ground_projection_estimated) {
+      spdlog::info("camera model estimated from the ground homography");
+    }
   }
   if ((!args.bev.empty() || !args.tracks_csv.empty() || !args.reference_sequence.empty()) &&
       !ground) {
@@ -328,7 +337,7 @@ void run(const RunArgs& args) {
   spdlog::info("model {} on {}; source {} ({:.2f} fps, {} frames); bias correction {}",
                config.detection.model.string(), pipeline.detector().backend(), args.source,
                source->fps(), source->frame_count().value_or(-1),
-               config.localization.bias_correction ? "on" : "off");
+               config.localization.bias_correction);
   References references;
   if (!args.reference_sequence.empty() && ground) {
     references = reference_footprints(args.reference_sequence, *ground);
@@ -372,8 +381,9 @@ int main(int argc, char** argv) {
   app.add_option("--reference", args.reference_sequence,
                  "TUMTraf sequence folder whose labels are drawn in the top-down video");
   app.add_option("--tracks-csv", args.tracks_csv, "Write localized tracks per frame (CSV)");
-  app.add_flag("--no-bias-correction", args.no_bias_correction,
-               "Use the box bottom centre without shifting it to the footprint centre");
+  app.add_option("--bias-correction", args.bias_correction,
+                 "Override the contact model of the config: box_fit, ray_offset or none")
+      ->check(CLI::IsMember({"box_fit", "ray_offset", "none"}));
   app.add_option("--max-frames", args.max_frames, "Stop after this many frames (0: all)")
       ->capture_default_str();
   app.add_option("--warmup", args.warmup_frames, "Frames excluded from the timing statistics")

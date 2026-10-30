@@ -61,7 +61,12 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
 
     const YAML::Node localization = section(root, "localization");
     LocalizationSettings& l = config.localization;
-    l.bias_correction = localization["bias_correction"].as<bool>();
+    l.bias_correction = localization["bias_correction"].as<std::string>();
+    if (l.bias_correction != "box_fit" && l.bias_correction != "ray_offset" &&
+        l.bias_correction != "none") {
+      throw std::runtime_error("bias_correction must be box_fit, ray_offset or none, not " +
+                               l.bias_correction);
+    }
     l.acceleration_std_mps2 = localization["acceleration_std_mps2"].as<double>();
     l.measurement_std_m = localization["measurement_std_m"].as<double>();
     l.measurement_std_per_m = localization["measurement_std_per_m"].as<double>();

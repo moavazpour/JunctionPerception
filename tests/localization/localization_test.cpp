@@ -57,13 +57,14 @@ TEST(BevKalman, EstimatesConstantVelocity) {
 TEST(TrackLocalizer, HoldsHeadingWhenStopped) {
   const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
 classes:
-  car: {length_m: 4.5, width_m: 1.8, vru: false}
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
 sources: {}
 )yaml");
   const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
   jp::localization::LocalizerOptions options;
-  options.bias_correction = false;
-  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), catalog, options);
+  options.contact_model = jp::localization::ContactModel::kNone;
+  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                             options);
 
   jp::tracking::TrackedObject track;
   track.id = 7;

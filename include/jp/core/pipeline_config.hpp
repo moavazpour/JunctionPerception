@@ -36,7 +36,7 @@ struct TrackingSettings {
 
 /// Ground-plane localization (see configs/pipeline.yaml).
 struct LocalizationSettings {
-  bool bias_correction = true;
+  std::string bias_correction = "box_fit";  ///< box_fit, ray_offset or none
   double acceleration_std_mps2 = 2.0;
   double measurement_std_m = 0.3;
   double measurement_std_per_m = 0.01;
