@@ -1,0 +1,31 @@
+{
+  "name": "junction-perception-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "0.177.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.29.0",
+    "@types/three": "0.177.0",
+    "eslint": "9.29.0",
+    "eslint-config-prettier": "10.1.5",
+    "globals": "16.2.0",
+    "prettier": "3.5.3",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.34.1",
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
+  }
+}
