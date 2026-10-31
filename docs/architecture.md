@@ -36,8 +36,9 @@ the same zone and event code before they are published.
 | `calibration` | Ground plane, image-to-ground homography, camera model, benchmark calibration |
 | `detection` | `Detector` interface, YOLO26 end-to-end ONNX Runtime backend, rider association |
 | `tracking` | ByteTrack in image space |
-| `localization` | Ground contact, contact-to-centre correction (box fit), BEV Kalman filter, heading |
+| `localization` | Ground contact, contact-to-centre correction (box fit), BEV Kalman filter, heading, validated region |
 | `vru` | Zones (GeoJSON), crosswalk occupancy, VRU-vehicle conflicts, turning flag |
+| `evaluation` | Benchmark metrics: matching to labels, detection, localization, motion, tracking, conflicts |
 | `sources` | World sources: live pipeline, oracle (benchmark labels), replay (JSONL) |
 | `twin` | World-state JSON and JSONL, debug overlay and top-down videos |
 | `server` | HTTP API, WebSockets, real-time playback, static frontend |
