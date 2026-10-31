@@ -9,3 +9,5 @@ target_link_libraries(jp_run PRIVATE jp::io jp::benchmark jp::calibration jp::de
     jp::tracking jp::localization jp::sources jp::twin jp::vru spdlog::spdlog)
 target_link_libraries(jp_server PRIVATE jp::calibration jp::sources jp::server jp::vru
     spdlog::spdlog)
+target_link_libraries(jp_eval PRIVATE jp::benchmark jp::calibration jp::evaluation jp::twin jp::vru
+    nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp spdlog::spdlog)
