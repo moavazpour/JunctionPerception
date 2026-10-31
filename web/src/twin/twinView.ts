@@ -13,6 +13,7 @@ const GRID_SPACING_M = 10;
 const GRID_EXTENT_M = 400;
 const INITIAL_VIEW_M = 90;
 const HALO_PULSE_HZ = 1.2;
+const ZONE_OPACITY = 0.45;
 
 export type BaseLayer = 'map' | 'ortho';
 
@@ -208,7 +209,14 @@ export class TwinView {
       const shape = new THREE.Shape(ring.map(([x = 0, y = 0]) => new THREE.Vector2(x, y)));
       const fill = new THREE.Mesh(
         new THREE.ShapeGeometry(shape),
-        new THREE.MeshStandardMaterial({ color: PALETTE.zoneFill, roughness: 1 }),
+        // Translucent, so the base layer (road markings, orthophoto) stays visible under zones.
+        new THREE.MeshStandardMaterial({
+          color: PALETTE.zoneFill,
+          roughness: 1,
+          transparent: true,
+          opacity: ZONE_OPACITY,
+          depthWrite: false,
+        }),
       );
       fill.position.z = 0.015;
       fill.receiveShadow = true;
