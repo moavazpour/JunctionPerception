@@ -49,6 +49,11 @@ struct EventOptions {
   std::map<std::string, ClassFootprint, std::less<>> footprints;
 };
 
+/// Gap between a rectangle (centre, heading, footprint) and a disc; negative when they overlap.
+[[nodiscard]] double rectangle_disc_gap(const Eigen::Vector2d& center, double heading_rad,
+                                        const ClassFootprint& size, const Eigen::Vector2d& disc,
+                                        double radius);
+
 /// Event options from the events section of the pipeline config and the class footprints.
 [[nodiscard]] EventOptions event_options(const core::EventSettings& settings,
                                          const core::ClassCatalog& catalog);

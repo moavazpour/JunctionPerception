@@ -20,6 +20,16 @@ int min_frames_for(const std::string& type, const EventOptions& options) {
 
 }  // namespace
 
+double rectangle_disc_gap(const Eigen::Vector2d& center, double heading_rad,
+                          const ClassFootprint& size, const Eigen::Vector2d& disc, double radius) {
+  const Eigen::Vector2d axis(std::cos(heading_rad), std::sin(heading_rad));
+  const Eigen::Vector2d d = disc - center;
+  const Eigen::Vector2d local(d.dot(axis), (axis.x() * d.y()) - (axis.y() * d.x()));
+  const Eigen::Vector2d outside =
+      (local.cwiseAbs() - Eigen::Vector2d(0.5 * size.length_m, 0.5 * size.width_m)).cwiseMax(0.0);
+  return outside.norm() - radius;
+}
+
 EventOptions event_options(const core::EventSettings& settings, const core::ClassCatalog& catalog) {
   EventOptions o;
   o.crosswalk_min_frames = settings.crosswalk_min_frames;
@@ -60,17 +70,6 @@ bool velocity_known(const core::WorldObject& object, const EventOptions& options
 Eigen::Vector2d predicted_velocity(const core::WorldObject& object, const EventOptions& options) {
   return velocity_known(object, options) ? Eigen::Vector2d(object.vx, object.vy)
                                          : Eigen::Vector2d::Zero();
-}
-
-// Gap between a rectangle (centre, heading, size) and a disc; negative when they overlap.
-double rectangle_disc_gap(const Eigen::Vector2d& center, double heading_rad,
-                          const ClassFootprint& size, const Eigen::Vector2d& disc, double radius) {
-  const Eigen::Vector2d axis(std::cos(heading_rad), std::sin(heading_rad));
-  const Eigen::Vector2d d = disc - center;
-  const Eigen::Vector2d local(d.dot(axis), (axis.x() * d.y()) - (axis.y() * d.x()));
-  const Eigen::Vector2d outside =
-      (local.cwiseAbs() - Eigen::Vector2d(0.5 * size.length_m, 0.5 * size.width_m)).cwiseMax(0.0);
-  return outside.norm() - radius;
 }
 
 // Footprint gap at one time. Vehicles without a heading are a disc of half their length (their
