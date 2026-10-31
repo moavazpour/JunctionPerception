@@ -1,0 +1,143 @@
+#include "jp/evaluation/evaluation.hpp"
+
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <numbers>
+
+namespace {
+
+using jp::evaluation::Frame;
+using jp::evaluation::PredictedObject;
+using jp::evaluation::Sequence;
+using jp::evaluation::TruthObject;
+
+constexpr std::int64_t kFrameNs = 100'000'000;  // 10 Hz
+
+TruthObject truth(std::int64_t track, bool vru, double x, double y, bool visible = true) {
+  TruthObject t;
+  t.track_id = track;
+  t.twin_class = vru ? "pedestrian" : "car";
+  t.vru = vru;
+  t.position = {x, y};
+  t.length_m = vru ? 0.6 : 4.5;
+  t.width_m = vru ? 0.6 : 1.8;
+  t.visible = visible;
+  return t;
+}
+
+PredictedObject predicted(std::int64_t id, bool vru, double x, double y) {
+  PredictedObject p;
+  p.id = id;
+  p.twin_class = vru ? "pedestrian" : "car";
+  p.vru = vru;
+  p.position = {x, y};
+  return p;
+}
+
+Sequence one_frame(std::vector<TruthObject> labels, std::vector<PredictedObject> predictions) {
+  Sequence s;
+  s.frames.push_back({0, 0, std::move(labels), std::move(predictions), {}});
+  return s;
+}
+
+TEST(Evaluation, MatchesWithinClassGatesAndCountsDetections) {
+  // Car matched 0.5 m off; the pedestrian prediction is 1.5 m off (beyond the 1 m VRU gate);
+  // one prediction where nothing is labelled.
+  const auto s = one_frame(
+      {truth(1, false, 0, 0), truth(2, true, 10, 0)},
+      {predicted(7, false, 0.5, 0), predicted(8, true, 10, 1.5), predicted(9, false, 50, 0)});
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  EXPECT_EQ(m.truth, 2U);
+  EXPECT_EQ(m.matched, 1U);
+  EXPECT_EQ(m.false_positives, 2U);
+  EXPECT_NEAR(m.recall(), 0.5, 1e-12);
+  EXPECT_NEAR(m.precision(), 1.0 / 3.0, 1e-12);
+  EXPECT_NEAR(m.position_m.median, 0.5, 1e-12);
+  EXPECT_EQ(m.by_class.at("pedestrian").matched, 0U);
+  EXPECT_EQ(m.confusion.at("car").at("car"), 1U);
+}
+
+TEST(Evaluation, DisplacedObjectsAreSeparatedFromMissesAndFalsePositives) {
+  // A car placed 3 m off (beyond the 2 m gate, within 5 m) and one 20 m from any label.
+  const auto s =
+      one_frame({truth(1, false, 0, 0)}, {predicted(7, false, 3, 0), predicted(8, false, 20, 0)});
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  EXPECT_EQ(m.matched, 0U);
+  EXPECT_EQ(m.false_positives, 2U);
+  EXPECT_EQ(m.displaced, 1U);
+  EXPECT_NEAR(m.displaced_m.median, 3.0, 1e-12);
+}
+
+TEST(Evaluation, LabelsOutsideTheImageAreDontCare) {
+  const auto s = one_frame({truth(1, false, 0, 0, false)}, {predicted(7, false, 0.2, 0)});
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  EXPECT_EQ(m.truth, 0U);
+  EXPECT_EQ(m.false_positives, 0U);
+}
+
+TEST(Evaluation, IdentitySwitchesMotaAndIdf1) {
+  Sequence s;
+  // One labelled car, predicted as track 7 twice, then as track 8.
+  for (int f = 0; f < 3; ++f) {
+    s.frames.push_back(
+        {f, f * kFrameNs, {truth(1, false, 0, 0)}, {predicted(f < 2 ? 7 : 8, false, 0, 0)}, {}});
+  }
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  EXPECT_EQ(m.tracking.id_switches, 1U);
+  EXPECT_NEAR(m.tracking.mota, 1.0 - (1.0 / 3.0), 1e-12);
+  // Best one-to-one identity assignment: label 1 <-> track 7 for 2 of 3 frames.
+  EXPECT_NEAR(m.tracking.idf1, 2.0 * 2.0 / (3.0 + 3.0), 1e-12);
+}
+
+TEST(Evaluation, HeadingAndSpeedAgainstLabelMotion) {
+  Sequence s;
+  // Labelled car driving along +x at 10 m/s; predicted at 9 m/s, heading off by 90 degrees.
+  for (int f = 0; f < 21; ++f) {
+    auto p = predicted(7, false, f, 0);
+    p.speed_mps = 9.0;
+    p.heading_rad = std::numbers::pi / 2;
+    s.frames.push_back({f, f * kFrameNs, {truth(1, false, f, 0)}, {p}, {}});
+  }
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  ASSERT_GT(m.speed_mps.count, 0U);
+  EXPECT_NEAR(m.speed_mps.median, 1.0, 1e-9);
+  EXPECT_NEAR(m.heading_deg.median, 90.0, 1e-9);
+}
+
+TEST(Evaluation, ConflictsAreCheckedAgainstLabelledCloseApproaches) {
+  Sequence s;
+  // Car along +x at 10 m/s towards a pedestrian standing at x = 20 in its lane; the system
+  // reports the conflict at frame 2.
+  for (int f = 0; f < 30; ++f) {
+    Frame frame{f,
+                f * kFrameNs,
+                {truth(1, false, f, 0), truth(2, true, 20, 0)},
+                {predicted(7, false, f, 0), predicted(8, true, 20, 0)},
+                {}};
+    if (f == 2) {
+      frame.conflicts_started.push_back({7, 8});
+    }
+    s.frames.push_back(std::move(frame));
+  }
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  EXPECT_EQ(m.conflicts.truth_episodes, 1U);
+  EXPECT_EQ(m.conflicts.predicted, 1U);
+  EXPECT_EQ(m.conflicts.confirmed, 1U);
+  EXPECT_EQ(m.conflicts.truth_detected, 1U);
+  ASSERT_TRUE(m.conflicts.closest_truth_gap_m.has_value());
+  EXPECT_LT(*m.conflicts.closest_truth_gap_m, 0.0);
+}
+
+TEST(Evaluation, ErrorsByDistanceFromTheCamera) {
+  const auto s =
+      one_frame({truth(1, false, 10, 0), truth(2, false, 70, 0)}, {predicted(7, false, 10.2, 0)});
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  ASSERT_EQ(m.by_range.size(), 5U);
+  EXPECT_EQ(m.by_range[0].truth, 1U);
+  EXPECT_EQ(m.by_range[0].matched, 1U);
+  EXPECT_EQ(m.by_range[3].truth, 1U);
+  EXPECT_EQ(m.by_range[3].matched, 0U);
+}
+
+}  // namespace
