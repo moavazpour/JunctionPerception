@@ -74,14 +74,40 @@ serializer and the frontend types are both tested against it.
 
 Object fields: `id` (track ID), `class` (twin class), `vru`, `rider` (two-wheeler with rider),
 `x`, `y` (footprint centre, m, world frame), `vx`, `vy` (m/s), `heading_rad` (counter-clockwise
-from +x, `null` until the object has moved), `speed_mps`, `confidence`, `zones` (IDs of the zones
+from +x, `null` until the object has moved), `speed_mps`, `speed_std_mps` (speed uncertainty of
+the tracking filter, `null` where not estimated), `confidence`, `zones` (IDs of the zones
 containing the object), `turning` (vehicle heading changed by more than the configured angle over
-the configured window).
+the configured window), `validated` (inside the region validated for safety events; see below).
 
-Event fields: `id`, `type` (`VRU_ON_CROSSWALK`, `VRU_VEHICLE_CONFLICT`), `state` (`active` or
+Event fields: `id`, `type` (`VRU_VEHICLE_CONFLICT`, `VRU_ON_CROSSWALK`), `state` (`active` or
 `ended`), `object_ids` (conflicts: vehicle, then VRU), `min_distance_m` and `time_to_closest_s`
-(conflicts: closest approach predicted at constant velocity), `zone` (crosswalk, or the VRU's
+(conflicts: smallest predicted gap between the vehicle footprint and the VRU, and when it
+occurs), `closing_speed_mps` (conflicts: average speed at which that gap shrinks),
+`vehicle_state` (conflicts: `moving`, `stopped` or `starting`), `zone` (crosswalk, or the VRU's
 zone for conflicts; `null` otherwise).
+
+## Position uncertainty and safety events
+
+A camera resolves ground positions anisotropically: along the viewing ray one pixel covers
+range² / (focal length × camera height) of ground, across it only range / focal length. The
+tracking filter therefore maps an image noise of the box bottom (pixels) through the homography
+into an anisotropic, range-dependent measurement covariance, plus a floor for the footprint
+model and the calibration. Measurements that the motion model cannot explain (a box briefly
+covering two objects, a swapped track) are not fused; if they persist, the track is re-anchored
+with unknown velocity. Process noise is set per class (pedestrians accelerate less than cars).
+
+Conflicts are predicted at constant velocity over a short horizon, but only from velocities the
+filter knows well (`speed_std_mps`); new or re-anchored tracks are predicted to stay in place. A
+pair is in conflict when the predicted gap between the vehicle's footprint rectangle and the VRU
+falls below a threshold while it is actually closing, so road users that are merely close
+(waiting next to a stopped car, passing in parallel) are not. Stopped vehicles take part: a VRU
+moving into one is a conflict with `vehicle_state` `stopped`, a vehicle pulling away from a stop
+towards a VRU is `starting`.
+
+For scenes calibrated from control points, safety events are limited to positions within a
+margin of the control points and where one pixel along the viewing ray is at most a configured
+amount of ground. Objects outside are tracked and shown (drawn faded) but take part in no
+events. Benchmark scenes, registered to LiDAR labels, are not restricted.
 
 ## Server interface
 

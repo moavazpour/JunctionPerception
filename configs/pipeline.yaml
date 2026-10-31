@@ -29,9 +29,16 @@ localization:
   # box to the detection with the camera model, ray_offset shifts along the camera ray by the
   # class footprint, none keeps the contact point.
   bias_correction: box_fit
-  acceleration_std_mps2: 2.0       # process noise of the constant-velocity Kalman filter
-  measurement_std_m: 0.3           # position measurement std at the camera
-  measurement_std_per_m: 0.01      # added std per metre of distance from the camera
+  # Measurement noise: image noise of the box bottom mapped through the homography (large along
+  # the camera ray, small across it, growing with range) plus an isotropic floor for the
+  # footprint model and the calibration.
+  measurement_pixel_std: 2.0
+  measurement_floor_std_m: 0.5
+  # Process noise of the constant-velocity Kalman filter: white acceleration std per class.
+  acceleration_std_mps2: {default: 2.0, pedestrian: 1.0, bicycle: 2.0, motorcycle: 2.0}
+  initial_speed_std_mps: 10.0      # velocity std of a new or re-anchored track
+  innovation_gate: 18.4            # chi-square (2 dof, 99.99 %) above which a measurement is not fused
+  reanchor_after: 3                # rejected frames in a row before the track is re-anchored
   heading_min_speed_mps: 0.5       # below this speed the last heading is held
   forget_after_s: 5.0
 
@@ -40,7 +47,17 @@ events:
   crosswalk_min_frames: 3          # VRU_ON_CROSSWALK: frames inside a crosswalk zone to start
   conflict_horizon_s: 3.0          # VRU_VEHICLE_CONFLICT: constant-velocity prediction horizon
   conflict_step_s: 0.1
-  conflict_distance_m: 2.0         # predicted VRU-vehicle distance below which a conflict exists
+  conflict_gap_m: 1.0              # predicted gap between vehicle footprint and VRU below which
+                                   # a pair is in conflict
+  conflict_min_closing_speed_mps: 0.3  # the gap must shrink at least this fast (not merely close)
+  conflict_max_speed_std_mps: 0.5  # velocities less certain than this are not extrapolated
+  stopped_speed_mps: 0.5           # vehicle state: stopped below this speed
+  starting_window_s: 2.0           # vehicle state: starting when moving within this time of a stop
+  # Scenes calibrated from control points: events only where positions are validated, i.e.
+  # within this margin of the control points and where one pixel along the camera ray is at
+  # most this much ground. Objects elsewhere are tracked and shown, without events.
+  validated_margin_m: 10.0
+  validated_max_ground_m_per_px: 0.2
   conflict_min_frames: 2           # frames in conflict to start the event
   end_frames: 3                    # frames without the condition before an event ends
   turning_window_s: 2.0            # a vehicle is turning if its heading changed by more than

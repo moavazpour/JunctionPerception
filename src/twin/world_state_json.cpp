@@ -33,19 +33,22 @@ std::optional<T> optional_field(const json& j, const char* key) {
 json object_json(const core::WorldObject& o) {
   constexpr int kMetre = 3;
   constexpr int kRadian = 4;
-  return {{"id", o.id},
-          {"class", o.object_class},
-          {"vru", o.vru},
-          {"rider", o.rider},
-          {"x", rounded(o.x, kMetre)},
-          {"y", rounded(o.y, kMetre)},
-          {"vx", rounded(o.vx, kMetre)},
-          {"vy", rounded(o.vy, kMetre)},
-          {"heading_rad", o.heading_rad ? json(rounded(*o.heading_rad, kRadian)) : json(nullptr)},
-          {"speed_mps", rounded(o.speed_mps, kMetre)},
-          {"confidence", rounded(o.confidence, kMetre)},
-          {"zones", o.zones},
-          {"turning", o.turning}};
+  return {
+      {"id", o.id},
+      {"class", o.object_class},
+      {"vru", o.vru},
+      {"rider", o.rider},
+      {"x", rounded(o.x, kMetre)},
+      {"y", rounded(o.y, kMetre)},
+      {"vx", rounded(o.vx, kMetre)},
+      {"vy", rounded(o.vy, kMetre)},
+      {"heading_rad", o.heading_rad ? json(rounded(*o.heading_rad, kRadian)) : json(nullptr)},
+      {"speed_mps", rounded(o.speed_mps, kMetre)},
+      {"speed_std_mps", o.speed_std_mps ? json(rounded(*o.speed_std_mps, kMetre)) : json(nullptr)},
+      {"confidence", rounded(o.confidence, kMetre)},
+      {"zones", o.zones},
+      {"turning", o.turning},
+      {"validated", o.validated}};
 }
 
 json event_json(const core::WorldEvent& e) {
@@ -55,6 +58,8 @@ json event_json(const core::WorldEvent& e) {
           {"object_ids", e.object_ids},
           {"min_distance_m", optional_value(e.min_distance_m)},
           {"time_to_closest_s", optional_value(e.time_to_closest_s)},
+          {"closing_speed_mps", optional_value(e.closing_speed_mps)},
+          {"vehicle_state", optional_value(e.vehicle_state)},
           {"zone", optional_value(e.zone)}};
 }
 
@@ -70,9 +75,11 @@ core::WorldObject object_from(const json& j) {
   o.vy = j.at("vy").get<double>();
   o.heading_rad = optional_field<double>(j, "heading_rad");
   o.speed_mps = j.at("speed_mps").get<double>();
+  o.speed_std_mps = optional_field<double>(j, "speed_std_mps");
   o.confidence = j.at("confidence").get<double>();
   o.zones = j.at("zones").get<std::vector<std::string>>();
   o.turning = j.at("turning").get<bool>();
+  o.validated = j.value("validated", true);
   return o;
 }
 
@@ -84,6 +91,8 @@ core::WorldEvent event_from(const json& j) {
   e.object_ids = j.at("object_ids").get<std::vector<std::int64_t>>();
   e.min_distance_m = optional_field<double>(j, "min_distance_m");
   e.time_to_closest_s = optional_field<double>(j, "time_to_closest_s");
+  e.closing_speed_mps = optional_field<double>(j, "closing_speed_mps");
+  e.vehicle_state = optional_field<std::string>(j, "vehicle_state");
   e.zone = optional_field<std::string>(j, "zone");
   return e;
 }

@@ -21,10 +21,14 @@ struct WorldObject {
   double vx = 0.0;
   double vy = 0.0;
   double speed_mps = 0.0;
-  std::optional<double> heading_rad;  ///< Empty while the heading is unknown.
+  std::optional<double> speed_std_mps;  ///< Speed uncertainty; empty if not estimated.
+  std::optional<double> heading_rad;    ///< Empty while the heading is unknown.
   double confidence = 0.0;
   std::vector<std::string> zones;  ///< Zones containing the object.
   bool turning = false;            ///< Vehicle heading changed strongly over the last seconds.
+  /// Inside the region where the calibration is validated and fine enough for safety events;
+  /// objects outside are tracked and shown but take part in no events.
+  bool validated = true;
 };
 
 /// A detected situation involving one or more objects.
@@ -33,8 +37,11 @@ struct WorldEvent {
   std::string type;   ///< "VRU_ON_CROSSWALK" or "VRU_VEHICLE_CONFLICT".
   std::string state;  ///< "active" or "ended" (sent once when the event ends).
   std::vector<std::int64_t> object_ids;
-  std::optional<double> min_distance_m;     ///< Conflicts: predicted closest distance.
+  std::optional<double> min_distance_m;     ///< Conflicts: predicted smallest footprint gap.
   std::optional<double> time_to_closest_s;  ///< Conflicts: time until the closest approach.
+  std::optional<double> closing_speed_mps;  ///< Conflicts: speed at which the gap shrinks.
+  /// Conflicts: motion of the vehicle, "moving", "stopped" or "starting".
+  std::optional<std::string> vehicle_state;
   std::optional<std::string> zone;
 };
 

@@ -19,11 +19,15 @@ detection:
 tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min_iou: 0.2,
            low_match_min_iou: 0.5, tentative_match_min_iou: 0.3, confirm_frames: 3,
            max_missed_frames: 15, min_rider_votes: 1.0}
-localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
-               measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
+localization: {bias_correction: none, measurement_pixel_std: 2.0, measurement_floor_std_m: 0.2,
+               acceleration_std_mps2: {default: 3.0, pedestrian: 1.0}, initial_speed_std_mps: 10.0,
+               innovation_gate: 11.8, reanchor_after: 3, heading_min_speed_mps: 0.5,
+               forget_after_s: 5.0}
 events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
-         conflict_distance_m: 2.0, conflict_min_frames: 2, end_frames: 3, turning_window_s: 2.0,
-         turning_threshold_deg: 20.0}
+         conflict_gap_m: 1.0, conflict_min_closing_speed_mps: 0.3, conflict_max_speed_std_mps: 0.5,
+         stopped_speed_mps: 0.5, starting_window_s: 2.0, validated_margin_m: 10.0,
+         validated_max_ground_m_per_px: 0.2, conflict_min_frames: 2, end_frames: 3,
+         turning_window_s: 2.0, turning_threshold_deg: 20.0}
 )yaml",
                                                       "/repo");
   EXPECT_EQ(config.detection.model, std::filesystem::path("/repo/models/m.onnx"));
@@ -34,6 +38,8 @@ events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
   EXPECT_FLOAT_EQ(config.riders.min_person_overlap, 0.3F);
   EXPECT_EQ(config.tracking.confirm_frames, 3);
   EXPECT_EQ(config.localization.bias_correction, "none");
+  EXPECT_DOUBLE_EQ(config.localization.acceleration_std_mps2, 3.0);
+  EXPECT_DOUBLE_EQ(config.localization.class_acceleration_std_mps2.at("pedestrian"), 1.0);
 }
 
 TEST(PipelineConfig, RejectsUnknownProvider) {
@@ -48,11 +54,15 @@ detection:
 tracking: {high_score: 0.5, low_score: 0.1, new_track_score: 0.6, high_match_min_iou: 0.2,
            low_match_min_iou: 0.5, tentative_match_min_iou: 0.3, confirm_frames: 3,
            max_missed_frames: 15, min_rider_votes: 1.0}
-localization: {bias_correction: none, acceleration_std_mps2: 2.0, measurement_std_m: 0.3,
-               measurement_std_per_m: 0.01, heading_min_speed_mps: 0.5, forget_after_s: 5.0}
+localization: {bias_correction: none, measurement_pixel_std: 2.0, measurement_floor_std_m: 0.2,
+               acceleration_std_mps2: {default: 3.0, pedestrian: 1.0}, initial_speed_std_mps: 10.0,
+               innovation_gate: 11.8, reanchor_after: 3, heading_min_speed_mps: 0.5,
+               forget_after_s: 5.0}
 events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
-         conflict_distance_m: 2.0, conflict_min_frames: 2, end_frames: 3, turning_window_s: 2.0,
-         turning_threshold_deg: 20.0}
+         conflict_gap_m: 1.0, conflict_min_closing_speed_mps: 0.3, conflict_max_speed_std_mps: 0.5,
+         stopped_speed_mps: 0.5, starting_window_s: 2.0, validated_margin_m: 10.0,
+         validated_max_ground_m_per_px: 0.2, conflict_min_frames: 2, end_frames: 3,
+         turning_window_s: 2.0, turning_threshold_deg: 20.0}
 )yaml",
                                                                  "/repo")),
                std::runtime_error);

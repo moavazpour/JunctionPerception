@@ -24,8 +24,12 @@ localization::LocalizerOptions localizer_options(const core::LocalizationSetting
   o.contact_model =
       localization::parse_contact_model(settings.bias_correction).value_or(o.contact_model);
   o.acceleration_std_mps2 = settings.acceleration_std_mps2;
-  o.measurement_std_m = settings.measurement_std_m;
-  o.measurement_std_per_m = settings.measurement_std_per_m;
+  o.class_acceleration_std_mps2 = settings.class_acceleration_std_mps2;
+  o.measurement_pixel_std = settings.measurement_pixel_std;
+  o.measurement_floor_std_m = settings.measurement_floor_std_m;
+  o.initial_speed_std_mps = settings.initial_speed_std_mps;
+  o.innovation_gate = settings.innovation_gate;
+  o.reanchor_after = settings.reanchor_after;
   o.heading_min_speed_mps = settings.heading_min_speed_mps;
   o.forget_after_s = settings.forget_after_s;
   return o;

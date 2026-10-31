@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -37,9 +39,13 @@ struct TrackingSettings {
 /// Ground-plane localization (see configs/pipeline.yaml).
 struct LocalizationSettings {
   std::string bias_correction = "box_fit";  ///< box_fit, ray_offset or none
-  double acceleration_std_mps2 = 2.0;
-  double measurement_std_m = 0.3;
-  double measurement_std_per_m = 0.01;
+  double measurement_pixel_std = 2.0;
+  double measurement_floor_std_m = 0.5;
+  double acceleration_std_mps2 = 2.0;  ///< Default; per-class values below.
+  std::map<std::string, double, std::less<>> class_acceleration_std_mps2;
+  double initial_speed_std_mps = 10.0;
+  double innovation_gate = 18.4;
+  int reanchor_after = 3;
   double heading_min_speed_mps = 0.5;
   double forget_after_s = 5.0;
 };
@@ -49,7 +55,13 @@ struct EventSettings {
   int crosswalk_min_frames = 3;
   double conflict_horizon_s = 3.0;
   double conflict_step_s = 0.1;
-  double conflict_distance_m = 2.0;
+  double conflict_gap_m = 1.0;
+  double conflict_min_closing_speed_mps = 0.3;
+  double conflict_max_speed_std_mps = 0.5;
+  double stopped_speed_mps = 0.5;
+  double starting_window_s = 2.0;
+  double validated_margin_m = 10.0;
+  double validated_max_ground_m_per_px = 0.2;
   int conflict_min_frames = 2;
   int end_frames = 3;
   double turning_window_s = 2.0;

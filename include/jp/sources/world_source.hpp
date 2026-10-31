@@ -11,8 +11,10 @@
 #include "jp/calibration/ground_calibration.hpp"
 #include "jp/core/class_catalog.hpp"
 #include "jp/core/pipeline_config.hpp"
+#include "jp/core/scene_config.hpp"
 #include "jp/core/world_state.hpp"
 #include "jp/localization/track_localizer.hpp"
+#include "jp/localization/validated_region.hpp"
 
 namespace jp::sources {
 
@@ -48,6 +50,13 @@ class WorldSource {
 /// World object of a localized track (class properties from the catalog).
 [[nodiscard]] core::WorldObject to_world_object(const localization::LocalizedObject& object,
                                                 const core::ClassCatalog& catalog);
+
+/// Region of validated positions of a scene calibrated from control points (their outline and
+/// the ground resolution limit of the events settings); empty for scenes calibrated otherwise
+/// (e.g. benchmark scenes registered to LiDAR labels), whose events are not restricted.
+[[nodiscard]] std::optional<localization::ValidatedRegion> validated_region(
+    const core::SceneConfig& scene, const calibration::GroundCalibration& ground,
+    const core::EventSettings& settings);
 
 /// Camera video through the perception pipeline; without a ground calibration (a scene not yet
 /// calibrated) objects are tracked in the image only and no world objects are produced.

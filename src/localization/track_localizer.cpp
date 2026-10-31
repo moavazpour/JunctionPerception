@@ -33,7 +33,7 @@ TrackLocalizer::TrackLocalizer(Eigen::Matrix3d image_to_ground, Eigen::Vector2d 
       camera_position_(std::move(camera_position)),
       camera_(std::move(camera)),
       catalog_(std::move(catalog)),
-      options_(options) {}
+      options_(std::move(options)) {}
 
 std::vector<LocalizedObject> TrackLocalizer::update(
     const std::vector<tracking::TrackedObject>& tracks, std::int64_t timestamp_ns) {
@@ -45,8 +45,7 @@ std::vector<LocalizedObject> TrackLocalizer::update(
       continue;
     }
     const auto& info = catalog_.info(track.twin_class);
-    const double sigma = options_.measurement_std_m +
-                         (options_.measurement_std_per_m * (*contact - camera_position_).norm());
+    const Eigen::Matrix2d cov = measurement_cov(contact_pixel(track.detection.box));
 
     auto it = states_.find(track.id);
     const std::optional<double> held_heading =
@@ -56,12 +55,10 @@ std::vector<LocalizedObject> TrackLocalizer::update(
 
     if (it == states_.end()) {
       it = states_
-               .emplace(track.id, State(BevKalman(measured, timestamp_ns, sigma,
-                                                  options_.acceleration_std_mps2)))
+               .emplace(track.id, State(new_filter(measured, cov, timestamp_ns, track.twin_class)))
                .first;
     } else {
-      it->second.filter.predict(timestamp_ns);
-      it->second.filter.update(measured, sigma);
+      fuse(it->second, measured, cov, timestamp_ns);
     }
     State& state = it->second;
     const Eigen::Vector2d velocity = state.filter.velocity();
@@ -80,6 +77,7 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     object.position = state.filter.position();
     object.velocity = velocity;
     object.speed_mps = speed;
+    object.speed_std_mps = state.filter.speed_std();
     object.heading_rad = state.heading_rad;
     objects.push_back(std::move(object));
   }
@@ -89,6 +87,43 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     return timestamp_ns - entry.second.filter.timestamp_ns() > forget_ns;
   });
   return objects;
+}
+
+Eigen::Matrix2d TrackLocalizer::measurement_cov(const Eigen::Vector2d& pixel) const {
+  const double floor = options_.measurement_floor_std_m;
+  Eigen::Matrix2d cov = floor * floor * Eigen::Matrix2d::Identity();
+  if (const auto jacobian = ground_jacobian(pixel, image_to_ground_)) {
+    const double s = options_.measurement_pixel_std;
+    cov += s * s * (*jacobian) * jacobian->transpose();
+  }
+  return cov;
+}
+
+BevKalman TrackLocalizer::new_filter(const Eigen::Vector2d& position, const Eigen::Matrix2d& cov,
+                                     std::int64_t timestamp_ns,
+                                     const std::string& twin_class) const {
+  const auto accel = options_.class_acceleration_std_mps2.find(twin_class);
+  return {position, timestamp_ns, cov,
+          accel == options_.class_acceleration_std_mps2.end() ? options_.acceleration_std_mps2
+                                                              : accel->second,
+          options_.initial_speed_std_mps};
+}
+
+void TrackLocalizer::fuse(State& state, const Eigen::Vector2d& measured, const Eigen::Matrix2d& cov,
+                          std::int64_t timestamp_ns) const {
+  state.filter.predict(timestamp_ns);
+  if (options_.innovation_gate > 0.0 &&
+      state.filter.innovation_distance(measured, cov) > options_.innovation_gate) {
+    // Not explained by the motion model: skip it, unless it persists (the object is elsewhere).
+    if (++state.rejected < options_.reanchor_after) {
+      return;
+    }
+    state.filter.reanchor(measured, cov, options_.initial_speed_std_mps);
+    state.rejected = 0;
+    return;
+  }
+  state.rejected = 0;
+  state.filter.update(measured, cov);
 }
 
 Eigen::Vector2d TrackLocalizer::footprint_center(const Eigen::Vector2d& contact,

@@ -14,8 +14,16 @@ struct Footprint {
 
 /// Ground point under the bottom centre of an image box (ground plane coordinates, m); empty if
 /// the point maps to infinity (e.g. above the horizon).
+/// Image point of the ground contact: bottom centre of the box (px).
+[[nodiscard]] Eigen::Vector2d contact_pixel(const cv::Rect2f& box);
+
 [[nodiscard]] std::optional<Eigen::Vector2d> ground_contact(const cv::Rect2f& box,
                                                             const Eigen::Matrix3d& image_to_ground);
+
+/// Derivative of the ground position with respect to the image position at `pixel`
+/// (m per px, columns: image x, image y); empty where the point maps to infinity.
+[[nodiscard]] std::optional<Eigen::Matrix2d> ground_jacobian(
+    const Eigen::Vector2d& pixel, const Eigen::Matrix3d& image_to_ground);
 
 /// Distance from the visible ground contact (the side facing the camera) to the footprint centre
 /// along the camera-to-object ground ray: half the length without a heading, otherwise

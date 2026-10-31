@@ -29,11 +29,23 @@ enum class ContactModel : std::uint8_t {
 
 struct LocalizerOptions {
   ContactModel contact_model = ContactModel::kBoxFit;
+  /// Process noise (white acceleration) per twin class; classes not listed use the default.
   double acceleration_std_mps2 = 2.0;
-  double measurement_std_m = 0.3;       ///< Measurement std close to the camera.
-  double measurement_std_per_m = 0.01;  ///< Added std per metre of distance from the camera.
-  double heading_min_speed_mps = 0.5;   ///< Below this speed the last heading is held.
-  double forget_after_s = 5.0;          ///< Filters of tracks unseen this long are dropped.
+  std::map<std::string, double, std::less<>> class_acceleration_std_mps2;
+  /// Measurement noise: image noise of the box bottom (px) mapped through the homography, which
+  /// makes it anisotropic (large along the camera ray, small across it) and range dependent,
+  /// plus an isotropic floor for the footprint model and the calibration.
+  double measurement_pixel_std = 2.0;
+  double measurement_floor_std_m = 0.5;
+  double initial_speed_std_mps = 10.0;  ///< Velocity std of a new (or re-anchored) track.
+  /// Innovation gate: squared Mahalanobis distance (chi-square, 2 dof) above which a measurement
+  /// is not fused; 0 disables gating. After `reanchor_after` rejected frames in a row the track
+  /// is re-anchored at the measurement and its velocity is uncertain again (e.g. a swapped or
+  /// merged box, or a jump of the footprint model).
+  double innovation_gate = 18.4;
+  int reanchor_after = 3;
+  double heading_min_speed_mps = 0.5;  ///< Below this speed the last heading is held.
+  double forget_after_s = 5.0;         ///< Filters of tracks unseen this long are dropped.
 };
 
 /// A tracked object on the ground plane.
@@ -47,6 +59,7 @@ struct LocalizedObject {
   Eigen::Vector2d position = Eigen::Vector2d::Zero();  ///< Filtered footprint centre.
   Eigen::Vector2d velocity = Eigen::Vector2d::Zero();
   double speed_mps = 0.0;
+  double speed_std_mps = 0.0;         ///< Uncertainty of the speed (filter covariance).
   std::optional<double> heading_rad;  ///< Empty until the object has moved fast enough.
 };
 
@@ -73,7 +86,17 @@ class TrackLocalizer {
 
     BevKalman filter;
     std::optional<double> heading_rad;
+    int rejected = 0;  ///< Consecutive measurements outside the innovation gate.
   };
+
+  /// Covariance of a ground position measured at `pixel`.
+  [[nodiscard]] Eigen::Matrix2d measurement_cov(const Eigen::Vector2d& pixel) const;
+  [[nodiscard]] BevKalman new_filter(const Eigen::Vector2d& position, const Eigen::Matrix2d& cov,
+                                     std::int64_t timestamp_ns,
+                                     const std::string& twin_class) const;
+  /// Predicts and fuses one measurement, with gating and re-anchoring.
+  void fuse(State& state, const Eigen::Vector2d& measured, const Eigen::Matrix2d& cov,
+            std::int64_t timestamp_ns) const;
 
   Eigen::Matrix3d image_to_ground_;
   Eigen::Vector2d camera_position_;

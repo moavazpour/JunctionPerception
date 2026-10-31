@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -7,6 +8,7 @@
 #include "jp/localization/bev_kalman.hpp"
 #include "jp/localization/ground_projection.hpp"
 #include "jp/localization/track_localizer.hpp"
+#include "jp/localization/validated_region.hpp"
 
 namespace {
 
@@ -43,15 +45,37 @@ TEST(GroundProjection, BiasCorrectionShiftsAwayFromCamera) {
 }
 
 TEST(BevKalman, EstimatesConstantVelocity) {
-  jp::localization::BevKalman filter(Eigen::Vector2d(0, 0), 0, 0.2, 1.0);
+  const Eigen::Matrix2d cov = 0.04 * Eigen::Matrix2d::Identity();
+  jp::localization::BevKalman filter(Eigen::Vector2d(0, 0), 0, cov, 1.0);
   for (int i = 1; i <= 50; ++i) {
     // 10 m/s along x, with irregular frame spacing.
     const std::int64_t t = (i * kFrameNs) + ((i % 3) * 20'000'000);
     filter.predict(t);
-    filter.update(Eigen::Vector2d(10.0 * static_cast<double>(t) * 1e-9, 0.0), 0.2);
+    filter.update(Eigen::Vector2d(10.0 * static_cast<double>(t) * 1e-9, 0.0), cov);
   }
   EXPECT_NEAR(filter.velocity().x(), 10.0, 0.3);
   EXPECT_NEAR(filter.velocity().y(), 0.0, 0.3);
+  // Converged: the speed is known to well below 1 m/s, unlike a new track (10 m/s).
+  EXPECT_LT(filter.speed_std(), 0.5);
+  const jp::localization::BevKalman fresh(Eigen::Vector2d(0, 0), 0, cov, 1.0);
+  EXPECT_NEAR(fresh.speed_std(), 10.0, 1e-9);
+}
+
+TEST(GroundProjection, JacobianMatchesFiniteDifferences) {
+  // A perspective homography: ground resolution degrades towards the top of the image.
+  const Eigen::Matrix3d h =
+      (Eigen::Matrix3d() << 0.02, 0.001, -19.0, 0.0, -0.05, 60.0, 0.0, 0.001, 0.05).finished();
+  const Eigen::Vector2d pixel(900.0, 500.0);
+  const auto jacobian = jp::localization::ground_jacobian(pixel, h);
+  ASSERT_TRUE(jacobian.has_value());
+  const auto ground = [&](const Eigen::Vector2d& p) {
+    return Eigen::Vector2d((h * p.homogeneous()).hnormalized());
+  };
+  for (int axis = 0; axis < 2; ++axis) {
+    const Eigen::Vector2d step = 1e-3 * Eigen::Vector2d::Unit(axis);
+    const Eigen::Vector2d numeric = (ground(pixel + step) - ground(pixel - step)) / 2e-3;
+    EXPECT_LT((jacobian->col(axis) - numeric).norm(), 1e-6);
+  }
 }
 
 TEST(TrackLocalizer, HoldsHeadingWhenStopped) {
@@ -80,6 +104,94 @@ sources: {}
   EXPECT_LT(objects.front().speed_mps, 0.5);
   ASSERT_TRUE(objects.front().heading_rad.has_value());
   EXPECT_NEAR(*objects.front().heading_rad, std::numbers::pi / 2, 0.2);
+}
+
+TEST(TrackLocalizer, MeasurementNoiseGrowsAlongTheRay) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  pedestrian: {length_m: 0.6, width_m: 0.6, height_m: 1.7, vru: true}
+sources: {}
+)yaml");
+  // Camera 6 m high looking along +y with f = 1000 px: image row v sees ground y = 6000 / v.
+  const Eigen::Matrix3d h =
+      (Eigen::Matrix3d() << 6.0, 0.0, -5760.0, 0.0, 0.0, 6000.0, 0.0, 1.0, -540.0).finished();
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  options.measurement_floor_std_m = 0.0;
+  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, 0), std::nullopt, catalog,
+                                             options);
+  jp::tracking::TrackedObject track;
+  track.twin_class = "pedestrian";
+  // A pedestrian standing still at 10 m and one at 60 m, with the same 2 px box jitter.
+  std::vector<double> spread;
+  for (const float row : {1140.0F, 640.0F}) {
+    track.id = static_cast<std::int64_t>(row);
+    std::vector<double> ys;
+    for (int i = 0; i < 40; ++i) {
+      const float jitter = (i % 2 == 0) ? 2.0F : -2.0F;
+      track.detection.box = cv::Rect2f(950, row - 40 + jitter, 20, 40);
+      const auto objects = localizer.update({track}, i * kFrameNs);
+      ys.push_back(objects.front().position.y());
+    }
+    spread.push_back(*std::ranges::max_element(ys) - *std::ranges::min_element(ys));
+  }
+  // The filter follows the 2 px noise at both ranges in proportion to the ground sampling:
+  // much less positional jitter near the camera than far away.
+  EXPECT_LT(spread[0], 0.2);
+  EXPECT_GT(spread[1], 3.0 * spread[0]);
+}
+
+TEST(TrackLocalizer, RejectsSingleJumpsAndReanchorsPersistentOnes) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                             options);
+  jp::tracking::TrackedObject track;
+  track.id = 3;
+  track.twin_class = "car";
+  const auto at = [&](float x, int frame) {
+    track.detection.box = cv::Rect2f(x, 80, 40, 20);
+    return localizer.update({track}, frame * kFrameNs).front();
+  };
+  int frame = 0;
+  for (; frame < 30; ++frame) {
+    static_cast<void>(at(100.0F, frame));  // parked at x = 12 m
+  }
+  // One frame 8 m away (e.g. a box briefly covering two objects): ignored.
+  auto object = at(180.0F, frame++);
+  EXPECT_NEAR(object.position.x(), 12.0, 0.1);
+  EXPECT_LT(object.speed_mps, 0.5);
+  object = at(100.0F, frame++);
+  EXPECT_NEAR(object.position.x(), 12.0, 0.1);
+  // The object stays at the new place: re-anchored there after three frames, speed unknown.
+  for (int i = 0; i < 3; ++i) {
+    object = at(180.0F, frame++);
+  }
+  EXPECT_NEAR(object.position.x(), 20.0, 0.1);
+  EXPECT_GT(object.speed_std_mps, 5.0);
+}
+
+TEST(ValidatedRegion, OutlineMarginAndGroundResolution) {
+  // Camera at the origin, 6 m high, looking along +y with f = 1000 px: one image row is
+  // y^2 / 6000 m of ground, 0.2 m at y = 34.6 m.
+  const Eigen::Matrix3d h =
+      (Eigen::Matrix3d() << 6.0, 0.0, -5760.0, 0.0, 0.0, 6000.0, 0.0, 1.0, -540.0).finished();
+  const std::vector<Eigen::Vector2d> points = {{-5, 10}, {5, 10}, {5, 60}, {-5, 60}, {0, 30}};
+  const jp::localization::ValidatedRegion region(points, h, Eigen::Vector2d(0, 0),
+                                                 {.margin_m = 10.0, .max_ground_m_per_px = 0.2});
+  EXPECT_EQ(region.outline().size(), 4U);
+  EXPECT_NEAR(region.ground_m_per_px({0, 30}), 30.0 * 30.0 / 6000.0, 1e-6);
+  EXPECT_TRUE(region.contains({0, 30}));
+  EXPECT_TRUE(region.contains({12, 30}));   // 7 m outside the outline, within the margin
+  EXPECT_FALSE(region.contains({20, 30}));  // beyond the margin
+  EXPECT_FALSE(region.contains({0, 50}));   // inside the outline, but 0.42 m per pixel
+  EXPECT_FALSE(region.contains({0, -5}));   // behind the camera
 }
 
 TEST(GroundCalibration, LoadsRepositoryScene) {

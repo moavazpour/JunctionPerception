@@ -22,6 +22,10 @@ TEST(WorldStateJson, ParsesSharedExample) {
   EXPECT_EQ(state.objects[0].object_class, "car");
   EXPECT_FALSE(state.objects[1].heading_rad.has_value());
   EXPECT_EQ(state.objects[1].zones, std::vector<std::string>{"crosswalk_n"});
+  EXPECT_DOUBLE_EQ(state.objects[0].speed_std_mps.value_or(0.0), 0.12);
+  EXPECT_FALSE(state.objects[1].speed_std_mps.has_value());
+  EXPECT_FALSE(state.objects[1].validated);
+  EXPECT_EQ(state.events[0].vehicle_state, "moving");
   ASSERT_EQ(state.events.size(), 2U);
   ASSERT_TRUE(state.events[0].min_distance_m.has_value());
   EXPECT_DOUBLE_EQ(*state.events[0].min_distance_m, 1.4);

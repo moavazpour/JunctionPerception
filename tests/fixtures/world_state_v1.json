@@ -16,9 +16,11 @@
       "vy": 6.2,
       "heading_rad": 1.5708,
       "speed_mps": 6.2,
+      "speed_std_mps": 0.12,
       "confidence": 0.81,
       "zones": [],
-      "turning": false
+      "turning": false,
+      "validated": true
     },
     {
       "id": 42,
@@ -31,9 +33,11 @@
       "vy": 0.0,
       "heading_rad": null,
       "speed_mps": 1.1,
+      "speed_std_mps": null,
       "confidence": 0.66,
       "zones": ["crosswalk_n"],
-      "turning": false
+      "turning": false,
+      "validated": false
     }
   ],
   "events": [
@@ -44,6 +48,8 @@
       "object_ids": [17, 42],
       "min_distance_m": 1.4,
       "time_to_closest_s": 1.2,
+      "closing_speed_mps": 2.1,
+      "vehicle_state": "moving",
       "zone": "crosswalk_n"
     },
     {
@@ -53,6 +59,8 @@
       "object_ids": [42],
       "min_distance_m": null,
       "time_to_closest_s": null,
+      "closing_speed_mps": null,
+      "vehicle_state": null,
       "zone": "crosswalk_n"
     }
   ]

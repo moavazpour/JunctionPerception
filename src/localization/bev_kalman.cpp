@@ -1,27 +1,37 @@
 #include "jp/localization/bev_kalman.hpp"
 
 #include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
+#include <algorithm>
+#include <cmath>
 
 namespace jp::localization {
 
 namespace {
 
 constexpr double kNanosecondsPerSecond = 1e9;
+constexpr double kAtRestSpeedMps = 0.1;
+
+Eigen::Matrix<double, 2, 4> observation() {
+  Eigen::Matrix<double, 2, 4> h = Eigen::Matrix<double, 2, 4>::Zero();
+  h(0, 0) = 1.0;
+  h(1, 1) = 1.0;
+  return h;
+}
 
 }  // namespace
 
 BevKalman::BevKalman(const Eigen::Vector2d& position, std::int64_t timestamp_ns,
-                     double position_std_m, double acceleration_std_mps2,
+                     const Eigen::Matrix2d& position_cov, double acceleration_std_mps2,
                      double initial_speed_std_mps)
     : state_(Eigen::Vector4d::Zero()),
       covariance_(Eigen::Matrix4d::Zero()),
       timestamp_ns_(timestamp_ns),
       acceleration_std_(acceleration_std_mps2) {
   state_ << position, 0.0, 0.0;
-  covariance_ = Eigen::Vector4d(position_std_m * position_std_m, position_std_m * position_std_m,
-                                initial_speed_std_mps * initial_speed_std_mps,
-                                initial_speed_std_mps * initial_speed_std_mps)
-                    .asDiagonal();
+  covariance_.topLeftCorner<2, 2>() = position_cov;
+  covariance_.bottomRightCorner<2, 2>() =
+      initial_speed_std_mps * initial_speed_std_mps * Eigen::Matrix2d::Identity();
 }
 
 void BevKalman::predict(std::int64_t timestamp_ns) {
@@ -47,17 +57,43 @@ void BevKalman::predict(std::int64_t timestamp_ns) {
   covariance_ = (f * covariance_ * f.transpose()) + noise;
 }
 
-void BevKalman::update(const Eigen::Vector2d& position, double position_std_m) {
-  Eigen::Matrix<double, 2, 4> h = Eigen::Matrix<double, 2, 4>::Zero();
-  h(0, 0) = 1.0;
-  h(1, 1) = 1.0;
-  const Eigen::Matrix2d innovation_cov =
-      (h * covariance_ * h.transpose()) +
-      (position_std_m * position_std_m * Eigen::Matrix2d::Identity());
+double BevKalman::innovation_distance(const Eigen::Vector2d& position,
+                                      const Eigen::Matrix2d& cov) const {
+  const Eigen::Matrix2d s = covariance_.topLeftCorner<2, 2>() + cov;
+  const Eigen::Vector2d y = position - state_.head<2>();
+  return y.dot(s.llt().solve(y));
+}
+
+void BevKalman::update(const Eigen::Vector2d& position, const Eigen::Matrix2d& cov) {
+  const auto h = observation();
+  const Eigen::Matrix2d innovation_cov = (h * covariance_ * h.transpose()) + cov;
   const Eigen::Matrix<double, 4, 2> gain =
       covariance_ * h.transpose() * innovation_cov.llt().solve(Eigen::Matrix2d::Identity());
   state_ += gain * (position - (h * state_));
-  covariance_ = (Eigen::Matrix4d::Identity() - (gain * h)) * covariance_;
+  // Joseph form keeps the covariance symmetric and positive definite.
+  const Eigen::Matrix4d a = Eigen::Matrix4d::Identity() - (gain * h);
+  covariance_ = (a * covariance_ * a.transpose()) + (gain * cov * gain.transpose());
+}
+
+void BevKalman::reanchor(const Eigen::Vector2d& position, const Eigen::Matrix2d& cov,
+                         double speed_std_mps) {
+  state_.head<2>() = position;
+  covariance_.setZero();
+  covariance_.topLeftCorner<2, 2>() = cov;
+  covariance_.bottomRightCorner<2, 2>() =
+      speed_std_mps * speed_std_mps * Eigen::Matrix2d::Identity();
+}
+
+double BevKalman::speed_std() const {
+  const Eigen::Matrix2d cov = velocity_cov();
+  const Eigen::Vector2d v = velocity();
+  const double speed = v.norm();
+  if (speed > kAtRestSpeedMps) {
+    const Eigen::Vector2d d = v / speed;
+    return std::sqrt(std::max(d.dot(cov * d), 0.0));
+  }
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> eigen(cov, Eigen::EigenvaluesOnly);
+  return std::sqrt(std::max(eigen.eigenvalues().maxCoeff(), 0.0));
 }
 
 }  // namespace jp::localization

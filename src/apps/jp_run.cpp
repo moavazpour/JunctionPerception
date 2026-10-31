@@ -49,15 +49,18 @@ struct RunArgs {
   std::string bev;
   std::string reference_sequence;
   std::string tracks_csv;
+  std::string reference_csv;
   std::string world_jsonl;
   std::string bias_correction;
   std::int64_t max_frames = 0;
   std::int64_t warmup_frames = 10;
 };
 
-// Benchmark ground truth of every frame as ground-plane footprints of the scene.
+// Benchmark ground truth of every frame as ground-plane footprints of the scene; optionally also
+// written as CSV (frame, ground truth track, category, footprint) for offline evaluation.
 References reference_footprints(const std::filesystem::path& sequence_dir,
-                                const jp::calibration::GroundCalibration& ground) {
+                                const jp::calibration::GroundCalibration& ground,
+                                const std::string& csv_path) {
   if (!ground.sensor_from_ground) {
     throw std::runtime_error("the scene calibration has no sensor_from_ground pose");
   }
@@ -67,6 +70,12 @@ References reference_footprints(const std::filesystem::path& sequence_dir,
       jp::benchmark::load_ground_truth(sequence, jp::benchmark::GroundTruthLabels::kSouth);
   References frames;
   frames.reserve(truth.frames.size());
+  std::ofstream csv;
+  if (!csv_path.empty()) {
+    std::filesystem::create_directories(std::filesystem::path(csv_path).parent_path());
+    csv.open(csv_path);
+    csv << "frame,track_id,category,x,y,yaw_rad,length_m,width_m\n";
+  }
   for (const auto& objects : truth.frames) {
     auto& footprints = frames.emplace_back();
     for (const auto& object : objects) {
@@ -75,6 +84,12 @@ References reference_footprints(const std::filesystem::path& sequence_dir,
           ground_from_sensor.linear() * (object.box.rotation * Eigen::Vector3d::UnitX());
       footprints.push_back({center.head<2>(), std::atan2(forward.y(), forward.x()),
                             object.box.size.x(), object.box.size.y()});
+      if (csv.is_open()) {
+        const auto& f = footprints.back();
+        csv << std::format("{},{},{},{:.3f},{:.3f},{:.4f},{:.2f},{:.2f}\n", frames.size() - 1,
+                           object.track_id, object.box.category, f.center.x(), f.center.y(),
+                           f.yaw_rad, f.length_m, f.width_m);
+      }
     }
   }
   return frames;
@@ -95,7 +110,7 @@ class Sinks {
       std::filesystem::create_directories(std::filesystem::path(args_.tracks_csv).parent_path());
       csv_.open(args_.tracks_csv);
       csv_ << "frame,timestamp_ns,id,class,rider,x,y,contact_x,contact_y,speed_mps,heading_rad,"
-              "confidence\n";
+              "confidence,speed_std_mps\n";
     }
   }
 
@@ -149,11 +164,11 @@ class Sinks {
   void write_csv(const jp::io::Frame& frame,
                  const std::vector<jp::localization::LocalizedObject>& objects) {
     for (const auto& o : objects) {
-      csv_ << std::format("{},{},{},{},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f}\n",
+      csv_ << std::format("{},{},{},{},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f},{:.3f}\n",
                           frame.index, frame.timestamp_ns, o.id, o.twin_class, o.rider ? 1 : 0,
                           o.position.x(), o.position.y(), o.contact.x(), o.contact.y(), o.speed_mps,
                           o.heading_rad ? std::format("{:.4f}", *o.heading_rad) : std::string(),
-                          o.confidence);
+                          o.confidence, o.speed_std_mps);
     }
   }
 
@@ -238,12 +253,19 @@ class RunStatistics {
 class WorldOutput {
  public:
   WorldOutput(const std::filesystem::path& path, const std::filesystem::path& scene_dir,
-              const jp::core::EventSettings& events, jp::core::ClassCatalog catalog)
+              const jp::core::EventSettings& events, jp::core::ClassCatalog catalog,
+              const jp::calibration::GroundCalibration& ground)
       : writer_(path),
         scene_id_(scene_dir.filename().string()),
         events_(jp::vru::load_scene_zones(jp::core::load_scene_config(scene_dir)),
-                jp::vru::event_options(events)),
-        catalog_(std::move(catalog)) {}
+                jp::vru::event_options(events, catalog)),
+        catalog_(std::move(catalog)) {
+    const auto scene = jp::core::load_scene_config(scene_dir);
+    if (auto region = jp::sources::validated_region(scene, ground, events)) {
+      events_.set_validated_region(
+          [region = std::move(*region)](const Eigen::Vector2d& p) { return region.contains(p); });
+    }
+  }
 
   void write(const jp::io::Frame& frame,
              const std::vector<jp::localization::LocalizedObject>& objects) {
@@ -300,9 +322,9 @@ void run(const RunArgs& args) {
     throw std::runtime_error("--bev, --tracks-csv, --world-jsonl and --reference need --scene");
   }
   std::optional<WorldOutput> world;
-  if (!args.world_jsonl.empty()) {
+  if (!args.world_jsonl.empty() && ground) {
     const std::filesystem::path scene_dir(args.scene);
-    world.emplace(args.world_jsonl, scene_dir, config.events, catalog);
+    world.emplace(args.world_jsonl, scene_dir, config.events, catalog, *ground);
   }
 
   jp::sources::PerceptionPipeline pipeline(config, catalog, ground);
@@ -313,7 +335,7 @@ void run(const RunArgs& args) {
                config.localization.bias_correction);
   References references;
   if (!args.reference_sequence.empty() && ground) {
-    references = reference_footprints(args.reference_sequence, *ground);
+    references = reference_footprints(args.reference_sequence, *ground, args.reference_csv);
   }
   Sinks sinks(args, catalog, ground, std::move(references), source->fps());
   RunStatistics statistics(args.warmup_frames);
@@ -361,6 +383,8 @@ int main(int argc, char** argv) {
   app.add_option("--reference", args.reference_sequence,
                  "TUMTraf sequence folder whose labels are drawn in the top-down video");
   app.add_option("--tracks-csv", args.tracks_csv, "Write localized tracks per frame (CSV)");
+  app.add_option("--reference-csv", args.reference_csv,
+                 "Write the --reference labels per frame as ground-plane footprints (CSV)");
   app.add_option("--world-jsonl", args.world_jsonl,
                  "Write world states with zones and events per frame (JSONL)");
   app.add_option("--bias-correction", args.bias_correction,

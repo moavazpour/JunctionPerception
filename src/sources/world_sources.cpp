@@ -8,6 +8,7 @@
 
 #include "jp/benchmark/ground_truth.hpp"
 #include "jp/benchmark/tumtraf_sequence.hpp"
+#include "jp/calibration/control_points.hpp"
 #include "jp/core/rigid_transform.hpp"
 #include "jp/io/frame_source.hpp"
 #include "jp/sources/perception_pipeline.hpp"
@@ -228,9 +229,27 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
   out.vx = object.velocity.x();
   out.vy = object.velocity.y();
   out.speed_mps = object.speed_mps;
+  out.speed_std_mps = object.speed_std_mps;
   out.heading_rad = object.heading_rad;
   out.confidence = object.confidence;
   return out;
+}
+
+std::optional<localization::ValidatedRegion> validated_region(
+    const core::SceneConfig& scene, const calibration::GroundCalibration& ground,
+    const core::EventSettings& settings) {
+  const auto path = scene.control_points_path();
+  if (!scene.geo_anchor || !std::filesystem::exists(path)) {
+    return std::nullopt;
+  }
+  std::vector<Eigen::Vector2d> points;
+  for (const auto& point :
+       calibration::load_control_points(path, core::GeoAnchor(*scene.geo_anchor))) {
+    points.push_back(point.world);
+  }
+  return localization::ValidatedRegion(
+      points, ground.image_to_ground, ground.camera_ground_position_m,
+      {settings.validated_margin_m, settings.validated_max_ground_m_per_px});
 }
 
 std::unique_ptr<WorldSource> make_live_source(

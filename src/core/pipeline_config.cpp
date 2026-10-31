@@ -67,9 +67,19 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
       throw std::runtime_error("bias_correction must be box_fit, ray_offset or none, not " +
                                l.bias_correction);
     }
-    l.acceleration_std_mps2 = localization["acceleration_std_mps2"].as<double>();
-    l.measurement_std_m = localization["measurement_std_m"].as<double>();
-    l.measurement_std_per_m = localization["measurement_std_per_m"].as<double>();
+    l.measurement_pixel_std = localization["measurement_pixel_std"].as<double>();
+    l.measurement_floor_std_m = localization["measurement_floor_std_m"].as<double>();
+    for (const auto& entry : localization["acceleration_std_mps2"]) {
+      const auto name = entry.first.as<std::string>();
+      if (name == "default") {
+        l.acceleration_std_mps2 = entry.second.as<double>();
+      } else {
+        l.class_acceleration_std_mps2[name] = entry.second.as<double>();
+      }
+    }
+    l.initial_speed_std_mps = localization["initial_speed_std_mps"].as<double>();
+    l.innovation_gate = localization["innovation_gate"].as<double>();
+    l.reanchor_after = localization["reanchor_after"].as<int>();
     l.heading_min_speed_mps = localization["heading_min_speed_mps"].as<double>();
     l.forget_after_s = localization["forget_after_s"].as<double>();
 
@@ -78,7 +88,13 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     e.crosswalk_min_frames = events["crosswalk_min_frames"].as<int>();
     e.conflict_horizon_s = events["conflict_horizon_s"].as<double>();
     e.conflict_step_s = events["conflict_step_s"].as<double>();
-    e.conflict_distance_m = events["conflict_distance_m"].as<double>();
+    e.conflict_gap_m = events["conflict_gap_m"].as<double>();
+    e.conflict_min_closing_speed_mps = events["conflict_min_closing_speed_mps"].as<double>();
+    e.conflict_max_speed_std_mps = events["conflict_max_speed_std_mps"].as<double>();
+    e.stopped_speed_mps = events["stopped_speed_mps"].as<double>();
+    e.starting_window_s = events["starting_window_s"].as<double>();
+    e.validated_margin_m = events["validated_margin_m"].as<double>();
+    e.validated_max_ground_m_per_px = events["validated_max_ground_m_per_px"].as<double>();
     e.conflict_min_frames = events["conflict_min_frames"].as<int>();
     e.end_frames = events["end_frames"].as<int>();
     e.turning_window_s = events["turning_window_s"].as<double>();

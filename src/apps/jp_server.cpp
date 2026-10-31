@@ -78,7 +78,15 @@ void run(const ServerArgs& args) {
                input.string());
 
   auto source = make_source(startup.mode, input, pipeline, catalog, scene.ground);
-  jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events));
+  jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events, catalog));
+  if (scene.ground) {
+    if (auto region = jp::sources::validated_region(scene.config, *scene.ground, pipeline.events)) {
+      spdlog::info("events limited to the validated region ({} control points outline)",
+                   region->outline().size());
+      events.set_validated_region(
+          [region = std::move(*region)](const Eigen::Vector2d& p) { return region.contains(p); });
+    }
+  }
   jp::server::TwinServer server(config.server, std::move(scene), catalog, std::move(source),
                                 std::move(events));
   server.run();
