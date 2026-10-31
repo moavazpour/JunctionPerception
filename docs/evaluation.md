@@ -13,6 +13,11 @@ runs every sequence and camera for each bias-correction variant, evaluates them 
 (settings in `configs/evaluation.yaml`) and writes `outputs/<run>/eval/<variant>/report.md`,
 `metrics.json`, a comparison `summary.md` and figures (`tools/plot_evaluation.py`).
 
+![The twin on a TUMTraf sequence: live pipeline, crosswalk events](media/twin_benchmark.gif)
+
+*Live pipeline on TUMTraf Intersection R02, S3, south camera 1. Camera images: TUMTraf
+Intersection dataset (Zimmer et al., ITSC 2023).*
+
 ## Method
 
 - **Ground truth.** The bottom centre of each labelled 3D box, transformed into the scene's ground
@@ -88,6 +93,11 @@ predicted as cars (1188) or trucks (101), trailers mostly as trucks (728).
 
 Conflicts: the labels contain no vehicle–VRU conflict (the smallest gap between any visible
 labelled vehicle and VRU is 1.53 m), and the system reports none.
+
+<p>
+  <img src="media/eval_position_error_by_condition.png" width="49%" alt="Median position error by condition">
+  <img src="media/eval_recall_by_class.png" width="49%" alt="Recall by labelled class">
+</p>
 
 ## Interpretation
 

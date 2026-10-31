@@ -119,6 +119,13 @@ events. Benchmark scenes, registered to LiDAR labels, are not restricted.
 | `POST /api/playback` | `{"action": "play"}`, `{"action": "pause"}`, `{"action": "seek", "frame": n}` |
 | `WS /ws/world` | World state per frame (text) |
 | `WS /ws/video` | Camera images (binary): 8-byte little-endian frame index followed by a JPEG, rate-limited |
-| `GET /` | Built frontend (`web/dist`) |
+| `GET /api/frame` | Latest camera image (JPEG), for the calibration tool |
+| `GET /api/calibration` | Control points of the scene |
+| `POST /api/calibration/fit` | Fits control points: homography, residuals per point, camera pose |
+| `POST /api/calibration/save` | Fits and saves control points and calibration (optional camera position and height) |
+| `POST /api/zones` | Saves the zones of the scene (GeoJSON, scene ground frame); events use them at once |
+| `POST /api/restart` | Restarts the server, e.g. to apply a new calibration |
+| `GET /map/...` | Map layers of the scene (`map_cache/<scene>`, see docs/map-data.md) |
+| `GET /` | Built frontend (`web/dist`): twin at `/`, calibration tool at `/calibrate.html` |
 
 Recordings are played in real time on their own timestamps (`configs/server.yaml`).
