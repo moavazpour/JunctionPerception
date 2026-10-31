@@ -11,7 +11,12 @@ export const EVENT_LABELS: Record<WorldEvent['type'], string> = {
 export function describeEvent(event: WorldEvent): string {
   const parts = [event.object_ids.map((id) => `#${id}`).join(', ')];
   if (event.min_distance_m !== null && event.time_to_closest_s !== null) {
-    parts.push(`${event.min_distance_m.toFixed(1)} m in ${event.time_to_closest_s.toFixed(1)} s`);
+    parts.push(
+      `${event.min_distance_m.toFixed(1)} m gap in ${event.time_to_closest_s.toFixed(1)} s`,
+    );
+  }
+  if (event.vehicle_state !== null && event.vehicle_state !== 'moving') {
+    parts.push(`vehicle ${event.vehicle_state}`);
   }
   if (event.zone !== null) {
     parts.push(event.zone);

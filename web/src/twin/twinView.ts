@@ -19,6 +19,7 @@ export type BaseLayer = 'map' | 'ortho';
 interface TrackedMesh {
   objectClass: string;
   highlighted: boolean;
+  validated: boolean;
   root: THREE.Group;
   model: THREE.Group;
   halo: THREE.Mesh | null;
@@ -239,9 +240,19 @@ export class TwinView {
     return this.classes.get(name) ?? this.fallbackClass;
   }
 
-  private ensureMesh(id: number, objectClass: string, highlighted: boolean): TrackedMesh {
+  private ensureMesh(
+    id: number,
+    objectClass: string,
+    highlighted: boolean,
+    validated: boolean,
+  ): TrackedMesh {
     const existing = this.meshes.get(id);
-    if (existing && existing.objectClass === objectClass && existing.highlighted === highlighted) {
+    if (
+      existing &&
+      existing.objectClass === objectClass &&
+      existing.highlighted === highlighted &&
+      existing.validated === validated
+    ) {
       return existing;
     }
     const root = existing?.root ?? new THREE.Group();
@@ -251,9 +262,19 @@ export class TwinView {
     } else {
       this.scene.add(root);
     }
-    const model = buildClassMesh(this.classInfo(objectClass), makeMaterials(highlighted));
+    const model = buildClassMesh(
+      this.classInfo(objectClass),
+      makeMaterials(highlighted, validated),
+    );
     root.add(model);
-    const tracked = { objectClass, highlighted, root, model, halo: existing?.halo ?? null };
+    const tracked = {
+      objectClass,
+      highlighted,
+      validated,
+      root,
+      model,
+      halo: existing?.halo ?? null,
+    };
     this.meshes.set(id, tracked);
     return tracked;
   }
@@ -270,7 +291,12 @@ export class TwinView {
         if (!pose) {
           continue;
         }
-        const tracked = this.ensureMesh(object.id, object.class, object.vru || any.has(object.id));
+        const tracked = this.ensureMesh(
+          object.id,
+          object.class,
+          object.vru || any.has(object.id),
+          object.validated,
+        );
         tracked.root.position.set(pose.x, pose.y, 0);
         tracked.model.rotation.z = pose.heading;
         if (conflict.has(object.id) && !tracked.halo) {

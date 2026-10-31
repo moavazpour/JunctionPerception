@@ -4,6 +4,7 @@ export const WORLD_STATE_SCHEMA_VERSION = 1;
 export type WorldSource = 'live' | 'oracle' | 'replay';
 export type EventType = 'VRU_ON_CROSSWALK' | 'VRU_VEHICLE_CONFLICT';
 export type EventState = 'active' | 'ended';
+export type VehicleState = 'moving' | 'stopped' | 'starting';
 
 export interface WorldObject {
   id: number;
@@ -16,9 +17,13 @@ export interface WorldObject {
   vy: number;
   heading_rad: number | null;
   speed_mps: number;
+  /** Speed uncertainty of the tracking filter; null if not estimated (e.g. ground truth). */
+  speed_std_mps: number | null;
   confidence: number;
   zones: string[];
   turning: boolean;
+  /** Inside the region validated for safety events; objects outside take part in none. */
+  validated: boolean;
 }
 
 export interface WorldEvent {
@@ -28,6 +33,8 @@ export interface WorldEvent {
   object_ids: number[];
   min_distance_m: number | null;
   time_to_closest_s: number | null;
+  closing_speed_mps: number | null;
+  vehicle_state: VehicleState | null;
   zone: string | null;
 }
 
@@ -70,9 +77,11 @@ const objectFields: Record<keyof WorldObject, FieldCheck> = {
   vy: isNumber,
   heading_rad: nullable(isNumber),
   speed_mps: isNumber,
+  speed_std_mps: nullable(isNumber),
   confidence: isNumber,
   zones: arrayOf(isString),
   turning: isBoolean,
+  validated: isBoolean,
 };
 
 const eventFields: Record<keyof WorldEvent, FieldCheck> = {
@@ -82,6 +91,8 @@ const eventFields: Record<keyof WorldEvent, FieldCheck> = {
   object_ids: arrayOf(isNumber),
   min_distance_m: nullable(isNumber),
   time_to_closest_s: nullable(isNumber),
+  closing_speed_mps: nullable(isNumber),
+  vehicle_state: nullable(oneOf('moving', 'stopped', 'starting')),
   zone: nullable(isString),
 };
 

@@ -21,16 +21,24 @@ export interface ObjectMaterials {
   cabin: THREE.MeshStandardMaterial;
 }
 
-export function makeMaterials(highlighted: boolean): ObjectMaterials {
+/** Opacity of objects outside the validated region: tracked and shown, but not evaluated. */
+export const UNVALIDATED_OPACITY = 0.35;
+
+export function makeMaterials(highlighted: boolean, validated = true): ObjectMaterials {
+  const faded = validated
+    ? {}
+    : { transparent: true, opacity: UNVALIDATED_OPACITY, depthWrite: false };
   const body = new THREE.MeshStandardMaterial({
     color: highlighted ? PALETTE.accent : PALETTE.body,
     roughness: 0.85,
     metalness: 0.0,
+    ...faded,
   });
   const cabin = new THREE.MeshStandardMaterial({
     color: highlighted ? new THREE.Color(PALETTE.accent).multiplyScalar(0.7) : PALETTE.cabin,
     roughness: 0.6,
     metalness: 0.0,
+    ...faded,
   });
   return { body, cabin };
 }

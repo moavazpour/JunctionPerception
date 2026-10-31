@@ -19,9 +19,11 @@ function object(id: number, x: number, y: number, heading: number | null): World
     vy: 0,
     heading_rad: heading,
     speed_mps: 0,
+    speed_std_mps: 0.1,
     confidence: 0.9,
     zones: [],
     turning: false,
+    validated: true,
   };
 }
 
@@ -44,6 +46,8 @@ const conflict: WorldEvent = {
   object_ids: [17, 42],
   min_distance_m: 1.44,
   time_to_closest_s: 1.2,
+  closing_speed_mps: 2.0,
+  vehicle_state: 'moving',
   zone: 'crosswalk_n',
 };
 
@@ -81,7 +85,10 @@ describe('WorldInterpolator', () => {
 
 describe('events', () => {
   it('describes conflicts with distance, time and zone', () => {
-    expect(describeEvent(conflict)).toBe('#17, #42 · 1.4 m in 1.2 s · crosswalk_n');
+    expect(describeEvent(conflict)).toBe('#17, #42 · 1.4 m gap in 1.2 s · crosswalk_n');
+    expect(describeEvent({ ...conflict, vehicle_state: 'stopped' })).toBe(
+      '#17, #42 · 1.4 m gap in 1.2 s · vehicle stopped · crosswalk_n',
+    );
   });
 
   it('keeps active events and a history of ended ones', () => {
