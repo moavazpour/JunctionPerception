@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <algorithm>
 #include <numbers>
 #include <stdexcept>
 
@@ -58,6 +59,10 @@ TEST(ControlPointFit, FlagsAnOutlierAndReportsItsError) {
   EXPECT_FALSE(fit.residuals[1].inlier);
   EXPECT_NEAR(fit.residuals[1].error_m, 4.0, 0.01);
   EXPECT_LT(fit.fit_rms_m, 1e-6);
+  // The validated region is built from the other points only.
+  const auto agreeing = jp::calibration::agreeing_points(points, fit);
+  EXPECT_EQ(agreeing.size(), points.size() - 1);
+  EXPECT_EQ(std::ranges::count(agreeing, points[1].world), 0);
 }
 
 TEST(ControlPointFit, NeedsFourFitPoints) {

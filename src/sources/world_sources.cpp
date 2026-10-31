@@ -242,13 +242,12 @@ std::optional<localization::ValidatedRegion> validated_region(
   if (!scene.geo_anchor || !std::filesystem::exists(path)) {
     return std::nullopt;
   }
-  std::vector<Eigen::Vector2d> points;
-  for (const auto& point :
-       calibration::load_control_points(path, core::GeoAnchor(*scene.geo_anchor))) {
-    points.push_back(point.world);
-  }
+  // Only points the calibration agrees with (a mis-clicked point validates nothing).
+  const auto points = calibration::load_control_points(path, core::GeoAnchor(*scene.geo_anchor));
+  const auto fit = calibration::fit_control_points(points, scene.width_px, scene.height_px);
   return localization::ValidatedRegion(
-      points, ground.image_to_ground, ground.camera_ground_position_m,
+      calibration::agreeing_points(points, fit), ground.image_to_ground,
+      ground.camera_ground_position_m,
       {settings.validated_margin_m, settings.validated_max_ground_m_per_px});
 }
 

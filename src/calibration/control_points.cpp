@@ -123,6 +123,18 @@ ControlPointFit fit_control_points(const std::vector<ControlPoint>& points, int 
   return fit;
 }
 
+std::vector<Eigen::Vector2d> agreeing_points(const std::vector<ControlPoint>& points,
+                                             const ControlPointFit& fit, double max_error_m) {
+  std::vector<Eigen::Vector2d> agreeing;
+  for (std::size_t i = 0; i < points.size() && i < fit.residuals.size(); ++i) {
+    const auto& r = fit.residuals[i];
+    if (r.check ? r.error_m <= max_error_m : r.inlier) {
+      agreeing.push_back(points[i].world);
+    }
+  }
+  return agreeing;
+}
+
 GroundCalibration calibration_from_fit(const ControlPointFit& fit, const std::string& camera,
                                        int width_px, int height_px,
                                        const std::optional<Eigen::Vector2d>& camera_position,

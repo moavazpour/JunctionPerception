@@ -46,6 +46,12 @@ struct ControlPointFit {
                                                  int width_px, int height_px,
                                                  double ransac_threshold_m = 1.0);
 
+/// Map positions of the points the fit agrees with: RANSAC inliers among the fit points and
+/// check points within `max_error_m` (e.g. the region where the calibration is validated).
+[[nodiscard]] std::vector<Eigen::Vector2d> agreeing_points(const std::vector<ControlPoint>& points,
+                                                           const ControlPointFit& fit,
+                                                           double max_error_m = 1.0);
+
 /// Camera centre (x, y, z) of a projection matrix in its world frame.
 [[nodiscard]] Eigen::Vector3d camera_center(const Eigen::Matrix<double, 3, 4>& projection);
 
