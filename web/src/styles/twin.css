@@ -265,6 +265,45 @@
   object-fit: contain;
 }
 
+.camera-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  background: rgb(5 8 15 / 65%);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.camera-expand:hover {
+  background: rgb(5 8 15 / 85%);
+}
+
+/* Enlarged camera image over the whole window. */
+.camera-frame.expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  aspect-ratio: auto;
+  border-radius: 0;
+  background: #000;
+}
+
+.camera-frame.expanded .camera-expand {
+  top: 16px;
+  right: 16px;
+  width: 38px;
+  height: 38px;
+  font-size: 20px;
+}
+
 .camera-empty {
   position: absolute;
   inset: 0;

@@ -51,6 +51,22 @@ export class SidePanel {
   onCamera: (id: string) => void = () => undefined;
 
   constructor() {
+    // Enlarged, the camera image fills the window over the page (button, double click, Esc).
+    const frame = this.video.parentElement;
+    const expand = element<HTMLButtonElement>('#video-expand');
+    const setExpanded = (on: boolean) => {
+      frame?.classList.toggle('expanded', on);
+      expand.replaceChildren(icon(on ? 'shrink' : 'expand'));
+      expand.title = on ? 'Back to the panel (Esc)' : 'Enlarge (Esc to close)';
+    };
+    const toggle = () => setExpanded(!frame?.classList.contains('expanded'));
+    expand.addEventListener('click', toggle);
+    this.video.addEventListener('dblclick', toggle);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        setExpanded(false);
+      }
+    });
     this.playButton.addEventListener('click', () => {
       void sendPlayback({ action: this.playing ? 'pause' : 'play' }, this.base);
       this.setPlaying(!this.playing);

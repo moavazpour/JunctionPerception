@@ -100,6 +100,17 @@ function layout(): HTMLElement {
           { class: 'camera-frame' },
           h('img', { id: 'video', alt: 'Camera image with tracked road users', hidden: true }),
           h(
+            'button',
+            {
+              id: 'video-expand',
+              type: 'button',
+              class: 'camera-expand',
+              title: 'Enlarge (Esc to close)',
+              'aria-label': 'Enlarge the camera image',
+            },
+            icon('expand'),
+          ),
+          h(
             'div',
             { id: 'video-empty', class: 'camera-empty' },
             h('span', { class: 'spinner' }),
