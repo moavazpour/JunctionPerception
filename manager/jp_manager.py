@@ -28,6 +28,9 @@ purpose), keeps their logs and reports the host.
   GET  /manager/api/inputs                    videos, sequences and replays to choose from
   GET  /manager/api/probe?input=              image size, frame rate and length of a video or stream
   POST /manager/api/videos                    upload a video (multipart "file") below the data root
+  GET  /manager/api/stats?site=&camera=&line=&from=&to=&bucket=   traffic statistics of the lines
+  GET  /manager/api/stats/crossings.csv?...   the recorded line crossings as CSV
+  DELETE /manager/api/stats?site=             delete recorded statistics (of a site, or all)
   GET  /manager/api/logs?source=&lines=       recent log lines (manager, a site or site/camera)
   GET  /manager/api/logs/stream?source=       the same as server-sent events
   *    /sites/<id>/map/...                    map layers (also while the site is stopped)
@@ -61,6 +64,8 @@ from typing import Any
 import aiohttp
 import yaml
 from aiohttp import web
+
+from traffic_stats import CameraCounter, TrafficStats
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{1,47}$")
@@ -377,6 +382,20 @@ class Camera:
                 f"# Camera of the site {self.site.id}; source and runtime settings: ../../site.yaml.\n",
             )
 
+    def regions(self) -> dict[str, Any]:
+        """Detection areas and counting lines of the camera (regions.json), summarized."""
+        try:
+            regions = json.loads((self.dir / "regions.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"areas": 0, "lines": []}
+        return {
+            "areas": len(regions.get("areas", [])),
+            "lines": [
+                {"id": line["id"], "name": line.get("name") or line["id"]}
+                for line in regions.get("lines", [])
+            ],
+        }
+
     def describe(self) -> dict[str, Any]:
         r = self.runtime
         return {
@@ -387,6 +406,7 @@ class Camera:
             "enabled": self.enabled,
             "calibrated": (self.dir / "ground_homography.yaml").is_file(),
             "control_points": (self.dir / "control_points.yaml").is_file(),
+            "regions": self.regions(),
             "source": self.settings["source"],
             "playback": self.settings["playback"],
             "video": self.settings["video"],
@@ -851,6 +871,8 @@ class Manager:
         self.state_file = config.state_dir / "state.json"
         self.backend_on = True
         self.session: aiohttp.ClientSession | None = None
+        self.stats = TrafficStats(config.state_dir / "stats.sqlite")
+        self.counters: dict[str, asyncio.Task[None]] = {}
 
     @staticmethod
     def _version() -> str:
@@ -935,7 +957,27 @@ class Manager:
         assert self.session is not None
         while True:
             await asyncio.gather(*(c.poll_status(self.session) for c in self.cameras()))
+            self.follow_cameras()
             await asyncio.sleep(STATUS_INTERVAL_S)
+
+    def follow_cameras(self) -> None:
+        """Counts on the lines of every running camera (traffic statistics)."""
+        assert self.session is not None
+        for camera in self.cameras():
+            r = camera.runtime
+            task = self.counters.get(camera.key)
+            if r.state != "running" or r.port is None or (task and not task.done()):
+                continue
+            port = r.port
+            counter = CameraCounter(
+                self.stats, camera.site.id, camera.id, camera.dir, port, camera.log
+            )
+            self.counters[camera.key] = asyncio.create_task(
+                counter.follow(
+                    self.session,
+                    lambda c=camera, p=port: c.runtime.state == "running" and c.runtime.port == p,
+                )
+            )
 
     def system(self) -> dict[str, Any]:
         sites = list(self.sites.values())
@@ -1407,6 +1449,38 @@ def routes(manager: Manager) -> web.RouteTableDef:
         rel = target.relative_to(manager.config.data_root).as_posix()
         log.info("uploaded %s (%.1f MB)", rel, size / 1024**2)
         return ok({"path": rel, "size": size}, 201)
+
+    def stats_filters(request: web.Request) -> dict[str, Any]:
+        q = request.query
+        filters: dict[str, Any] = {k: q[k] for k in ("site", "camera", "line") if q.get(k)}
+        for key in ("from", "to"):
+            if q.get(key):
+                filters[key] = float(q[key])
+        return filters
+
+    @r.get(f"{api}/stats")
+    async def stats_report(request: web.Request) -> web.Response:
+        bucket = int(request.query.get("bucket", "900"))
+        if bucket not in (60, 300, 900, 3600, 86400):
+            raise BadRequest("bucket must be 60, 300, 900, 3600 or 86400 seconds")
+        filters = stats_filters(request)
+        return ok(await asyncio.to_thread(manager.stats.report, filters, bucket))
+
+    @r.get(f"{api}/stats/crossings.csv")
+    async def stats_csv(request: web.Request) -> web.Response:
+        text = await asyncio.to_thread(manager.stats.export_csv, stats_filters(request))
+        return web.Response(
+            text=text,
+            content_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="crossings.csv"'},
+        )
+
+    @r.delete(f"{api}/stats")
+    async def stats_clear(request: web.Request) -> web.Response:
+        site = request.query.get("site") or None
+        await asyncio.to_thread(manager.stats.clear, site)
+        log.info("cleared the traffic statistics of %s", site or "all sites")
+        return ok({"ok": True})
 
     @r.get(f"{api}/inputs")
     async def inputs(_: web.Request) -> web.Response:
