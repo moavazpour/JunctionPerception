@@ -79,6 +79,7 @@ struct LocalizedObject {
   std::optional<double> length_m;
   std::optional<double> width_m;
   bool from_keypoints = false;  ///< This frame's corner keypoints were used (heading, size).
+  std::vector<detection::Keypoint> corners;  ///< Bottom corners of this frame (image px), if any.
 };
 
 /// Image tracks -> ground plane: box bottom centre through the image-to-ground homography,

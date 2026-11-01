@@ -119,9 +119,14 @@ cv::Mat draw_tracks(const cv::Mat& image, const std::vector<localization::Locali
                     const std::string& status_line) {
   cv::Mat canvas = image.clone();
   for (const auto& object : objects) {
-    const std::string label = std::format("#{} {}{} {:.0f} km/h", object.id, object.twin_class,
-                                          object.rider ? " +rider" : "", object.speed_mps * 3.6);
+    std::string label = std::format("#{} {}{} {:.0f} km/h", object.id, object.twin_class,
+                                    object.rider ? " +rider" : "", object.speed_mps * 3.6);
+    if (object.length_m && object.width_m) {
+      // Size measured from the box corners (keypoint models).
+      label += std::format(" {:.1f}x{:.1f} m", *object.length_m, *object.width_m);
+    }
     draw_labeled_box(canvas, object.box, label, class_color(object.twin_class));
+    draw_footprint(canvas, object.corners, class_color(object.twin_class));
   }
   draw_status_line(canvas, status_line);
   return canvas;

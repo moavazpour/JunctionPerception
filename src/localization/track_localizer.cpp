@@ -100,6 +100,7 @@ std::vector<LocalizedObject> TrackLocalizer::update(
       object.width_m = state.size->y();
     }
     object.from_keypoints = footprint.has_value();
+    object.corners = track.detection.keypoints;
     objects.push_back(std::move(object));
   }
 

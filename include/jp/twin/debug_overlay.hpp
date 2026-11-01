@@ -14,6 +14,11 @@ namespace jp::twin {
 void draw_labeled_box(cv::Mat& canvas, const cv::Rect2f& box, const std::string& label,
                       const cv::Scalar& color);
 
+/// Draws the footprint of a keypoint detection: its four bottom corners joined to a quadrilateral
+/// (a light fill, outline and corner dots); nothing if not all four are visible.
+void draw_footprint(cv::Mat& canvas, const std::vector<detection::Keypoint>& corners,
+                    const cv::Scalar& color, float min_score = 0.5F);
+
 /// Draws a status text line at the top left.
 void draw_status_line(cv::Mat& canvas, const std::string& status_line);
 

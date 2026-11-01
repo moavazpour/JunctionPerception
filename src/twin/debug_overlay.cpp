@@ -1,6 +1,7 @@
 #include "jp/twin/debug_overlay.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -27,6 +28,49 @@ void draw_labeled_box(cv::Mat& canvas, const cv::Rect2f& box, const std::string&
   cv::putText(canvas, label, anchor, cv::FONT_HERSHEY_SIMPLEX, kFontScale, color, 1, cv::LINE_AA);
 }
 
+void draw_footprint(cv::Mat& canvas, const std::vector<detection::Keypoint>& corners,
+                    const cv::Scalar& color, float min_score) {
+  constexpr std::size_t kCorners = 4;
+  constexpr double kFillOpacity = 0.25;
+  if (corners.size() != kCorners ||
+      std::ranges::any_of(corners, [&](const auto& k) { return k.score < min_score; })) {
+    return;
+  }
+  // Ordered around their centre, whatever order the model gives them in.
+  cv::Point2f centre(0.0F, 0.0F);
+  for (const auto& k : corners) {
+    centre += k.pixel * 0.25F;
+  }
+  std::vector<cv::Point2f> ordered;
+  ordered.reserve(kCorners);
+  for (const auto& k : corners) {
+    ordered.push_back(k.pixel);
+  }
+  std::ranges::sort(ordered, {}, [&](const cv::Point2f& p) {
+    return std::atan2(p.y - centre.y, p.x - centre.x);
+  });
+  std::vector<cv::Point> quad;
+  quad.reserve(kCorners);
+  for (const auto& p : ordered) {
+    quad.emplace_back(cvRound(p.x), cvRound(p.y));
+  }
+  const cv::Rect area = cv::boundingRect(quad) & cv::Rect(0, 0, canvas.cols, canvas.rows);
+  if (area.area() > 0) {
+    cv::Mat patch = canvas(area);
+    cv::Mat tinted = patch.clone();
+    std::vector<cv::Point> local = quad;
+    for (auto& p : local) {
+      p -= area.tl();
+    }
+    cv::fillPoly(tinted, std::vector{local}, color, cv::LINE_AA);
+    cv::addWeighted(tinted, kFillOpacity, patch, 1.0 - kFillOpacity, 0.0, patch);
+  }
+  cv::polylines(canvas, std::vector{quad}, true, color, 2, cv::LINE_AA);
+  for (const auto& p : quad) {
+    cv::circle(canvas, p, 3, color, cv::FILLED, cv::LINE_AA);
+  }
+}
+
 void draw_status_line(cv::Mat& canvas, const std::string& status_line) {
   const cv::Point origin(12, 28);
   cv::putText(canvas, status_line, origin, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 0), 4,
@@ -43,6 +87,7 @@ cv::Mat draw_detections(const cv::Mat& image, const std::vector<detection::Detec
         std::format("{}{} {:.2f}", d.twin_class.empty() ? d.source_label : d.twin_class,
                     d.rider ? " +rider" : "", d.score);
     draw_labeled_box(canvas, d.box, label, class_color(d.twin_class));
+    draw_footprint(canvas, d.keypoints, class_color(d.twin_class));
   }
   draw_status_line(canvas, status_line);
   return canvas;
