@@ -55,8 +55,11 @@ struct LocalizationSettings {
   double keypoint_max_size_ratio = 2.5;
   double keypoint_floor_std_m = 0.6;
   double keypoint_smoothing = 0.3;
-  bool keypoint_heading_when_moving = false;
+  bool keypoint_heading_when_moving = true;
+  double keypoint_motion_min_speed_mps = 2.0;
+  int keypoint_flip_frames = 5;
   bool keypoint_position = false;
+  double keypoint_position_weight = 1.0;
 };
 
 /// VRU zone and event detection (see configs/pipeline.yaml).

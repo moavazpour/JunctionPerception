@@ -90,7 +90,10 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
       l.keypoint_floor_std_m = keypoints["floor_std_m"].as<double>();
       l.keypoint_smoothing = keypoints["smoothing"].as<double>();
       l.keypoint_heading_when_moving = keypoints["heading_when_moving"].as<bool>();
+      l.keypoint_motion_min_speed_mps = keypoints["motion_min_speed_mps"].as<double>();
+      l.keypoint_flip_frames = keypoints["flip_frames"].as<int>();
       l.keypoint_position = keypoints["position"].as<bool>();
+      l.keypoint_position_weight = keypoints["position_weight"].as<double>();
     }
 
     const YAML::Node events = section(root, "events");

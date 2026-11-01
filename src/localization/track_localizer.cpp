@@ -63,9 +63,14 @@ std::vector<LocalizedObject> TrackLocalizer::update(
         corner_position
             ? measurement_cov(footprint->pixel_center, options_.keypoint_floor_std_m)
             : measurement_cov(contact_pixel(track.detection.box), options_.measurement_floor_std_m);
+    const Eigen::Vector2d box_center =
+        footprint_center(*contact, track.detection.box, info, held_heading);
+    // The corner centre lies slightly towards the camera; weighted with the box fit it keeps
+    // the corners' robustness with less of that offset.
+    const double w = options_.keypoint_position_weight;
     const Eigen::Vector2d measured =
-        corner_position ? footprint->center
-                        : footprint_center(*contact, track.detection.box, info, held_heading);
+        corner_position ? Eigen::Vector2d((w * footprint->center) + ((1.0 - w) * box_center))
+                        : box_center;
 
     if (it == states_.end()) {
       it = states_
@@ -116,29 +121,35 @@ void TrackLocalizer::apply_footprint(State& state, const GroundFootprint& footpr
   const double k = options_.keypoint_smoothing;
   const Eigen::Vector2d size(footprint.length_m, footprint.width_m);
   state.size = state.size ? Eigen::Vector2d(((1.0 - k) * *state.size) + (k * size)) : size;
-  // The long side is the axis of the object; which end is the front follows its motion, else
-  // the heading it had.
-  std::optional<double> reference = state.heading_rad;
-  if (speed >= options_.heading_min_speed_mps) {
-    reference = std::atan2(velocity.y(), velocity.x());
-    if (!options_.keypoint_heading_when_moving) {
-      // The motion gives the heading of moving road users more steadily than the corners.
-      state.heading_rad = reference;
-      return;
-    }
-  }
-  if (!reference) {
-    // The corners do not tell the front from the back: without a motion seen so far the
-    // heading stays unknown rather than half the time reversed.
+  const double motion = std::atan2(velocity.y(), velocity.x());
+  if (speed >= options_.heading_min_speed_mps && !options_.keypoint_heading_when_moving) {
+    state.heading_rad = motion;
     return;
   }
-  const double axis = orient_axis(footprint.axis_rad, *reference);
+  // The corners give the heading with its front. A reversal against a clear motion is a
+  // momentary error of the model; against the held heading of a slow road user it counts once
+  // it lasts (it turned, or the first frames were wrong).
+  double heading = footprint.heading_rad;
+  const bool moving = speed >= options_.keypoint_motion_min_speed_mps;
+  const std::optional<double> reference = moving ? std::optional(motion) : state.heading_rad;
+  if (reference && std::abs(std::remainder(heading - *reference, 2.0 * std::numbers::pi)) >
+                       std::numbers::pi / 2.0) {
+    if (moving || ++state.reversed < options_.keypoint_flip_frames) {
+      heading = orient_axis(heading, *reference);
+    } else {
+      state.heading_rad = heading;
+      state.reversed = 0;
+      return;
+    }
+  } else {
+    state.reversed = 0;
+  }
   if (!state.heading_rad) {
-    state.heading_rad = axis;
+    state.heading_rad = heading;
     return;
   }
   // Smoothed on the circle: turn the held heading part of the way towards the measurement.
-  const double delta = std::remainder(axis - *state.heading_rad, 2.0 * std::numbers::pi);
+  const double delta = std::remainder(heading - *state.heading_rad, 2.0 * std::numbers::pi);
   state.heading_rad = std::remainder(*state.heading_rad + (k * delta), 2.0 * std::numbers::pi);
 }
 

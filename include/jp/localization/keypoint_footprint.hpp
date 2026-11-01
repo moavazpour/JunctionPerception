@@ -10,11 +10,12 @@
 
 namespace jp::localization {
 
-/// Footprint of an object on the ground from the four bottom corners of its 3D box.
+/// Footprint of an object on the ground from the four bottom corners of its 3D box. The model
+/// gives the corners in a fixed order: 0 and 1 at the front, 2 and 3 at the rear.
 struct GroundFootprint {
-  std::array<Eigen::Vector2d, 4> corners{};  ///< Ground corners, counter-clockwise.
+  std::array<Eigen::Vector2d, 4> corners{};  ///< Ground corners in the model's order.
   Eigen::Vector2d center = Eigen::Vector2d::Zero();
-  double axis_rad = 0.0;  ///< Direction of the long side; the object faces it or its opposite.
+  double heading_rad = 0.0;  ///< From the middle of the rear corners to that of the front ones.
   double length_m = 0.0;
   double width_m = 0.0;
   Eigen::Vector2d pixel_center = Eigen::Vector2d::Zero();  ///< Mean of the corner pixels.

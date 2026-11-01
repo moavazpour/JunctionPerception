@@ -47,7 +47,7 @@ struct LocalizerOptions {
   int reanchor_after = 3;
   double heading_min_speed_mps = 0.5;  ///< Below this speed the last heading is held.
   /// Keypoint models: the footprint from the four bottom corners replaces the contact model, its
-  /// long side gives the heading (also of standing objects) and its sides the object size.
+  /// front and rear corners give the heading (also of standing objects) and its sides the size.
   bool use_keypoints = true;
   KeypointFootprintOptions keypoints;
   /// Isotropic floor of a corner measurement (it needs no footprint model, only the calibration).
@@ -56,9 +56,15 @@ struct LocalizerOptions {
   double keypoint_smoothing = 0.3;
   /// Heading of moving road users from the corners too (else from their motion, the corners
   /// orient only slow and standing ones).
-  bool keypoint_heading_when_moving = false;
+  bool keypoint_heading_when_moving = true;
+  /// Above this speed a corner heading against the motion is taken as reversed by mistake.
+  double keypoint_motion_min_speed_mps = 2.0;
+  /// Below it, a reversed corner heading turns the object after this many frames in a row.
+  int keypoint_flip_frames = 5;
   /// Position from the centre of the corners (else from the box with the contact model).
   bool keypoint_position = false;
+  /// Weight of the corner centre against the box fit in that position (1: corners only).
+  double keypoint_position_weight = 1.0;
   double forget_after_s = 5.0;  ///< Filters of tracks unseen this long are dropped.
 };
 
@@ -73,8 +79,9 @@ struct LocalizedObject {
   Eigen::Vector2d position = Eigen::Vector2d::Zero();  ///< Filtered footprint centre.
   Eigen::Vector2d velocity = Eigen::Vector2d::Zero();
   double speed_mps = 0.0;
-  double speed_std_mps = 0.0;         ///< Uncertainty of the speed (filter covariance).
-  std::optional<double> heading_rad;  ///< Empty until the object has moved fast enough.
+  double speed_std_mps = 0.0;  ///< Uncertainty of the speed (filter covariance).
+  /// Empty until the object has moved fast enough (or its corners gave it).
+  std::optional<double> heading_rad;
   /// Measured footprint size (keypoint models), smoothed over the track.
   std::optional<double> length_m;
   std::optional<double> width_m;
@@ -109,6 +116,7 @@ class TrackLocalizer {
     std::optional<double> heading_rad;
     std::optional<Eigen::Vector2d> size;  ///< Smoothed length and width from the corners.
     int rejected = 0;                     ///< Consecutive measurements outside the innovation gate.
+    int reversed = 0;                     ///< Consecutive corner headings against the held one.
   };
 
   /// Covariance of a ground position measured at `pixel`.

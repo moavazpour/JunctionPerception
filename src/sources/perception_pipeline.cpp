@@ -39,7 +39,10 @@ localization::LocalizerOptions localizer_options(const core::LocalizationSetting
   o.keypoint_floor_std_m = settings.keypoint_floor_std_m;
   o.keypoint_smoothing = settings.keypoint_smoothing;
   o.keypoint_heading_when_moving = settings.keypoint_heading_when_moving;
+  o.keypoint_motion_min_speed_mps = settings.keypoint_motion_min_speed_mps;
+  o.keypoint_flip_frames = settings.keypoint_flip_frames;
   o.keypoint_position = settings.keypoint_position;
+  o.keypoint_position_weight = settings.keypoint_position_weight;
   return o;
 }
 

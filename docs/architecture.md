@@ -97,9 +97,15 @@ bike, Trucks, Buses; class source `jp_pose5`) gives, per detection, the four bot
 object's 3D box (x, y, visibility), in an end-to-end output of shape (1, 300, 6 + 4 × 3) at a
 1280 × 736 letterboxed input (the size is read from the model; trained at 640, it finds clearly
 more at 1280: TUMTraf recall 0.52 instead of 0.44). When all four corners are visible, the
-localizer projects them to the ground: their centre is the measurement (it needs no footprint model, so its floor is smaller,
-`localization.keypoints.floor_std_m`), the long side gives the heading also of standing road users
-(the front follows the motion, else the held heading) and the sides give length and width. Corner
+localizer projects them to the ground: their centre is the measurement (it needs no footprint
+model, so its floor is smaller, `localization.keypoints.floor_std_m`), the sides give length and
+width, and the corner order gives the heading with its front, also of standing road users: the
+model lists the front corners first (0, 1), then the rear ones (2, 3), measured right for 95–100 %
+of moving vehicles. A corner heading against a clear motion (above `motion_min_speed_mps`) is a
+momentary error and is turned round; for slow road users a reversal counts only after
+`flip_frames` frames in a row. On TUMTraf the corner centre lies 0.4–0.5 m towards the camera
+compared with the box fit, but it is matched far more often (precision 0.51, recall 0.54, IDF1
+0.49 against 0.49, 0.52, 0.47 with the box fit); `position_weight` mixes in the box fit. Corner
 sets whose size is implausible for the class fall back to the box model. Select the model with
 `detection.model` and `detection.class_source` in `configs/pipeline.yaml`.
 

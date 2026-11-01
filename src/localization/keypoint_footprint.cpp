@@ -44,21 +44,12 @@ std::optional<GroundFootprint> keypoint_footprint(const std::vector<detection::K
     footprint.center += footprint.corners.at(i) / static_cast<double>(kCorners);
     footprint.pixel_center += pixel / static_cast<double>(kCorners);
   }
-  // Order the corners around their centre, so the sides are 0-1, 1-2, 2-3, 3-0 whatever order
-  // the model gives them in.
-  std::ranges::sort(footprint.corners, {}, [&](const Eigen::Vector2d& c) {
-    return std::atan2(c.y() - footprint.center.y(), c.x() - footprint.center.x());
-  });
-  const auto side = [&](std::size_t i) -> Eigen::Vector2d {
-    return footprint.corners.at((i + 1) % kCorners) - footprint.corners.at(i);
-  };
-  // Opposite sides point opposite ways: average each pair as one direction.
-  const Eigen::Vector2d a = (side(0) - side(2)) / 2.0;
-  const Eigen::Vector2d b = (side(1) - side(3)) / 2.0;
-  const Eigen::Vector2d& longer = a.norm() >= b.norm() ? a : b;
-  footprint.length_m = std::max(a.norm(), b.norm());
-  footprint.width_m = std::min(a.norm(), b.norm());
-  footprint.axis_rad = std::atan2(longer.y(), longer.x());
+  // Corners 0 and 1 are the front, 2 and 3 the rear (whichever side each is on).
+  const auto& c = footprint.corners;
+  const Eigen::Vector2d forward = ((c[0] + c[1]) - (c[2] + c[3])) / 2.0;
+  footprint.length_m = forward.norm();
+  footprint.width_m = ((c[0] - c[1]).norm() + (c[2] - c[3]).norm()) / 2.0;
+  footprint.heading_rad = std::atan2(forward.y(), forward.x());
 
   const double length = std::max(class_size.length_m, options.min_side_m);
   const double width = std::max(class_size.width_m, options.min_side_m);
