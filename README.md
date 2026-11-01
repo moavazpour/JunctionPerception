@@ -161,7 +161,9 @@ the camera position if the points cannot constrain it, draw the zones, save and 
 areas (only road users inside them are detected) and lines across the lanes on the camera image.
 Every road user crossing a line is recorded with time, type, direction and speed; the
 *Statistics* page shows volumes, flow rates, peak hour factor, speeds, headways and turning
-movements per line and period, and exports the crossings as CSV.
+movements per line and period, and exports the crossings as CSV. Signal areas around traffic
+light heads ("Finish signal") are read for their colour; place them in the live twin with
+*Traffic lights* to see them change there.
 
 **Google imagery (optional).** With a key of the Google Map Tiles API in `GOOGLE_MAPS_API_KEY`
 (`DEPLOY_GOOGLE_MAPS_API_KEY` in `deploy.env`), the map tool takes the aerial image from Google

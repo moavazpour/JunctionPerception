@@ -72,6 +72,7 @@ serializer and the frontend types are both tested against it.
 | `source` | string | `live`, `oracle` or `replay` |
 | `objects` | array | Road users, see below |
 | `events` | array | Active events, and events in the frame they end |
+| `signals` | array | Traffic lights of the camera: `id`, `name`, `state` (`red`, `yellow`, `red_yellow`, `green`, `off`, `unknown`), `confidence`, `since_ns` (when the state began); absent in older recordings |
 
 Object fields: `id` (track ID), `class` (twin class), `vru`, `rider` (two-wheeler with rider),
 `x`, `y` (footprint centre, m, world frame), `vx`, `vy` (m/s), `heading_rad` (counter-clockwise
@@ -111,6 +112,20 @@ has a band, if there is one. Everything else is dropped before tracking: it is n
 shown nor counted. This keeps far, small and mutually occluded road users, which the detector
 cannot separate reliably, out of the twin. Saving applies the regions to the running server at
 once (`GET`/`POST /api/regions`).
+
+## Traffic lights
+
+A camera's `regions.json` may also hold signal areas: the head of a traffic light on the camera
+image (drawn in Calibration, "Areas and lines", "Finish signal"). Every frame, the server reads
+the colour of its lit lamp: pixels that are bright, clearly brighter than the rest of the area
+and saturated count as lit, and their hue tells red, yellow (amber) and green apart; red and
+yellow together are red-amber. A new colour is reported once it lasted `signals.confirm_frames`
+frames, and short unlit readings (LED flicker against the shutter, an occluding truck) keep the
+last colour for `signals.hold_frames` (`configs/pipeline.yaml`). The states are part of the world
+state (`signals`) and drawn on the camera image. In the live twin, "Traffic lights" places each
+signal: click where it stands, then towards the traffic it faces; its height is set in the same
+bar. The position is stored with the signal in the site's world frame, and the twin shows a
+signal head whose lamps follow the camera's reading.
 
 ## Traffic statistics
 
