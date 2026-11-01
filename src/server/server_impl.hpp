@@ -76,6 +76,7 @@ struct TwinServer::Impl {
     std::int64_t frame = 0;
     std::int64_t timestamp_ns = 0;
     std::size_t objects = 0;
+    std::size_t active_events = 0;
     double processing_ms = 0.0;
   };
 

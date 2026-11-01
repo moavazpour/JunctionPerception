@@ -185,6 +185,8 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
   prepared.frame = state.frame;
   prepared.timestamp_ns = state.timestamp_ns;
   prepared.objects = state.objects.size();
+  prepared.active_events = static_cast<std::size_t>(
+      std::ranges::count(state.events, std::string("active"), &core::WorldEvent::state));
   prepared.processing_ms =
       std::chrono::duration<double, std::milli>(Clock::now() - started).count();
   return prepared;
@@ -199,6 +201,7 @@ void TwinServer::Impl::send(const Prepared& prepared) {
   status["frame"] = prepared.frame;
   status["timestamp_ns"] = prepared.timestamp_ns;
   status["objects"] = prepared.objects;
+  status["active_events"] = prepared.active_events;
   status["latency_ms"] = prepared.processing_ms;
 }
 
@@ -296,10 +299,12 @@ TwinServer::TwinServer(ServerOptions options, ServedScene scene, core::ClassCata
     : impl_(std::make_unique<Impl>(std::move(options), std::move(scene), std::move(catalog),
                                    std::move(source), std::move(events))) {
   const std::scoped_lock lock(impl_->status_mutex);
+  // Camera streams have no frame count and cannot seek.
+  const auto frame_count = impl_->source->frame_count();
   impl_->status = {{"scene_id", impl_->scene.config.scene_id},
                    {"source", impl_->source->kind()},
-                   {"frame_count", impl_->source->frame_count().value_or(-1)},
-                   {"seekable", true},
+                   {"frame_count", frame_count.value_or(-1)},
+                   {"seekable", frame_count.has_value()},
                    {"calibrated", impl_->scene.ground.has_value()}};
 }
 

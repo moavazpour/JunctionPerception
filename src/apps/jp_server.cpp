@@ -59,8 +59,10 @@ void run(const ServerArgs& args) {
   if (startup.mode != "live" && startup.mode != "oracle" && startup.mode != "replay") {
     throw std::runtime_error("mode must be live, oracle or replay, not " + startup.mode);
   }
-  // Recordings (live video, oracle sequence) live under the data root, replays in the repository.
-  const std::filesystem::path input = startup.mode == "replay"
+  // Recordings (live video, oracle sequence) live under the data root, replays in the repository;
+  // camera streams (rtsp://, http://, ...) are opened by their URL.
+  const bool is_stream = startup.input.find("://") != std::string::npos;
+  const std::filesystem::path input = startup.mode == "replay" || is_stream
                                           ? std::filesystem::path(startup.input)
                                           : std::filesystem::path(args.data_root) / startup.input;
 
