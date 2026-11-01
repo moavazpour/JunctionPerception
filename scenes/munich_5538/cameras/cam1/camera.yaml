@@ -1,0 +1,7 @@
+# Camera of the site munich_5538; its source and runtime settings are edited in the console.
+name: Pedestrian bridge
+# Arm of the intersection the camera watches: north, north-east, ..., or centre.
+approach: east
+image_size_px: [1920, 1080]
+source:
+  video: custom/IMG_5538.mp4

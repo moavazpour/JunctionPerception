@@ -6,16 +6,39 @@
 
 namespace jp::core {
 
+namespace {
+
+YAML::Node load(const std::filesystem::path& path) {
+  try {
+    return YAML::LoadFile(path.string());
+  } catch (const YAML::Exception& error) {
+    throw std::runtime_error("invalid scene config " + path.string() + ": " + error.what());
+  }
+}
+
+}  // namespace
+
 SceneConfig load_scene_config(const std::filesystem::path& scene_dir) {
-  const auto path = scene_dir / "scene.yaml";
   SceneConfig config;
   config.directory = scene_dir;
-  config.scene_id = scene_dir.filename().string();
+  config.site_directory = scene_dir;
+  const auto camera_path = scene_dir / "camera.yaml";
+  YAML::Node camera;
+  if (std::filesystem::exists(camera_path)) {
+    // A camera of an intersection: scenes/<site>/cameras/<camera>/.
+    camera = load(camera_path);
+    config.camera_id = scene_dir.filename().string();
+    config.site_directory = scene_dir.parent_path().parent_path();
+  }
+  config.scene_id = config.site_directory.filename().string();
+  const auto path = config.site_directory / "scene.yaml";
+  const YAML::Node root = load(path);
   try {
-    const YAML::Node root = YAML::LoadFile(path.string());
     config.kind = root["kind"].as<std::string>();
-    config.width_px = root["image_size_px"][0].as<int>();
-    config.height_px = root["image_size_px"][1].as<int>();
+    const YAML::Node size =
+        config.camera_id.empty() ? root["image_size_px"] : camera["image_size_px"];
+    config.width_px = size[0].as<int>();
+    config.height_px = size[1].as<int>();
     if (const YAML::Node anchor = root["geo_anchor"]) {
       config.geo_anchor = GeoPoint{anchor["lat_deg"].as<double>(), anchor["lon_deg"].as<double>(),
                                    anchor["alt_m"].as<double>()};

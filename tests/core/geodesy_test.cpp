@@ -34,14 +34,19 @@ TEST(GeoAnchor, RoundTrip) {
 }
 
 TEST(SceneConfig, LoadsRepositoryScenes) {
-  const auto custom = jp::core::load_scene_config(JP_SOURCE_DIR "/scenes/munich_5538");
+  const auto custom = jp::core::load_scene_config(JP_SOURCE_DIR "/scenes/munich_5538/cameras/cam1");
   EXPECT_EQ(custom.scene_id, "munich_5538");
+  EXPECT_EQ(custom.camera_id, "cam1");
+  EXPECT_EQ(custom.zones_path(),
+            std::filesystem::path(JP_SOURCE_DIR "/scenes/munich_5538/zones.geojson"));
   EXPECT_EQ(custom.kind, "custom");
   EXPECT_EQ(custom.width_px, 1920);
   ASSERT_TRUE(custom.geo_anchor.has_value());
   EXPECT_NEAR(custom.geo_anchor->lat_deg, 48.176, 1e-9);
   const auto benchmark = jp::core::load_scene_config(JP_SOURCE_DIR "/scenes/tumtraf_s110_south1");
   EXPECT_FALSE(benchmark.geo_anchor.has_value());
+  EXPECT_TRUE(benchmark.camera_id.empty());
+  EXPECT_EQ(benchmark.directory, benchmark.site_directory);
 }
 
 }  // namespace

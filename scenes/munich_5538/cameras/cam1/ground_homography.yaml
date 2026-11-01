@@ -1,4 +1,4 @@
-camera: munich_5538
+camera: munich_5538/cam1
 image_size_px: [1920, 1080]
 source: control_points.yaml
 image_to_ground:

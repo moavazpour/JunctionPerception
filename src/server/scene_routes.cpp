@@ -17,6 +17,11 @@ using json = nlohmann::json;
 
 json pair(const Eigen::Vector2d& v) { return json::array({v.x(), v.y()}); }
 
+// "site" or "site/camera", as written into the calibration file.
+std::string camera_name(const core::SceneConfig& config) {
+  return config.camera_id.empty() ? config.scene_id : config.scene_id + "/" + config.camera_id;
+}
+
 std::vector<calibration::ControlPoint> points_from(const json& body) {
   std::vector<calibration::ControlPoint> points;
   for (const auto& p : body.at("points")) {
@@ -91,6 +96,7 @@ std::string scene_description(const ServedScene& scene, const core::ClassCatalog
                        {"vru", c.vru}});
   }
   json description = {{"scene_id", scene.config.scene_id},
+                      {"camera_id", scene.config.camera_id},
                       {"kind", scene.config.kind},
                       {"image_size_px", {scene.config.width_px, scene.config.height_px}},
                       {"calibrated", scene.ground.has_value()},
@@ -175,9 +181,9 @@ void TwinServer::Impl::register_scene_routes() {
           if (body.contains("camera_height_m") && !body["camera_height_m"].is_null()) {
             height = body["camera_height_m"].get<double>();
           }
-          const auto calibration =
-              calibration::calibration_from_fit(fit, scene.config.scene_id, scene.config.width_px,
-                                                scene.config.height_px, camera, height);
+          const auto calibration = calibration::calibration_from_fit(
+              fit, camera_name(scene.config), scene.config.width_px, scene.config.height_px, camera,
+              height);
           calibration::write_control_points(scene.config.control_points_path(), points,
                                             core::GeoAnchor(*scene.config.geo_anchor));
           calibration::write_ground_calibration(scene.config.calibration_path(), calibration, fit);

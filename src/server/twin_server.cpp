@@ -301,11 +301,10 @@ TwinServer::TwinServer(ServerOptions options, ServedScene scene, core::ClassCata
   const std::scoped_lock lock(impl_->status_mutex);
   // Camera streams have no frame count and cannot seek.
   const auto frame_count = impl_->source->frame_count();
-  impl_->status = {{"scene_id", impl_->scene.config.scene_id},
-                   {"source", impl_->source->kind()},
-                   {"frame_count", frame_count.value_or(-1)},
-                   {"seekable", frame_count.has_value()},
-                   {"calibrated", impl_->scene.ground.has_value()}};
+  impl_->status = {
+      {"scene_id", impl_->scene.config.scene_id}, {"camera_id", impl_->scene.config.camera_id},
+      {"source", impl_->source->kind()},          {"frame_count", frame_count.value_or(-1)},
+      {"seekable", frame_count.has_value()},      {"calibrated", impl_->scene.ground.has_value()}};
 }
 
 TwinServer::~TwinServer() = default;

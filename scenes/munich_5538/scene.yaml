@@ -1,13 +1,10 @@
-# Custom scene: a signalized intersection in Munich filmed from a pedestrian bridge.
-# Paths are relative to the dataset root (JP_DATA_ROOT).
+# Custom site: a signalized intersection in Munich, filmed from a pedestrian bridge.
+# A site is one intersection; each camera has a folder below cameras/ with its image size and
+# calibration. Zones (crosswalks) belong to the site and are shared by its cameras.
 scene_id: munich_5538
 kind: custom
-image_size_px: [1920, 1080]
-source:
-  video: custom/IMG_5538.mp4
-# Origin of the world frame (local east-north-up): the GPS position recorded with the video.
+# Origin of the world frame (local east-north-up) of all cameras of the site.
 geo_anchor: {lat_deg: 48.1760, lon_deg: 11.5556, alt_m: 512.0}
 # Area around the anchor covered by the map layers (tools/prepare_map_data.py).
 map:
   radius_m: 300
-calibration: ground_homography.yaml
