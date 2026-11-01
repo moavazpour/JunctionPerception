@@ -106,8 +106,8 @@ SignalReading read_signal(const cv::Mat& bgr, const std::vector<cv::Point2f>& po
   if (lit.area == 0) {
     return reading;
   }
-  const int needed = std::max(
-      settings.min_lit_pixels, static_cast<int>(std::lround(settings.min_lit_fraction * lit.area)));
+  const int needed = std::max(settings.min_lit_pixels,
+                              static_cast<int>(std::lround(settings.min_lit_fraction * lit.area)));
   if (std::max({lit.red, lit.yellow, lit.green}) < needed) {
     // An overexposed lamp has a white core and a pale halo: look again for less saturated,
     // less outstanding pixels.
