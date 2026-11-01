@@ -238,7 +238,7 @@ class CalibrationApp {
       zones:
         'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
       regions:
-        'Click points in the camera image, then "Finish area" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With areas, only road users inside them are detected. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
+        'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:
         'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };
@@ -265,7 +265,7 @@ class CalibrationApp {
     if (points.length < (kind === 'area' ? 3 : 2)) {
       this.message(
         kind === 'area'
-          ? 'An area needs at least three points.'
+          ? 'An ROI needs at least three points.'
           : kind === 'line'
             ? 'A line needs two points.'
             : 'Click two opposite corners of the signal head (or its outline).',
@@ -281,7 +281,7 @@ class CalibrationApp {
     }
     const id = `${kind}_${n}`;
     if (kind === 'area') {
-      this.regions.areas.push({ id, name: `Area ${n}`, points });
+      this.regions.areas.push({ id, name: `ROI ${n}`, points });
     } else if (kind === 'line') {
       this.regions.lines.push({ id, name: `Line ${n}`, points, band_m: 0, speed_limit_kmh: 50 });
     } else {
@@ -315,7 +315,7 @@ class CalibrationApp {
     }
     const tag = document.createElement('span');
     tag.className = `region-tag ${kind}`;
-    tag.textContent = { area: 'Area', line: 'Line', signal: 'Signal' }[kind];
+    tag.textContent = { area: 'ROI', line: 'Line', signal: 'Signal' }[kind];
     if (kind === 'signal') {
       const signal = region as Regions['signals'][number];
       tag.title = signal.position
@@ -656,7 +656,7 @@ class CalibrationApp {
       await Promise.allSettled(siblingCameras.map((base) => saveZones(zones, base)));
       saved.push(`${this.zones.length} zones`);
       await saveRegions(this.regions);
-      saved.push(`${this.regions.areas.length} areas and ${this.regions.lines.length} lines`);
+      saved.push(`${this.regions.areas.length} ROIs and ${this.regions.lines.length} lines`);
       if (this.fit) {
         const fit = await saveCalibration(this.points, this.cameraOverride, this.cameraHeight);
         saved.push(`calibration (RMS ${fit.fit_rms_m.toFixed(2)} m); Apply to restart with it`);
@@ -840,7 +840,7 @@ function layout(): HTMLElement {
         { class: 'tabs segmented' },
         tab('points', 'Control points', true),
         tab('zones', 'Zones'),
-        tab('regions', 'Areas and lines'),
+        tab('regions', 'ROI and lines'),
         tab('camera', 'Camera position'),
       ),
       h('span', { class: 'spacer' }),
@@ -918,7 +918,7 @@ function layout(): HTMLElement {
             'button',
             { id: 'finish-area', type: 'button', class: 'btn small' },
             icon('layers'),
-            'Finish area',
+            'Finish ROI',
           ),
           h(
             'button',

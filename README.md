@@ -160,8 +160,8 @@ the camera position if the points cannot constrain it, draw the zones, save and 
 [docs/map-data.md](docs/map-data.md). A single scene can still be served without the console:
 `scripts/run_server.sh --scene scenes/<name> --mode live --input <video>`.
 
-**Areas, lines and statistics.** In a camera's *Calibration*, tab *Areas and lines*, draw
-areas (only road users inside them are detected) and lines across the lanes on the camera image.
+**ROI, lines and statistics.** In a camera's *Calibration*, tab *ROI and lines*, draw
+ROIs (only road users inside them are detected) and lines across the lanes on the camera image.
 Every road user crossing a line is recorded with time, type, direction and speed; the
 *Statistics* page shows volumes, flow rates, peak hour factor, speeds, headways and turning
 movements per line and period, and exports the crossings as CSV. Signal areas around traffic

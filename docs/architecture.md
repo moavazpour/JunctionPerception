@@ -106,7 +106,7 @@ sets whose size is implausible for the class fall back to the box model. Select 
 ## Detection areas and counting lines
 
 Each camera may have `regions.json` next to its calibration, edited in the console (Calibration,
-"Areas and lines") on the camera image: areas (polygons) and lines (polylines), in image pixels.
+"ROI and lines") on the camera image: areas (ROI polygons) and lines (polylines), in image pixels.
 A detection counts only if its ground contact (the centre of its corners, else the bottom centre
 of its box) lies inside one of the areas, if there are any, and within `band_m` of a line that
 has a band, if there is one. Everything else is dropped before tracking: it is neither tracked,
@@ -117,7 +117,7 @@ once (`GET`/`POST /api/regions`).
 ## Traffic lights
 
 A camera's `regions.json` may also hold signal areas: the head of a traffic light on the camera
-image (drawn in Calibration, "Areas and lines", "Finish signal"). Every frame, the server reads
+image (drawn in Calibration, "ROI and lines", "Finish signal"). Every frame, the server reads
 the colour of its lit lamp: pixels that are bright, clearly brighter than the rest of the area
 and saturated count as lit, and their hue tells red, yellow (amber) and green apart; red and
 yellow together are red-amber. A new colour is reported once it lasted `signals.confirm_frames`
