@@ -1,4 +1,3 @@
-import '../style.css';
 import './calibration.css';
 
 import { crossingSuggestions, loadMapData, type MapData, type Point } from '../map/mapData';
@@ -14,7 +13,12 @@ import {
   saveCalibration,
   saveZones,
 } from '../net/calibrationApi';
-import { fetchScene, type SceneDescription } from '../net/client';
+import { fetchScene, type SceneDescription, setSite, siteUrl } from '../net/client';
+import { h, param } from '../ui/dom';
+import { toast } from '../ui/feedback';
+import { icon } from '../ui/icons';
+import { links, mountShell } from '../ui/shell';
+import { waitForSite } from '../ui/siteGate';
 import { PanZoomCanvas, type View2D } from './panZoom';
 
 type Mode = 'points' | 'zones' | 'camera';
@@ -29,15 +33,16 @@ interface EditableZone {
 }
 
 const COLORS = {
-  pending: '#f59e0b',
-  fit: '#2f7cf6',
-  check: '#16a34a',
-  outlier: '#e5484d',
-  zone: 'rgba(47, 124, 246, 0.25)',
-  zoneEdge: '#2f7cf6',
-  drawing: '#f59e0b',
-  camera: '#2b2f35',
+  pending: '#f6b443',
+  fit: '#3d9bff',
+  check: '#2fcf8a',
+  outlier: '#ff5d6c',
+  zone: 'rgba(47, 212, 240, 0.2)',
+  zoneEdge: '#2fd4f0',
+  drawing: '#f6b443',
+  camera: '#ffffff',
   road: 'rgba(255, 255, 255, 0.55)',
+  label: 'rgba(8, 13, 23, 0.8)',
 };
 const RESTART_RELOAD_MS = 6000;
 const MARKER_RADIUS = 6;
@@ -181,7 +186,7 @@ class CalibrationApp {
       this.imageCanvas.redraw();
     };
     this.image.onerror = () => this.message('No camera image yet: start playback in the twin.');
-    this.image.src = `/api/frame?t=${Date.now()}`;
+    this.image.src = siteUrl(`/api/frame?t=${Date.now()}`);
   }
 
   private fitMapView(): void {
@@ -401,6 +406,7 @@ class CalibrationApp {
         saved.push(`calibration (RMS ${fit.fit_rms_m.toFixed(2)} m); Apply to restart with it`);
       }
       this.message(`Saved ${saved.join(' and ')}.`);
+      toast(`Saved ${saved.join(' and ')}.`, 'ok');
     } catch (error) {
       this.message(
         `${saved.length > 0 ? `Saved ${saved.join(', ')}; then: ` : ''}${(error as Error).message}`,
@@ -429,9 +435,13 @@ class CalibrationApp {
     c.lineWidth = 2;
     c.strokeStyle = color;
     c.stroke();
-    c.font = '12px system-ui, sans-serif';
+    c.font = '600 12px Inter, "Segoe UI", system-ui, sans-serif';
+    // Dark outline keeps labels readable on the photo and the camera image.
+    c.lineWidth = 3;
+    c.strokeStyle = COLORS.label;
+    c.strokeText(label, x + MARKER_RADIUS + 3, y - MARKER_RADIUS);
     c.fillStyle = color;
-    c.fillText(label, x + MARKER_RADIUS + 2, y - MARKER_RADIUS);
+    c.fillText(label, x + MARKER_RADIUS + 3, y - MARKER_RADIUS);
   }
 
   private polygon(c: CanvasRenderingContext2D, screen: [number, number][], fill: string | null) {
@@ -554,16 +564,130 @@ class CalibrationApp {
   }
 }
 
+function layout(): HTMLElement {
+  const tab = (mode: Mode, label: string, active = false) =>
+    h('button', { type: 'button', 'data-mode': mode, class: active ? 'active' : '' }, label);
+  return h(
+    'div',
+    { class: 'calibration' },
+    h(
+      'div',
+      { class: 'calib-toolbar' },
+      h(
+        'nav',
+        { class: 'tabs segmented' },
+        tab('points', 'Control points', true),
+        tab('zones', 'Zones'),
+        tab('camera', 'Camera position'),
+      ),
+      h('span', { class: 'spacer' }),
+      h(
+        'button',
+        { id: 'refresh-frame', type: 'button', class: 'btn small' },
+        icon('image'),
+        'New camera frame',
+      ),
+      h(
+        'button',
+        { id: 'save', type: 'button', class: 'btn small primary' },
+        icon('check'),
+        'Save',
+      ),
+      h(
+        'button',
+        {
+          id: 'apply',
+          type: 'button',
+          class: 'btn small',
+          title: 'Restart the site with the saved calibration',
+        },
+        icon('restart'),
+        'Apply',
+      ),
+    ),
+    h(
+      'div',
+      { class: 'workspace' },
+      h(
+        'section',
+        { class: 'pane' },
+        h('h2', {}, icon('video'), 'Camera image', h('span', { id: 'scene-id', class: 'note' })),
+        h('canvas', { id: 'image' }),
+      ),
+      h(
+        'section',
+        { class: 'pane' },
+        h('h2', {}, icon('map'), 'Map', h('span', { id: 'map-note', class: 'note' })),
+        h('canvas', { id: 'map' }),
+      ),
+      h(
+        'aside',
+        { class: 'calib-sidebar' },
+        h('p', { id: 'hint', class: 'hint' }),
+        h('div', { id: 'summary', class: 'summary' }),
+        h('ul', { id: 'items', class: 'items' }),
+        h(
+          'label',
+          { id: 'camera-height', class: 'field', hidden: true },
+          h('span', {}, 'Camera height above the road (m)'),
+          h('input', { type: 'number', min: 0.5, step: 0.1, class: 'input' }),
+        ),
+        h(
+          'div',
+          { id: 'zone-actions', class: 'actions', hidden: true },
+          h(
+            'button',
+            { id: 'suggest', type: 'button', class: 'btn small' },
+            icon('map'),
+            'Add OSM crossings',
+          ),
+          h(
+            'button',
+            { id: 'finish-zone', type: 'button', class: 'btn small primary' },
+            icon('check'),
+            'Finish zone',
+          ),
+        ),
+        h('p', { id: 'message', class: 'message' }),
+        h('p', { id: 'attribution', class: 'attribution' }),
+      ),
+    ),
+  );
+}
+
 async function start(): Promise<void> {
-  const scene = await fetchScene();
-  element('#scene-id').textContent = scene.scene_id;
-  if (!scene.map || !scene.geo_anchor) {
-    element('#message').textContent =
-      'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
+  const siteId = param('site');
+  const shell = await mountShell({
+    page: 'calibration',
+    siteId,
+    title: 'Calibration and zones',
+    fullBleed: true,
+  });
+  if (shell.managed && !siteId) {
+    location.replace('/');
     return;
   }
-  element('#map-note').textContent = 'orthophoto, OpenStreetMap roads';
-  const app = new CalibrationApp(scene, await loadMapData(scene.map));
+  setSite(shell.managed ? siteId : null);
+  if (shell.managed && siteId) {
+    shell.setActions(
+      h('a', { class: 'btn small', href: links.twin(siteId) }, icon('twin'), 'Live twin'),
+      h('a', { class: 'btn small', href: links.settings(siteId) }, icon('settings'), 'Settings'),
+    );
+    await waitForSite(shell.content, siteId, 'calibrate it against the camera image');
+  }
+  shell.content.append(layout());
+  const scene = await fetchScene();
+  element('#scene-id').textContent = ` · ${scene.image_size_px[0]} × ${scene.image_size_px[1]} px`;
+  if (!scene.map || !scene.geo_anchor) {
+    const text = siteId
+      ? 'This site has no geographic anchor or map layers yet: set its location and prepare the map under Settings.'
+      : 'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
+    element('#message').textContent = text;
+    toast(text, 'error');
+    return;
+  }
+  element('#map-note').textContent = ' · orthophoto, OpenStreetMap roads';
+  const app = new CalibrationApp(scene, await loadMapData(siteUrl(scene.map)));
   await app.start();
 }
 

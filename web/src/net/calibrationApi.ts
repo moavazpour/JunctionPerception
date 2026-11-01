@@ -1,4 +1,4 @@
-import type { ZoneCollection } from './client';
+import { siteUrl, type ZoneCollection } from './client';
 
 /** A control point: image position (px) and map position (world frame, m). */
 export interface ControlPoint {
@@ -40,12 +40,12 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 export async function fetchControlPoints(): Promise<ControlPoint[]> {
-  const response = await fetch('/api/calibration');
+  const response = await fetch(siteUrl('/api/calibration'));
   return ((await response.json()) as { points: ControlPoint[] }).points;
 }
 
 export function fitControlPoints(points: ControlPoint[]): Promise<FitResult> {
-  return post<FitResult>('/api/calibration/fit', { points });
+  return post<FitResult>(siteUrl('/api/calibration/fit'), { points });
 }
 
 export function saveCalibration(
@@ -53,7 +53,7 @@ export function saveCalibration(
   cameraPosition: [number, number] | null,
   cameraHeight: number | null,
 ): Promise<FitResult> {
-  return post<FitResult>('/api/calibration/save', {
+  return post<FitResult>(siteUrl('/api/calibration/save'), {
     points,
     camera_position_m: cameraPosition,
     camera_height_m: cameraPosition ? cameraHeight : null,
@@ -61,11 +61,11 @@ export function saveCalibration(
 }
 
 export function saveZones(zones: ZoneCollection): Promise<ZoneCollection> {
-  return post<ZoneCollection>('/api/zones', zones);
+  return post<ZoneCollection>(siteUrl('/api/zones'), zones);
 }
 
 export async function requestRestart(): Promise<void> {
-  await fetch('/api/restart', { method: 'POST' });
+  await fetch(siteUrl('/api/restart'), { method: 'POST' });
 }
 
 /** Applies a row-major 3x3 homography to a 2D point; null at infinity. */

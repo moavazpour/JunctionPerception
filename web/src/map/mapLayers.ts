@@ -1,16 +1,21 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+import { TWIN } from '../twin/palette';
 import type { Building, MapData, Point, Polyline } from './mapData';
 
-/** Colours of the stylized map: light greys, white markings. */
+/** Colours of the stylized map: dark asphalt, soft markings (see src/twin/palette.ts). */
 export const MAP_PALETTE = {
-  road: 0xd3d6db,
-  path: 0xe2e4e8,
-  marking: 0xffffff,
-  building: 0xe6e8eb,
-  roof: 0xf3f4f6,
+  road: TWIN.road,
+  path: TWIN.path,
+  marking: TWIN.marking,
+  building: TWIN.building,
+  buildingEdge: TWIN.buildingEdge,
 } as const;
+
+const BUILDING_EDGE_OPACITY = 0.55;
+// Edges between faces that meet at less than this angle are not drawn (roof triangulation).
+const BUILDING_EDGE_ANGLE_DEG = 25;
 
 const ROAD_Z = 0.006;
 const PATH_Z = 0.004;
@@ -73,7 +78,7 @@ function mergedRibbons(lines: Polyline[], z: number): THREE.BufferGeometry | nul
   return valid.length > 0 ? mergeGeometries(valid) : null;
 }
 
-function buildingMesh(buildings: Building[]): THREE.Mesh | null {
+function buildingMesh(buildings: Building[]): THREE.Group | null {
   const geometries = buildings
     .filter((b) => b.footprint.length >= 3)
     .map((b) => {
@@ -83,16 +88,30 @@ function buildingMesh(buildings: Building[]): THREE.Mesh | null {
   if (geometries.length === 0) {
     return null;
   }
+  const merged = mergeGeometries(geometries.map((g) => g.toNonIndexed()));
   const mesh = new THREE.Mesh(
-    mergeGeometries(geometries.map((g) => g.toNonIndexed())),
-    new THREE.MeshStandardMaterial({ color: MAP_PALETTE.building, roughness: 0.95 }),
+    merged,
+    new THREE.MeshStandardMaterial({
+      color: MAP_PALETTE.building,
+      roughness: 0.9,
+      metalness: 0.05,
+    }),
   );
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  return mesh;
+  // Outlines give the blocks an architectural look on the dark ground.
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(merged, BUILDING_EDGE_ANGLE_DEG),
+    new THREE.LineBasicMaterial({
+      color: MAP_PALETTE.buildingEdge,
+      transparent: true,
+      opacity: BUILDING_EDGE_OPACITY,
+    }),
+  );
+  return new THREE.Group().add(mesh, edges);
 }
 
-/** Stylized map from OSM roads, paths and crossings: flat light-grey surfaces, white zebras. */
+/** Stylized map from OSM roads, paths and crossings: dark flat surfaces, light zebras. */
 export function buildStylizedLayer(map: MapData): THREE.Group {
   const group = new THREE.Group();
   if (map.osm) {
@@ -110,13 +129,15 @@ export function buildStylizedLayer(map: MapData): THREE.Group {
         : [],
     );
     if (stripes.length > 0) {
-      group.add(flatMesh(mergeGeometries(stripes), MAP_PALETTE.marking));
+      const zebras = flatMesh(mergeGeometries(stripes), MAP_PALETTE.marking);
+      Object.assign(zebras.material, { transparent: true, opacity: 0.75 });
+      group.add(zebras);
     }
   }
   return group;
 }
 
-/** LoD2 buildings as light extruded blocks. */
+/** LoD2 buildings as dark extruded blocks with outlined edges. */
 export function buildBuildingLayer(map: MapData): THREE.Group {
   const group = new THREE.Group();
   const mesh = buildingMesh(map.buildings);
@@ -146,7 +167,11 @@ export function buildOrthoLayer(map: MapData): THREE.Mesh | null {
   const texture = new THREE.TextureLoader().load(map.base + map.ortho.image);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture }));
+  // Slightly dimmed and without tone mapping, so the photo keeps its colours in the dark twin.
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({ map: texture, color: 0xd2d8e2, toneMapped: false }),
+  );
   mesh.receiveShadow = false;
   return mesh;
 }

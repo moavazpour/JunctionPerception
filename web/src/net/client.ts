@@ -45,6 +45,8 @@ export interface ServerStatus {
   fps?: number;
   latency_ms?: number;
   clients?: number;
+  active_events?: number;
+  calibrated?: boolean;
 }
 
 export type PlaybackCommand =
@@ -67,8 +69,21 @@ export function parseVideoMessage(data: ArrayBuffer): VideoFrame {
   return { frame, jpeg: new Blob([data.slice(8)], { type: 'image/jpeg' }) };
 }
 
+// Behind the site manager every site is served under /sites/<id>/; a single jp_server serves at /.
+let siteBase = '';
+
+/** Selects the site whose server the API calls and streams go to (null: the serving host). */
+export function setSite(siteId: string | null): void {
+  siteBase = siteId ? `/sites/${encodeURIComponent(siteId)}` : '';
+}
+
+/** URL of a path on the selected site's server, e.g. siteUrl('/api/frame'). */
+export function siteUrl(path: string): string {
+  return siteBase + path;
+}
+
 export async function fetchScene(): Promise<SceneDescription> {
-  const response = await fetch('/api/scene');
+  const response = await fetch(siteUrl('/api/scene'));
   if (!response.ok) {
     throw new Error(`GET /api/scene failed: ${response.status}`);
   }
@@ -76,7 +91,7 @@ export async function fetchScene(): Promise<SceneDescription> {
 }
 
 export async function fetchStatus(): Promise<ServerStatus> {
-  const response = await fetch('/api/status');
+  const response = await fetch(siteUrl('/api/status'));
   if (!response.ok) {
     throw new Error(`GET /api/status failed: ${response.status}`);
   }
@@ -84,7 +99,7 @@ export async function fetchStatus(): Promise<ServerStatus> {
 }
 
 export async function sendPlayback(command: PlaybackCommand): Promise<void> {
-  await fetch('/api/playback', { method: 'POST', body: JSON.stringify(command) });
+  await fetch(siteUrl('/api/playback'), { method: 'POST', body: JSON.stringify(command) });
 }
 
 const RECONNECT_DELAY_MS = 1000;
@@ -92,16 +107,23 @@ const RECONNECT_DELAY_MS = 1000;
 // restarted server that were never reported as closed. Paused playback just reconnects quietly.
 const STALE_AFTER_MS = 5000;
 
-/** WebSocket that reconnects after the connection drops or goes silent. */
+/** Stops a subscription and its reconnects. */
+export type Unsubscribe = () => void;
+
+/** WebSocket that reconnects after the connection drops or goes silent, until closed. */
 function openSocket(
   path: string,
   binary: boolean,
   onMessage: (data: string | ArrayBuffer) => void,
   onConnection: (connected: boolean) => void,
-): void {
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
+): Unsubscribe {
+  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${siteUrl(path)}`;
+  let closed = false;
+  let current: WebSocket | null = null;
+  let retry = 0;
   const connect = (): void => {
     const socket = new WebSocket(url);
+    current = socket;
     if (binary) {
       socket.binaryType = 'arraybuffer';
     }
@@ -121,18 +143,25 @@ function openSocket(
     socket.onclose = () => {
       clearTimeout(watchdog);
       onConnection(false);
-      setTimeout(connect, RECONNECT_DELAY_MS);
+      if (!closed) {
+        retry = window.setTimeout(connect, RECONNECT_DELAY_MS);
+      }
     };
   };
   connect();
+  return () => {
+    closed = true;
+    clearTimeout(retry);
+    current?.close();
+  };
 }
 
 /** Subscribes to the world-state stream; malformed messages are dropped. */
 export function subscribeWorld(
   onState: (state: WorldState) => void,
   onConnection: (connected: boolean) => void,
-): void {
-  openSocket(
+): Unsubscribe {
+  return openSocket(
     '/ws/world',
     false,
     (data) => {
@@ -149,8 +178,11 @@ export function subscribeWorld(
 }
 
 /** Subscribes to the camera image stream. */
-export function subscribeVideo(onFrame: (frame: VideoFrame) => void): void {
-  openSocket(
+export function subscribeVideo(
+  onFrame: (frame: VideoFrame) => void,
+  onConnection: (connected: boolean) => void = () => undefined,
+): Unsubscribe {
+  return openSocket(
     '/ws/video',
     true,
     (data) => {
@@ -158,6 +190,6 @@ export function subscribeVideo(onFrame: (frame: VideoFrame) => void): void {
         onFrame(parseVideoMessage(data));
       }
     },
-    () => undefined,
+    onConnection,
   );
 }

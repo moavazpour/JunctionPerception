@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseVideoMessage } from '../src/net/client';
 import type { WorldEvent, WorldObject, WorldState } from '../src/net/schema';
-import { screenToGround } from '../src/twin/cameraRig';
+import { distanceForHeight, orbitPose } from '../src/twin/orbitRig';
 import { angleDelta, lerpAngle, WorldInterpolator } from '../src/twin/interpolation';
 import { eventParticipants } from '../src/twin/twinView';
 import { describeEvent, EventLog, formatTimestamp } from '../src/ui/events';
@@ -123,16 +123,38 @@ describe('video messages', () => {
   });
 });
 
-describe('screenToGround', () => {
-  it('maps canvas pixels to ground points for a rotated view', () => {
-    const view = { centerX: 10, centerY: 20, viewHeightM: 100, rotationRad: Math.PI / 2 };
-    const size = { width: 200, height: 100 };
-    const center = screenToGround(view, { x: 100, y: 50 }, size);
-    expect(center.x).toBeCloseTo(10);
-    expect(center.y).toBeCloseTo(20);
-    // One metre per pixel; screen right is world +y after a quarter turn.
-    const right = screenToGround(view, { x: 110, y: 50 }, size);
-    expect(right.x).toBeCloseTo(10);
-    expect(right.y).toBeCloseTo(30);
+describe('orbitPose', () => {
+  it('looks straight down at 90° elevation with screen-up along the azimuth', () => {
+    const view = {
+      targetX: 10,
+      targetY: 20,
+      distance: 50,
+      azimuth: Math.PI / 2,
+      elevation: Math.PI / 2,
+    };
+    const { position, up } = orbitPose(view);
+    expect(position[0]).toBeCloseTo(10);
+    expect(position[1]).toBeCloseTo(20);
+    expect(position[2]).toBeCloseTo(50);
+    // A quarter turn: world -x points up on screen.
+    expect(up[0]).toBeCloseTo(-1);
+    expect(up[1]).toBeCloseTo(0);
+    expect(up[2]).toBeCloseTo(0);
+  });
+
+  it('keeps the camera at the orbit distance, behind the target, with an orthogonal up vector', () => {
+    const view = { targetX: 0, targetY: 0, distance: 100, azimuth: 0, elevation: Math.PI / 6 };
+    const { position, up } = orbitPose(view);
+    expect(Math.hypot(...position)).toBeCloseTo(100);
+    // North up on screen: the camera stands south of the target.
+    expect(position[1]).toBeLessThan(0);
+    const dot = up[0] * -position[0] + up[1] * -position[1] + up[2] * -position[2];
+    expect(dot).toBeCloseTo(0);
+  });
+});
+
+describe('distanceForHeight', () => {
+  it('grows linearly with the visible ground height', () => {
+    expect(distanceForHeight(200)).toBeCloseTo(2 * distanceForHeight(100));
   });
 });

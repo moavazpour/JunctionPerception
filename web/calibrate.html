@@ -3,48 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JunctionPerception · Calibration</title>
+    <meta name="theme-color" content="#080d17" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Calibration · JunctionPerception</title>
   </head>
-  <body class="calibration">
-    <header class="toolbar">
-      <a class="back" href="/">← Twin</a>
-      <span class="product">Calibration and zones</span>
-      <span id="scene-id" class="scene"></span>
-      <nav class="tabs">
-        <button type="button" data-mode="points" class="active">Control points</button>
-        <button type="button" data-mode="zones">Zones</button>
-        <button type="button" data-mode="camera">Camera position</button>
-      </nav>
-      <span class="spacer"></span>
-      <button id="refresh-frame" type="button">New camera frame</button>
-      <button id="save" type="button" class="primary">Save</button>
-      <button id="apply" type="button">Apply (restart server)</button>
-    </header>
-    <main class="workspace">
-      <section class="pane">
-        <h2>Camera image</h2>
-        <canvas id="image"></canvas>
-      </section>
-      <section class="pane">
-        <h2>Map <span id="map-note" class="note"></span></h2>
-        <canvas id="map"></canvas>
-      </section>
-      <aside class="sidebar">
-        <p id="hint" class="hint"></p>
-        <div id="summary" class="summary"></div>
-        <ul id="items" class="items"></ul>
-        <label id="camera-height" class="field" hidden>
-          Camera height above the road (m)
-          <input type="number" min="0.5" step="0.1" />
-        </label>
-        <div id="zone-actions" class="actions" hidden>
-          <button id="suggest" type="button">Add OSM crossings</button>
-          <button id="finish-zone" type="button">Finish zone</button>
-        </div>
-        <p id="message" class="message"></p>
-        <p id="attribution" class="attribution"></p>
-      </aside>
-    </main>
+  <body>
     <script type="module" src="/src/calibration/main.ts"></script>
   </body>
 </html>

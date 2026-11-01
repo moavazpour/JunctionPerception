@@ -3,40 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JunctionPerception</title>
+    <meta name="theme-color" content="#080d17" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Overview · JunctionPerception</title>
   </head>
   <body>
-    <main class="layout">
-      <section class="twin">
-        <canvas id="twin"></canvas>
-        <header class="title">
-          <span class="product">JunctionPerception</span>
-          <span id="scene-id" class="scene"></span>
-          <a class="tool-link" href="/calibrate.html">Calibration and zones</a>
-        </header>
-        <div id="layers" class="layers" hidden>
-          <button type="button" data-layer="map" class="active">Map</button>
-          <button type="button" data-layer="ortho">Orthophoto</button>
-          <label><input id="buildings" type="checkbox" checked /> Buildings</label>
-        </div>
-        <p id="attribution" class="attribution"></p>
-        <footer class="playback">
-          <button id="play" type="button">Pause</button>
-          <input id="seek" type="range" min="0" max="0" value="0" aria-label="Seek" />
-          <span id="frame" class="frame"></span>
-        </footer>
-        <p class="hint">Drag to pan · wheel to zoom · right-drag to rotate</p>
-      </section>
-      <aside class="panel">
-        <figure class="video">
-          <img id="video" alt="" />
-          <figcaption id="video-frame">camera</figcaption>
-        </figure>
-        <h2>Events</h2>
-        <ul id="events" class="events"></ul>
-        <p id="status" class="status">connecting…</p>
-      </aside>
-    </main>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/pages/overview.ts"></script>
   </body>
 </html>
