@@ -2,6 +2,7 @@ import '../styles/twin.css';
 
 import { loadMapData, type MapData } from '../map/mapData';
 import { attributionLines } from '../map/mapLayers';
+import { fetchRegions, type Regions, saveRegions } from '../net/calibrationApi';
 import {
   cameraBase,
   fetchScene,
@@ -61,6 +62,7 @@ function layout(): HTMLElement {
       ),
       h('div', { id: 'view-controls', class: 'hud hud-tr glass toolbar' }),
       h('div', { id: 'align-bar', class: 'align-bar glass', hidden: true }),
+      h('div', { id: 'signal-bar', class: 'signal-bar glass', hidden: true }),
       h('div', { id: 'legend', class: 'hud hud-bl glass legend' }),
       h('div', { id: 'tooltip', class: 'tooltip glass', hidden: true }),
       h('p', { id: 'attribution', class: 'attribution' }),
@@ -108,6 +110,12 @@ function layout(): HTMLElement {
       h('section', { id: 'stats', class: 'stats' }),
       h(
         'section',
+        { id: 'signals-card', class: 'panel-card signals-card', hidden: true },
+        h('header', {}, icon('pulse'), h('h3', {}, 'Traffic lights')),
+        h('ul', { id: 'signals', class: 'signals' }),
+      ),
+      h(
+        'section',
         { class: 'panel-card events-card' },
         h(
           'header',
@@ -137,6 +145,8 @@ class TwinPage {
   private missed = 0;
   private framed = false;
   private readonly attributions = new Map<string, { text: string; url: string }[]>();
+  // Regions (with the traffic lights) of each followed camera, by "site/camera".
+  private readonly regions = new Map<string, { base: string; regions: Regions }>();
 
   constructor(
     private readonly view: TwinView,
@@ -148,6 +158,8 @@ class TwinPage {
     this.camera = camera;
     this.panel.onCamera = (id) => this.selectCamera(id);
     view.onHover = (object, x, y) => this.tooltip(object, x, y);
+    view.onSignalPlaced = (site, camera, id, position, heading) =>
+      this.placeSignal(site, camera, id, position, heading);
     setInterval(() => this.renderPanel(), PANEL_INTERVAL_MS);
     setInterval(() => void this.refreshStatus(), STATUS_INTERVAL_MS);
   }
@@ -232,6 +244,14 @@ class TwinPage {
     void fetchScene(base)
       .then((description) => {
         this.view.addCamera(site.id, camera.id, description);
+        // Traffic lights of the camera: where they stand, and their colour from its stream.
+        void fetchRegions(base)
+          .then((regions) => {
+            this.regions.set(key, { base, regions });
+            this.view.setSignals(site.id, camera.id, regions.signals);
+            this.renderSignalBar(site.id);
+          })
+          .catch(() => undefined);
         this.world.set(
           key,
           subscribeWorld(
@@ -354,6 +374,15 @@ class TwinPage {
       })),
     );
     this.panel.showWorld(this.view.objects(siteId), events);
+    this.panel.showSignals(
+      states.flatMap(({ site, camera, state }) =>
+        (state.signals ?? []).map((s) => ({
+          name: several ? `${s.name} · ${names.get(`${site}/${camera}`) ?? camera}` : s.name,
+          state: s.state,
+          seconds: Math.max(0, (state.timestamp_ns - s.since_ns) / 1e9),
+        })),
+      ),
+    );
     const shown = states.find(({ site, camera }) => `${site}/${camera}` === this.camera);
     if (shown) {
       this.showFrame(shown.state);
@@ -516,12 +545,170 @@ class TwinPage {
     const canAlign = Boolean(
       site && !site.georeferenced && site.has_map && this.placed.has(site.id),
     );
-    const key = `${anyOrtho}:${canAlign}:${site?.id}`;
+    const signals = site
+      ? site.cameras.reduce((sum, c) => sum + (c.regions?.signals.length ?? 0), 0)
+      : 0;
+    const key = `${anyOrtho}:${canAlign}:${site?.id}:${signals}`;
     if (key === this.controlsKey) {
       return;
     }
     this.controlsKey = key;
-    setupControls(this.view, anyOrtho, canAlign && site ? site : null);
+    setupControls(
+      this.view,
+      anyOrtho,
+      canAlign && site ? site : null,
+      site && signals > 0 ? this.signalButton(site) : null,
+    );
+  }
+
+  /** "Traffic lights": place each signal of the site in the twin. */
+  private signalButton(site: Site): HTMLElement {
+    const button = h(
+      'button',
+      { type: 'button', class: 'btn small' },
+      icon('pulse'),
+      'Traffic lights',
+    );
+    button.addEventListener('click', () => {
+      const bar = document.querySelector<HTMLElement>('#signal-bar');
+      if (bar) {
+        bar.hidden = !bar.hidden;
+        this.renderSignalBar(site.id);
+      }
+    });
+    return button;
+  }
+
+  private renderSignalBar(siteId: string): void {
+    const bar = document.querySelector<HTMLElement>('#signal-bar');
+    const site = this.sites.find((s) => s.id === siteId);
+    if (!bar || bar.hidden || !site) {
+      return;
+    }
+    const rows = site.cameras.flatMap((camera) => {
+      const entry = this.regions.get(`${site.id}/${camera.id}`);
+      return (entry?.regions.signals ?? []).map((signal) => ({ camera, entry, signal }));
+    });
+    const missing = site.cameras.filter(
+      (c) => c.regions.signals.length > 0 && !this.regions.has(`${site.id}/${c.id}`),
+    );
+    fill(
+      bar,
+      h(
+        'div',
+        { class: 'signal-bar-head' },
+        icon('pulse'),
+        h('strong', {}, 'Traffic lights'),
+        h(
+          'span',
+          { class: 'muted' },
+          'Place: click where the signal stands, then towards the traffic it faces.',
+        ),
+        h('span', { class: 'spacer' }),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn small ghost',
+            onclick: () => {
+              this.view.setSignalPlacement(null);
+              bar.hidden = true;
+            },
+          },
+          'Close',
+        ),
+      ),
+      rows.map(({ camera, entry, signal }) => {
+        const height = h('input', {
+          class: 'input num',
+          type: 'number',
+          min: 1,
+          max: 20,
+          step: 0.1,
+          title: 'Height of the signal head above the road (m)',
+        });
+        height.value = String(signal.height_m);
+        height.addEventListener('change', () => {
+          const value = Number.parseFloat(height.value);
+          if (value > 0 && value <= 20 && entry) {
+            signal.height_m = value;
+            void this.saveSignals(site.id, camera.id);
+          }
+        });
+        const place = h(
+          'button',
+          { type: 'button', class: 'btn small primary' },
+          icon('pin'),
+          signal.position ? 'Move' : 'Place',
+        );
+        place.addEventListener('click', () => {
+          this.view.setSignalPlacement(site.id, camera.id, signal.id);
+          toast(`Click where ${signal.name} stands, then towards the traffic it faces.`, 'info');
+        });
+        return h(
+          'div',
+          { class: 'signal-row' },
+          h('span', { class: `signal-dot ${this.signalState(site.id, camera.id, signal.id)}` }),
+          h('span', { class: 'name' }, signal.name),
+          site.cameras.length > 1 ? h('span', { class: 'muted' }, camera.name) : null,
+          h(
+            'span',
+            { class: `tag ${signal.position ? 'ok' : 'warn'}` },
+            signal.position ? 'placed' : 'not placed',
+          ),
+          h('label', { class: 'height' }, 'height m', height),
+          place,
+        );
+      }),
+      missing.length > 0
+        ? h(
+            'p',
+            { class: 'muted' },
+            `Start ${missing.map((c) => c.name).join(', ')} to place its traffic lights.`,
+          )
+        : null,
+    );
+  }
+
+  private signalState(siteId: string, cameraId: string, signalId: string): string {
+    const state = this.view
+      .states(siteId)
+      .find((s) => s.camera === cameraId)
+      ?.state.signals?.find((s) => s.id === signalId);
+    return state?.state ?? 'unknown';
+  }
+
+  private async saveSignals(siteId: string, cameraId: string): Promise<void> {
+    const entry = this.regions.get(`${siteId}/${cameraId}`);
+    if (!entry) {
+      return;
+    }
+    try {
+      entry.regions = await saveRegions(entry.regions, entry.base);
+      this.view.setSignals(siteId, cameraId, entry.regions.signals);
+      this.renderSignalBar(siteId);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    }
+  }
+
+  /** A traffic light was placed in the view: store its position and direction. */
+  private placeSignal(
+    siteId: string,
+    cameraId: string,
+    signalId: string,
+    position: [number, number],
+    headingDeg: number,
+  ): void {
+    const signal = this.regions
+      .get(`${siteId}/${cameraId}`)
+      ?.regions.signals.find((s) => s.id === signalId);
+    if (!signal) {
+      return;
+    }
+    signal.position = position;
+    signal.heading_deg = headingDeg;
+    void this.saveSignals(siteId, cameraId).then(() => toast(`${signal.name} placed`, 'ok'));
   }
 
   private tooltip(drawn: DrawnObject | null, x: number, y: number): void {
@@ -566,7 +753,12 @@ class TwinPage {
   }
 }
 
-function setupControls(view: TwinView, hasMap: boolean, alignSite: Site | null): void {
+function setupControls(
+  view: TwinView,
+  hasMap: boolean,
+  alignSite: Site | null,
+  signals: HTMLElement | null = null,
+): void {
   const controls = document.querySelector<HTMLElement>('#view-controls');
   if (!controls) {
     return;
@@ -595,6 +787,7 @@ function setupControls(view: TwinView, hasMap: boolean, alignSite: Site | null):
     hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
     alignSite ? alignButton(view, alignSite) : null,
+    signals,
     h(
       'button',
       {

@@ -55,22 +55,37 @@ export interface RegionLine {
   speed_limit_kmh: number;
 }
 
-/** Where a camera accepts detections and counts road users (regions.json). */
+/**
+ * A traffic light seen by a camera: its signal head in image pixels (two points: a rectangle)
+ * and its place in the site's world frame, set in the twin.
+ */
+export interface RegionSignal {
+  id: string;
+  name: string;
+  points: [number, number][];
+  position: [number, number] | null;
+  /** Direction the lamps face (towards the traffic they control), from +x counter-clockwise. */
+  heading_deg: number;
+  height_m: number;
+}
+
+/** Where a camera accepts detections, counts road users and reads traffic lights. */
 export interface Regions {
   areas: RegionArea[];
   lines: RegionLine[];
+  signals: RegionSignal[];
 }
 
-export async function fetchRegions(): Promise<Regions> {
-  const response = await fetch(siteUrl('/api/regions'));
+export async function fetchRegions(base?: string): Promise<Regions> {
+  const response = await fetch(siteUrl('/api/regions', base));
   if (!response.ok) {
     throw new Error(`GET /api/regions failed: ${response.status}`);
   }
   return (await response.json()) as Regions;
 }
 
-export function saveRegions(regions: Regions): Promise<Regions> {
-  return post<Regions>(siteUrl('/api/regions'), regions);
+export function saveRegions(regions: Regions, base?: string): Promise<Regions> {
+  return post<Regions>(siteUrl('/api/regions', base), regions);
 }
 
 export async function fetchControlPoints(): Promise<ControlPoint[]> {

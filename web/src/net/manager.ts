@@ -96,7 +96,11 @@ export interface Camera {
   calibrated: boolean;
   control_points: boolean;
   /** Detection areas and counting lines drawn on the camera image (regions.json). */
-  regions: { areas: number; lines: { id: string; name: string }[] };
+  regions: {
+    areas: number;
+    lines: { id: string; name: string }[];
+    signals: { id: string; name: string; placed: boolean }[];
+  };
   source: SiteSource;
   playback: PlaybackSettings;
   video: VideoSettings;

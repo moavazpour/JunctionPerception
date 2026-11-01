@@ -39,3 +39,17 @@ describe('world-state schema additions', () => {
     expect(isWorldState({ ...state, objects })).toBe(true);
   });
 });
+
+describe('traffic lights in the world state', () => {
+  it('accepts states without signals and rejects unknown colours', () => {
+    const state = structuredClone(fixture) as Record<string, unknown>;
+    const { signals, ...older } = state;
+    expect(Array.isArray(signals)).toBe(true);
+    expect(isWorldState(older)).toBe(true);
+    const wrong = structuredClone(signals) as Record<string, unknown>[];
+    if (wrong[0]) {
+      wrong[0]['state'] = 'blue';
+    }
+    expect(isWorldState({ ...state, signals: wrong })).toBe(false);
+  });
+});

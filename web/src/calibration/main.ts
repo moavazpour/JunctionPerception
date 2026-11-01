@@ -59,6 +59,7 @@ const COLORS = {
   area: 'rgba(61, 155, 255, 0.16)',
   areaEdge: '#3d9bff',
   line: '#f6b443',
+  signal: '#ff5d6c',
 };
 const RESTART_RELOAD_MS = 6000;
 // Servers of the site's other running cameras (they share the zones).
@@ -100,7 +101,7 @@ class CalibrationApp {
   private zones: EditableZone[] = [];
   private drawing: Point[] = [];
   // Detection areas and counting lines of the camera, and the one being drawn (image px).
-  private regions: Regions = { areas: [], lines: [] };
+  private regions: Regions = { areas: [], lines: [], signals: [] };
   private drawingRegion: [number, number][] = [];
   private image = new Image();
   private orthoImage = new Image();
@@ -142,7 +143,7 @@ class CalibrationApp {
 
   async start(): Promise<void> {
     this.points = await fetchControlPoints();
-    this.regions = await fetchRegions().catch(() => ({ areas: [], lines: [] }));
+    this.regions = await fetchRegions().catch(() => ({ areas: [], lines: [], signals: [] }));
     this.nextPoint = this.points.length + 1;
     await this.refit();
     this.setMode('points');
@@ -159,6 +160,7 @@ class CalibrationApp {
     element('#finish-zone').addEventListener('click', () => this.finishZone());
     element('#finish-area').addEventListener('click', () => this.finishRegion('area'));
     element('#finish-line').addEventListener('click', () => this.finishRegion('line'));
+    element('#finish-signal').addEventListener('click', () => this.finishRegion('signal'));
     const height = element<HTMLInputElement>('#camera-height input');
     if (this.cameraHeight !== null) {
       height.value = String(this.cameraHeight);
@@ -236,7 +238,7 @@ class CalibrationApp {
       zones:
         'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
       regions:
-        'Click points in the camera image, then "Finish area" (3+ points) or "Finish line" (2+ points). With areas, only road users inside them are detected. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Save applies them at once.',
+        'Click points in the camera image, then "Finish area" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With areas, only road users inside them are detected. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:
         'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };
@@ -258,15 +260,21 @@ class CalibrationApp {
     this.redraw();
   }
 
-  private finishRegion(kind: 'area' | 'line'): void {
+  private finishRegion(kind: 'area' | 'line' | 'signal'): void {
     const points = this.drawingRegion;
     if (points.length < (kind === 'area' ? 3 : 2)) {
       this.message(
-        kind === 'area' ? 'An area needs at least three points.' : 'A line needs two points.',
+        kind === 'area'
+          ? 'An area needs at least three points.'
+          : kind === 'line'
+            ? 'A line needs two points.'
+            : 'Click two opposite corners of the signal head (or its outline).',
       );
       return;
     }
-    const taken = new Set([...this.regions.areas, ...this.regions.lines].map((r) => r.id));
+    const taken = new Set(
+      [...this.regions.areas, ...this.regions.lines, ...this.regions.signals].map((r) => r.id),
+    );
     let n = 1;
     while (taken.has(`${kind}_${n}`)) {
       n++;
@@ -274,25 +282,49 @@ class CalibrationApp {
     const id = `${kind}_${n}`;
     if (kind === 'area') {
       this.regions.areas.push({ id, name: `Area ${n}`, points });
-    } else {
+    } else if (kind === 'line') {
       this.regions.lines.push({ id, name: `Line ${n}`, points, band_m: 0, speed_limit_kmh: 50 });
+    } else {
+      this.regions.signals.push({
+        id,
+        name: `Signal ${n}`,
+        points,
+        position: null,
+        heading_deg: 0,
+        height_m: 4.5,
+      });
+      this.message('Signal added: place it in the live twin ("Traffic lights") to show it there.');
     }
     this.drawingRegion = [];
     this.renderList();
     this.redraw();
   }
 
-  private regionItem(kind: 'area' | 'line', index: number): HTMLLIElement {
+  private regionItem(kind: 'area' | 'line' | 'signal', index: number): HTMLLIElement {
     const item = document.createElement('li');
     item.className = 'region-item';
-    const list = kind === 'area' ? this.regions.areas : this.regions.lines;
+    const list: { id: string; name: string }[] =
+      kind === 'area'
+        ? this.regions.areas
+        : kind === 'line'
+          ? this.regions.lines
+          : this.regions.signals;
     const region = list[index];
     if (!region) {
       return item;
     }
     const tag = document.createElement('span');
     tag.className = `region-tag ${kind}`;
-    tag.textContent = kind === 'area' ? 'Area' : 'Line';
+    tag.textContent = { area: 'Area', line: 'Line', signal: 'Signal' }[kind];
+    if (kind === 'signal') {
+      const signal = region as Regions['signals'][number];
+      tag.title = signal.position
+        ? 'Placed in the twin'
+        : 'Not placed yet: place it in the live twin (Traffic lights)';
+      if (!signal.position) {
+        tag.textContent = 'Signal · not placed';
+      }
+    }
     const name = document.createElement('input');
     name.value = region.name;
     name.title = region.id;
@@ -365,6 +397,17 @@ class CalibrationApp {
   }
 
   private drawRegions(c: CanvasRenderingContext2D, view: View2D): void {
+    for (const signal of this.regions.signals) {
+      const [a, b] = signal.points;
+      const corners: [number, number][] =
+        signal.points.length === 2 && a && b ? [a, [b[0], a[1]], b, [a[0], b[1]]] : signal.points;
+      const screen = corners.map(([u, v]) => view.toScreen(u, v));
+      this.polygon(c, screen, null, COLORS.signal);
+      const [first] = screen;
+      if (first) {
+        this.marker(c, first[0], first[1], COLORS.signal, signal.name);
+      }
+    }
     for (const area of this.regions.areas) {
       this.polygon(
         c,
@@ -501,6 +544,7 @@ class CalibrationApp {
       list.replaceChildren(
         ...this.regions.areas.map((_, index) => this.regionItem('area', index)),
         ...this.regions.lines.map((_, index) => this.regionItem('line', index)),
+        ...this.regions.signals.map((_, index) => this.regionItem('signal', index)),
       );
       return;
     }
@@ -881,6 +925,12 @@ function layout(): HTMLElement {
             { id: 'finish-line', type: 'button', class: 'btn small primary' },
             icon('route'),
             'Finish line',
+          ),
+          h(
+            'button',
+            { id: 'finish-signal', type: 'button', class: 'btn small' },
+            icon('pulse'),
+            'Finish signal',
           ),
         ),
         h('p', { id: 'message', class: 'message' }),

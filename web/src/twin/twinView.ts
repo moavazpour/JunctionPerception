@@ -88,6 +88,108 @@ export interface SiteSpec {
 }
 
 /** A road user as drawn: the fused tracks of the cameras of its site. */
+/** A traffic light of a camera, placed in its site's frame (see Regions in calibrationApi). */
+export interface SignalDef {
+  id: string;
+  name: string;
+  position: [number, number] | null;
+  /** Direction the lamps face, from +x counter-clockwise. */
+  heading_deg: number;
+  height_m: number;
+}
+
+type Lamp = 'red' | 'yellow' | 'green';
+const LAMP_COLORS: Record<Lamp, number> = { red: 0xff3b30, yellow: 0xffb000, green: 0x2bd96b };
+// Lamps lit per reported state.
+const LIT: Record<string, Lamp[]> = {
+  red: ['red'],
+  yellow: ['yellow'],
+  red_yellow: ['red', 'yellow'],
+  green: ['green'],
+};
+
+interface SignalLamp {
+  material: THREE.MeshStandardMaterial;
+  /** Glow facing the viewer, so the colour shows from afar and from above. */
+  glow: THREE.Sprite;
+}
+
+interface SignalMesh {
+  camera: string;
+  def: SignalDef;
+  root: THREE.Group;
+  lamps: Record<Lamp, SignalLamp>;
+  shown: string;
+}
+
+let glowTexture: THREE.Texture | null = null;
+
+/** Soft round spot for the lamp glows (white; tinted per lamp). */
+function lampGlow(): THREE.Texture {
+  if (!glowTexture) {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const c = canvas.getContext('2d');
+    if (c) {
+      const g = c.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, size, size);
+    }
+    glowTexture = new THREE.CanvasTexture(canvas);
+  }
+  return glowTexture;
+}
+
+/** Pole with a three-lamp signal head facing +x (the group is turned to the heading). */
+function buildSignal(def: SignalDef): { root: THREE.Group; lamps: Record<Lamp, SignalLamp> } {
+  const root = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x59606b, roughness: 0.5, metalness: 0.5 });
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, def.height_m, 10), metal);
+  pole.rotation.x = Math.PI / 2;
+  pole.position.z = def.height_m / 2;
+  pole.castShadow = true;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.42, 1.05),
+    new THREE.MeshStandardMaterial({ color: 0x1b1f24, roughness: 0.6 }),
+  );
+  head.position.set(0.12, 0, def.height_m + 0.35);
+  head.castShadow = true;
+  const lamps = {} as Record<Lamp, SignalLamp>;
+  (['red', 'yellow', 'green'] as Lamp[]).forEach((lamp, i) => {
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x22252a,
+      emissive: LAMP_COLORS[lamp],
+      emissiveIntensity: 0,
+      roughness: 0.3,
+    });
+    const z = def.height_m + 0.35 + 0.32 - i * 0.32;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.12, 20), material);
+    disc.rotation.y = Math.PI / 2;
+    disc.position.set(0.28, 0, z);
+    const glow = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: lampGlow(),
+        color: LAMP_COLORS[lamp],
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+      }),
+    );
+    glow.scale.setScalar(1.6);
+    glow.position.set(0.32, 0, z);
+    glow.visible = false;
+    root.add(disc, glow);
+    lamps[lamp] = { material, glow };
+  });
+  root.add(pole, head);
+  return { root, lamps };
+}
+
 export interface DrawnObject {
   key: string;
   site: string;
@@ -163,6 +265,8 @@ interface SiteLayer {
   flow: FlowField;
   meshes: Map<string, TrackedMesh>;
   drawn: Map<string, DrawnObject>;
+  /** Traffic lights by "camera:id". */
+  signals: Map<string, SignalMesh>;
   transform: MapTransform;
 }
 
@@ -251,11 +355,26 @@ export class TwinView {
     transform: MapTransform;
   } | null = null;
   private alignSite: SiteLayer | null = null;
+  private placing: {
+    site: SiteLayer;
+    camera: string;
+    id: string;
+    position: THREE.Vector3 | null;
+    marker: THREE.Mesh | null;
+  } | null = null;
 
   /** Called with the road user under the pointer (null: none) and the pointer position. */
   onHover: (object: DrawnObject | null, x: number, y: number) => void = () => undefined;
   /** Called while the map is dragged in align mode. */
   onMapTransform: (transform: MapTransform) => void = () => undefined;
+  /** Called when a traffic light was placed: position (site frame, m) and facing direction. */
+  onSignalPlaced: (
+    site: string,
+    camera: string,
+    id: string,
+    position: [number, number],
+    headingDeg: number,
+  ) => void = () => undefined;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -337,6 +456,7 @@ export class TwinView {
       flow: new FlowField(`jp-flow-${spec.id}`),
       meshes: new Map(),
       drawn: new Map(),
+      signals: new Map(),
       transform: spec.transform ?? { yaw_deg: 0, x_m: 0, y_m: 0 },
     };
     this.sites.set(spec.id, site);
@@ -388,6 +508,48 @@ export class TwinView {
       arrival: 0,
       marker: this.addCameraMarker(site, description),
     });
+  }
+
+  /** The traffic lights of a camera (replacing those it had); unplaced ones are not drawn. */
+  setSignals(siteId: string, cameraId: string, defs: SignalDef[]): void {
+    const site = this.sites.get(siteId);
+    if (!site) {
+      return;
+    }
+    for (const [key, signal] of site.signals) {
+      if (signal.camera === cameraId) {
+        site.group.remove(signal.root);
+        disposeObject(signal.root);
+        site.signals.delete(key);
+      }
+    }
+    for (const def of defs) {
+      if (!def.position) {
+        continue;
+      }
+      const { root, lamps } = buildSignal(def);
+      root.position.set(def.position[0], def.position[1], 0);
+      root.rotation.z = THREE.MathUtils.degToRad(def.heading_deg);
+      site.group.add(root);
+      site.signals.set(`${cameraId}:${def.id}`, { camera: cameraId, def, root, lamps, shown: '' });
+    }
+  }
+
+  /**
+   * Placement of a traffic light: the next click on the ground sets where it stands, the one
+   * after that the direction it faces (towards the traffic it controls). null cancels.
+   */
+  setSignalPlacement(siteId: string | null, cameraId = '', signalId = ''): void {
+    if (this.placing?.marker) {
+      this.placing.site.group.remove(this.placing.marker);
+      disposeObject(this.placing.marker);
+    }
+    const site = siteId ? this.sites.get(siteId) : undefined;
+    this.placing = site
+      ? { site, camera: cameraId, id: signalId, position: null, marker: null }
+      : null;
+    this.rig.interactive = this.alignSite === null && this.placing === null;
+    this.canvas.classList.toggle('aligning', this.placing !== null || this.alignSite !== null);
   }
 
   /** Feeds a new world state of a camera. */
@@ -1120,6 +1282,24 @@ export class TwinView {
       site.trails.update(trailPositions);
     }
 
+    // Traffic lights show the colour their camera reads; dark while it does not run.
+    for (const signal of site.signals.values()) {
+      const feed = site.cameras.get(signal.camera);
+      const state =
+        feed?.latest && now - feed.arrival < STALE_AFTER_MS
+          ? (feed.latest.signals?.find((s) => s.id === signal.def.id)?.state ?? 'unknown')
+          : 'unknown';
+      if (state !== signal.shown) {
+        signal.shown = state;
+        const lit = LIT[state] ?? [];
+        for (const lamp of ['red', 'yellow', 'green'] as Lamp[]) {
+          const on = lit.includes(lamp);
+          signal.lamps[lamp].material.emissiveIntensity = on ? 3 : 0;
+          signal.lamps[lamp].glow.visible = on;
+        }
+      }
+    }
+
     // Crosswalks with a road user on them glow.
     for (const [id, zone] of site.zones) {
       const active = occupied.has(id);
@@ -1177,7 +1357,43 @@ export class TwinView {
     this.canvas.classList.toggle('hovering', object !== null);
   }
 
+  private onSignalClick(e: PointerEvent): boolean {
+    const placing = this.placing;
+    if (!placing || e.button !== 0) {
+      return false;
+    }
+    const ground = this.rig.groundAt(e.offsetX, e.offsetY);
+    if (!ground) {
+      return true;
+    }
+    const local = placing.site.group.worldToLocal(ground.clone());
+    if (!placing.position) {
+      placing.position = local;
+      placing.marker = new THREE.Mesh(
+        new THREE.RingGeometry(0.4, 0.7, 24),
+        new THREE.MeshBasicMaterial({ color: LAMP_COLORS.red, transparent: true, opacity: 0.9 }),
+      );
+      placing.marker.position.set(local.x, local.y, ZONE_Z + 0.03);
+      placing.site.group.add(placing.marker);
+      return true;
+    }
+    const heading = Math.atan2(local.y - placing.position.y, local.x - placing.position.x);
+    const { site, camera, id, position } = placing;
+    this.setSignalPlacement(null);
+    this.onSignalPlaced(
+      site.spec.id,
+      camera,
+      id,
+      [position.x, position.y],
+      THREE.MathUtils.radToDeg(heading),
+    );
+    return true;
+  }
+
   private onAlignStart(e: PointerEvent): void {
+    if (this.onSignalClick(e)) {
+      return;
+    }
     const site = this.alignSite;
     if (!site) {
       return;

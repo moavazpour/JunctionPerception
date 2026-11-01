@@ -38,6 +38,8 @@ export class SidePanel {
   private readonly slider = element<HTMLInputElement>('#seek');
   private readonly frameLabel = element<HTMLElement>('#frame');
   private readonly offline = element<HTMLElement>('#offline');
+  private readonly signalsCard = element<HTMLElement>('#signals-card');
+  private readonly signals = element<HTMLUListElement>('#signals');
   private readonly log = new TaggedEventLog();
   private videoUrl: string | null = null;
   private playing = true;
@@ -113,6 +115,35 @@ export class SidePanel {
     this.log.update(events);
     this.renderEvents();
     this.renderStats(objects, events);
+  }
+
+  /** Traffic lights read by the cameras: colour and how long it has shown. */
+  showSignals(signals: { name: string; state: string; seconds: number }[]): void {
+    this.signalsCard.hidden = signals.length === 0;
+    if (signals.length === 0) {
+      return;
+    }
+    const labels: Record<string, string> = {
+      red: 'Red',
+      yellow: 'Yellow',
+      red_yellow: 'Red + yellow',
+      green: 'Green',
+      off: 'Off',
+      unknown: 'Unknown',
+    };
+    fill(
+      this.signals,
+      signals.map((s) =>
+        h(
+          'li',
+          {},
+          h('span', { class: `signal-dot ${s.state}` }),
+          h('span', { class: 'name' }, s.name),
+          h('span', { class: 'state' }, labels[s.state] ?? s.state),
+          h('span', { class: 'num muted' }, `${Math.round(s.seconds)} s`),
+        ),
+      ),
+    );
   }
 
   /** Playback position of the shown camera. */

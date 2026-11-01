@@ -41,6 +41,18 @@ export interface WorldEvent {
   zone: string | null;
 }
 
+export type SignalColor = 'red' | 'yellow' | 'red_yellow' | 'green' | 'off' | 'unknown';
+
+/** A traffic light watched by the camera (a signal area drawn on its image). */
+export interface WorldSignal {
+  id: string;
+  name: string;
+  state: SignalColor;
+  confidence: number;
+  /** Timestamp of the frame the state began. */
+  since_ns: number;
+}
+
 export interface WorldState {
   schema_version: number;
   scene_id: string;
@@ -49,6 +61,8 @@ export interface WorldState {
   source: WorldSource;
   objects: WorldObject[];
   events: WorldEvent[];
+  /** Added after version 1 was published: absent in older recordings. */
+  signals?: WorldSignal[];
 }
 
 type FieldCheck = (value: unknown) => boolean;
@@ -121,6 +135,14 @@ function hasExactFields<T>(
   );
 }
 
+const signalFields: Record<keyof WorldSignal, FieldCheck> = {
+  id: isString,
+  name: isString,
+  state: oneOf('red', 'yellow', 'red_yellow', 'green', 'off', 'unknown'),
+  confidence: isNumber,
+  since_ns: isNumber,
+};
+
 const stateFields: Record<keyof WorldState, FieldCheck> = {
   schema_version: (v) => v === WORLD_STATE_SCHEMA_VERSION,
   scene_id: isString,
@@ -129,9 +151,10 @@ const stateFields: Record<keyof WorldState, FieldCheck> = {
   source: oneOf('live', 'oracle', 'replay'),
   objects: arrayOf((o) => hasExactFields<WorldObject>(o, objectFields, optionalObjectFields)),
   events: arrayOf((e) => hasExactFields<WorldEvent>(e, eventFields)),
+  signals: arrayOf((s) => hasExactFields<WorldSignal>(s, signalFields)),
 };
 
 /** Runtime check that a parsed message is a world state of the supported schema version. */
 export function isWorldState(value: unknown): value is WorldState {
-  return hasExactFields<WorldState>(value, stateFields);
+  return hasExactFields<WorldState>(value, stateFields, new Set(['signals']));
 }

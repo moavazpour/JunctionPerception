@@ -383,16 +383,25 @@ class Camera:
             )
 
     def regions(self) -> dict[str, Any]:
-        """Detection areas and counting lines of the camera (regions.json), summarized."""
+        """Detection areas, counting lines and traffic lights of the camera (regions.json),
+        summarized."""
         try:
             regions = json.loads((self.dir / "regions.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {"areas": 0, "lines": []}
+            return {"areas": 0, "lines": [], "signals": []}
         return {
             "areas": len(regions.get("areas", [])),
             "lines": [
                 {"id": line["id"], "name": line.get("name") or line["id"]}
                 for line in regions.get("lines", [])
+            ],
+            "signals": [
+                {
+                    "id": signal["id"],
+                    "name": signal.get("name") or signal["id"],
+                    "placed": signal.get("position") is not None,
+                }
+                for signal in regions.get("signals", [])
             ],
         }
 

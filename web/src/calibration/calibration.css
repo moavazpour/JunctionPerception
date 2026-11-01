@@ -232,3 +232,8 @@
   background: rgb(246 180 67 / 16%);
   color: #f6b443;
 }
+
+.items .region-tag.signal {
+  background: rgb(255 93 108 / 16%);
+  color: #ff5d6c;
+}
