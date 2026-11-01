@@ -13,7 +13,8 @@ export type Page =
   | 'settings'
   | 'new-site'
   | 'system'
-  | 'logs';
+  | 'logs'
+  | 'stats';
 
 export interface ShellOptions {
   page: Page;
@@ -47,6 +48,7 @@ export const links = {
     (camera ? `&camera=${encodeURIComponent(camera)}` : ''),
   settings: (id: string) => `/site.html?site=${encodeURIComponent(id)}`,
   newSite: '/new-site.html',
+  stats: '/stats.html',
   system: '/system.html',
   logs: (source?: string) =>
     source ? `/logs.html?source=${encodeURIComponent(source)}` : '/logs.html',
@@ -197,6 +199,7 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
       h('div', { class: 'nav-label' }, 'Monitor'),
       navItem('/', 'overview', 'Overview', p === 'overview'),
       navItem(links.twin(), 'globe', 'Digital twin', p === 'twin' && !options.siteId),
+      navItem(links.stats, 'chart', 'Statistics', p === 'stats'),
       navItem(links.logs(), 'logs', 'Logs', p === 'logs'),
       h(
         'div',

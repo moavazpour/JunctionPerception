@@ -8,9 +8,12 @@ import {
   fetchControlPoints,
   fitControlPoints,
   type FitResult,
+  fetchRegions,
   invert3,
+  type Regions,
   requestRestart,
   saveCalibration,
+  saveRegions,
   saveZones,
 } from '../net/calibrationApi';
 import {
@@ -31,7 +34,7 @@ import { links, mountShell } from '../ui/shell';
 import { waitForCamera } from '../ui/siteGate';
 import { PanZoomCanvas, type View2D } from './panZoom';
 
-type Mode = 'points' | 'zones' | 'camera';
+type Mode = 'points' | 'zones' | 'regions' | 'camera';
 
 const ZONE_TYPES = ['crosswalk', 'lane', 'intersection'] as const;
 type ZoneType = (typeof ZONE_TYPES)[number];
@@ -53,6 +56,9 @@ const COLORS = {
   camera: '#ffffff',
   road: 'rgba(255, 255, 255, 0.55)',
   label: 'rgba(8, 13, 23, 0.8)',
+  area: 'rgba(61, 155, 255, 0.16)',
+  areaEdge: '#3d9bff',
+  line: '#f6b443',
 };
 const RESTART_RELOAD_MS = 6000;
 // Servers of the site's other running cameras (they share the zones).
@@ -93,6 +99,9 @@ class CalibrationApp {
   private cameraHeight: number | null = null;
   private zones: EditableZone[] = [];
   private drawing: Point[] = [];
+  // Detection areas and counting lines of the camera, and the one being drawn (image px).
+  private regions: Regions = { areas: [], lines: [] };
+  private drawingRegion: [number, number][] = [];
   private image = new Image();
   private orthoImage = new Image();
   private readonly imageCanvas: PanZoomCanvas;
@@ -133,6 +142,7 @@ class CalibrationApp {
 
   async start(): Promise<void> {
     this.points = await fetchControlPoints();
+    this.regions = await fetchRegions().catch(() => ({ areas: [], lines: [] }));
     this.nextPoint = this.points.length + 1;
     await this.refit();
     this.setMode('points');
@@ -147,6 +157,8 @@ class CalibrationApp {
     element('#apply').addEventListener('click', () => void this.apply());
     element('#suggest').addEventListener('click', () => this.suggestCrossings());
     element('#finish-zone').addEventListener('click', () => this.finishZone());
+    element('#finish-area').addEventListener('click', () => this.finishRegion('area'));
+    element('#finish-line').addEventListener('click', () => this.finishRegion('line'));
     const height = element<HTMLInputElement>('#camera-height input');
     if (this.cameraHeight !== null) {
       height.value = String(this.cameraHeight);
@@ -161,6 +173,7 @@ class CalibrationApp {
       } else if (e.key === 'Escape') {
         this.pendingPixel = null;
         this.drawing = [];
+        this.drawingRegion = [];
         this.redraw();
       }
     });
@@ -215,12 +228,15 @@ class CalibrationApp {
       button.classList.toggle('active', button.dataset['mode'] === mode);
     }
     element('#zone-actions').hidden = mode !== 'zones';
+    element('#region-actions').hidden = mode !== 'regions';
     element('#camera-height').hidden = mode !== 'camera';
     const hints: Record<Mode, string> = {
       points:
         'Click a point in the camera image, then the same point on the map (road markings, kerb corners). Use at least 8 points spread over the scene; every fourth point is a check point. Wheel: zoom, drag: pan.',
       zones:
         'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
+      regions:
+        'Click points in the camera image, then "Finish area" (3+ points) or "Finish line" (2+ points). With areas, only road users inside them are detected. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Save applies them at once.',
       camera:
         'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };
@@ -230,11 +246,171 @@ class CalibrationApp {
   }
 
   private onImageClick(u: number, v: number): void {
+    if (this.mode === 'regions') {
+      this.drawingRegion.push([u, v]);
+      this.redraw();
+      return;
+    }
     if (this.mode !== 'points') {
       return;
     }
     this.pendingPixel = [u, v];
     this.redraw();
+  }
+
+  private finishRegion(kind: 'area' | 'line'): void {
+    const points = this.drawingRegion;
+    if (points.length < (kind === 'area' ? 3 : 2)) {
+      this.message(kind === 'area' ? 'An area needs at least three points.' : 'A line needs two points.');
+      return;
+    }
+    const taken = new Set([...this.regions.areas, ...this.regions.lines].map((r) => r.id));
+    let n = 1;
+    while (taken.has(`${kind}_${n}`)) {
+      n++;
+    }
+    const id = `${kind}_${n}`;
+    if (kind === 'area') {
+      this.regions.areas.push({ id, name: `Area ${n}`, points });
+    } else {
+      this.regions.lines.push({ id, name: `Line ${n}`, points, band_m: 0, speed_limit_kmh: 50 });
+    }
+    this.drawingRegion = [];
+    this.renderList();
+    this.redraw();
+  }
+
+  private regionItem(kind: 'area' | 'line', index: number): HTMLLIElement {
+    const item = document.createElement('li');
+    item.className = 'region-item';
+    const list = kind === 'area' ? this.regions.areas : this.regions.lines;
+    const region = list[index];
+    if (!region) {
+      return item;
+    }
+    const tag = document.createElement('span');
+    tag.className = `region-tag ${kind}`;
+    tag.textContent = kind === 'area' ? 'Area' : 'Line';
+    const name = document.createElement('input');
+    name.value = region.name;
+    name.title = region.id;
+    name.addEventListener('change', () => (region.name = name.value.trim() || region.id));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      list.splice(index, 1);
+      this.renderList();
+      this.redraw();
+    });
+    item.append(tag, name);
+    if (kind === 'line') {
+      const line = region as Regions['lines'][number];
+      const number = (label: string, value: number, title: string, set: (v: number) => void) => {
+        const wrap = document.createElement('label');
+        wrap.title = title;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.step = '0.5';
+        input.value = String(value);
+        input.addEventListener('change', () => set(Math.max(0, Number.parseFloat(input.value) || 0)));
+        wrap.append(label, input);
+        return wrap;
+      };
+      item.append(
+        number('band m', line.band_m, 'Only road users this close to the line are detected (0: the line only counts)', (v) => {
+          line.band_m = v;
+        }),
+        number('limit km/h', line.speed_limit_kmh, 'Speed limit for the statistics', (v) => {
+          line.speed_limit_kmh = v;
+        }),
+      );
+    }
+    item.append(remove);
+    return item;
+  }
+
+  /** Arrow at the middle of a line towards the side a direction-A crossing goes to. */
+  private directionArrow(line: [number, number][]): [[number, number], [number, number]] | null {
+    const projection = this.projection;
+    const [a, b] = line;
+    if (!projection || !a || !b) {
+      return null;
+    }
+    const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const normal: [number, number] = [-(b[1] - a[1]) / length, (b[0] - a[0]) / length];
+    const toGround = (u: number, v: number) => applyHomography(projection.imageToGround, u, v);
+    const ga = toGround(...a);
+    const gb = toGround(...b);
+    const probe = toGround(mid[0] + normal[0] * 10, mid[1] + normal[1] * 10);
+    if (!ga || !gb || !probe) {
+      return null;
+    }
+    // Direction A crosses from the left of the line (as drawn, on the ground) to its right.
+    const left =
+      (gb[0] - ga[0]) * (probe[1] - ga[1]) - (gb[1] - ga[1]) * (probe[0] - ga[0]) > 0;
+    const sign = left ? -1 : 1;
+    const reach = Math.min(60, length * 0.25);
+    return [mid, [mid[0] + normal[0] * reach * sign, mid[1] + normal[1] * reach * sign]];
+  }
+
+  private drawRegions(c: CanvasRenderingContext2D, view: View2D): void {
+    for (const area of this.regions.areas) {
+      this.polygon(
+        c,
+        area.points.map(([u, v]) => view.toScreen(u, v)),
+        COLORS.area,
+        COLORS.areaEdge,
+      );
+    }
+    for (const line of this.regions.lines) {
+      const screen = line.points.map(([u, v]) => view.toScreen(u, v));
+      c.beginPath();
+      screen.forEach(([x, y], i) => (i === 0 ? c.moveTo(x, y) : c.lineTo(x, y)));
+      c.strokeStyle = COLORS.line;
+      c.lineWidth = 3;
+      c.stroke();
+      const arrow = this.directionArrow(line.points);
+      if (arrow) {
+        const [x0, y0] = view.toScreen(...arrow[0]);
+        const [x1, y1] = view.toScreen(...arrow[1]);
+        c.beginPath();
+        c.moveTo(x0, y0);
+        c.lineTo(x1, y1);
+        c.lineWidth = 2;
+        c.stroke();
+        this.marker(c, x1, y1, COLORS.line, 'A');
+      }
+      const [first] = screen;
+      if (first) {
+        this.marker(c, first[0], first[1], COLORS.line, line.name);
+      }
+    }
+    if (this.drawingRegion.length > 0) {
+      c.setLineDash([4, 4]);
+      c.beginPath();
+      this.drawingRegion.forEach(([u, v], i) => {
+        const [x, y] = view.toScreen(u, v);
+        if (i === 0) {
+          c.moveTo(x, y);
+        } else {
+          c.lineTo(x, y);
+        }
+      });
+      c.strokeStyle = COLORS.drawing;
+      c.lineWidth = 2;
+      c.stroke();
+      c.setLineDash([]);
+      for (const [u, v] of this.drawingRegion) {
+        const [x, y] = view.toScreen(u, v);
+        c.beginPath();
+        c.arc(x, y, 3, 0, 2 * Math.PI);
+        c.fillStyle = COLORS.drawing;
+        c.fill();
+      }
+    }
   }
 
   private onMapClick(x: number, y: number): void {
@@ -311,6 +487,13 @@ class CalibrationApp {
     const list = element<HTMLUListElement>('#items');
     if (this.mode === 'zones') {
       list.replaceChildren(...this.zones.map((zone, index) => this.zoneItem(zone, index)));
+      return;
+    }
+    if (this.mode === 'regions') {
+      list.replaceChildren(
+        ...this.regions.areas.map((_, index) => this.regionItem('area', index)),
+        ...this.regions.lines.map((_, index) => this.regionItem('line', index)),
+      );
       return;
     }
     list.replaceChildren(...this.points.map((point, index) => this.pointItem(point, index)));
@@ -420,6 +603,8 @@ class CalibrationApp {
       // Zones belong to the intersection: the other running cameras take them over at once.
       await Promise.allSettled(siblingCameras.map((base) => saveZones(zones, base)));
       saved.push(`${this.zones.length} zones`);
+      await saveRegions(this.regions);
+      saved.push(`${this.regions.areas.length} areas and ${this.regions.lines.length} lines`);
       if (this.fit) {
         const fit = await saveCalibration(this.points, this.cameraOverride, this.cameraHeight);
         saved.push(`calibration (RMS ${fit.fit_rms_m.toFixed(2)} m); Apply to restart with it`);
@@ -463,7 +648,12 @@ class CalibrationApp {
     c.fillText(label, x + MARKER_RADIUS + 3, y - MARKER_RADIUS);
   }
 
-  private polygon(c: CanvasRenderingContext2D, screen: [number, number][], fill: string | null) {
+  private polygon(
+    c: CanvasRenderingContext2D,
+    screen: [number, number][],
+    fill: string | null,
+    edge: string = COLORS.zoneEdge,
+  ) {
     if (screen.length < 2) {
       return;
     }
@@ -474,7 +664,7 @@ class CalibrationApp {
       c.fillStyle = fill;
       c.fill();
     }
-    c.strokeStyle = COLORS.zoneEdge;
+    c.strokeStyle = edge;
     c.lineWidth = 1.5;
     c.stroke();
   }
@@ -512,6 +702,7 @@ class CalibrationApp {
       const [sx, sy] = view.toScreen(...this.pendingPixel);
       this.marker(c, sx, sy, COLORS.pending, 'new');
     }
+    this.drawRegions(c, view);
   }
 
   private drawMap(c: CanvasRenderingContext2D, view: View2D): void {
@@ -597,6 +788,7 @@ function layout(): HTMLElement {
         { class: 'tabs segmented' },
         tab('points', 'Control points', true),
         tab('zones', 'Zones'),
+        tab('regions', 'Areas and lines'),
         tab('camera', 'Camera position'),
       ),
       h('span', { class: 'spacer' }),
@@ -665,6 +857,22 @@ function layout(): HTMLElement {
             { id: 'finish-zone', type: 'button', class: 'btn small primary' },
             icon('check'),
             'Finish zone',
+          ),
+        ),
+        h(
+          'div',
+          { id: 'region-actions', class: 'actions', hidden: true },
+          h(
+            'button',
+            { id: 'finish-area', type: 'button', class: 'btn small' },
+            icon('layers'),
+            'Finish area',
+          ),
+          h(
+            'button',
+            { id: 'finish-line', type: 'button', class: 'btn small primary' },
+            icon('route'),
+            'Finish line',
           ),
         ),
         h('p', { id: 'message', class: 'message' }),

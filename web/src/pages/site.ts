@@ -143,6 +143,14 @@ class CameraPanel {
       camera.calibrated
         ? h('span', { class: 'tag ok' }, icon('check'), 'Calibrated')
         : h('span', { class: 'tag warn' }, icon('calibration'), 'Not calibrated'),
+      camera.regions.areas + camera.regions.lines.length > 0
+        ? h(
+            'span',
+            { class: 'tag', title: 'Detection areas and counting lines (Calibration → Areas and lines)' },
+            icon('route'),
+            `${camera.regions.areas} areas · ${camera.regions.lines.length} lines`,
+          )
+        : null,
       h('span', { class: 'spacer' }),
       h(
         'a',

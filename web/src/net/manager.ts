@@ -95,6 +95,8 @@ export interface Camera {
   enabled: boolean;
   calibrated: boolean;
   control_points: boolean;
+  /** Detection areas and counting lines drawn on the camera image (regions.json). */
+  regions: { areas: number; lines: { id: string; name: string }[] };
   source: SiteSource;
   playback: PlaybackSettings;
   video: VideoSettings;
@@ -427,3 +429,128 @@ export function uploadVideo(
     xhr.send(form);
   });
 }
+
+// ------------------------------------------------------------------------- traffic statistics
+
+export interface SpeedStats {
+  n: number;
+  mean?: number;
+  space_mean?: number;
+  std?: number;
+  min?: number;
+  max?: number;
+  p15?: number;
+  p50?: number;
+  p85?: number;
+  p95?: number;
+  pace_kmh?: [number, number];
+  pace_share?: number;
+  over_limit_share?: number | null;
+}
+
+export interface HeadwayStats {
+  n: number;
+  mean_s?: number;
+  min_s?: number;
+  p15_s?: number;
+  p50_s?: number;
+  short_share?: number;
+}
+
+export interface SeriesPoint {
+  t: number;
+  count: number;
+  by_class: Record<string, number>;
+  mean_kmh: number | null;
+  p85_kmh: number | null;
+}
+
+export interface PeakHour {
+  start: number;
+  volume: number;
+  peak_15min: number;
+  phf: number | null;
+}
+
+/** Measures of one counting line over the selected period. */
+export interface LineStats {
+  site: string;
+  camera: string;
+  line: string;
+  name: string;
+  speed_limit_kmh: number | null;
+  observed_s: number;
+  count: number;
+  vehicles: number;
+  vru: number;
+  by_class: Record<string, number>;
+  directions: { A: number; B: number };
+  flow_vph: number | null;
+  flow_pcuph: number | null;
+  heavy_share: number | null;
+  peak_hour: PeakHour | null;
+  speed_kmh: SpeedStats;
+  speed_by_direction: { A: SpeedStats; B: SpeedStats };
+  headway: { A: HeadwayStats; B: HeadwayStats };
+  density_vpkm: number | null;
+  series: SeriesPoint[];
+}
+
+export interface TurningMovement {
+  site: string;
+  camera: string;
+  from: string;
+  from_name: string;
+  to: string;
+  to_name: string;
+  count: number;
+  by_class: Record<string, number>;
+}
+
+export interface StatsReport {
+  generated_at: number;
+  bucket_s: number;
+  lines: LineStats[];
+  series: SeriesPoint[];
+  hourly: number[];
+  speed_histogram: { from: number; count: number }[];
+  turning: TurningMovement[];
+  events: {
+    count: number;
+    by_type: Record<string, number>;
+    min_ttc_s: number | null;
+    median_ttc_s: number | null;
+    min_gap_m: number | null;
+    recent: { t: number; site: string; camera: string; type: string; zone: string | null }[];
+  };
+  observed_s: number;
+  totals: { count: number; by_class: Record<string, number> };
+}
+
+export interface StatsFilters {
+  site?: string;
+  camera?: string;
+  line?: string;
+  /** Unix seconds. */
+  from?: number;
+  to?: number;
+}
+
+function statsQuery(filters: StatsFilters, extra: Record<string, string> = {}): string {
+  const query = new URLSearchParams(extra);
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      query.set(key, String(value));
+    }
+  }
+  return query.toString();
+}
+
+export const fetchStats = (filters: StatsFilters, bucketS: number): Promise<StatsReport> =>
+  request('GET', `/stats?${statsQuery(filters, { bucket: String(bucketS) })}`);
+
+export const statsCsvUrl = (filters: StatsFilters): string =>
+  `${API}/stats/crossings.csv?${statsQuery(filters)}`;
+
+export const clearStats = (site?: string): Promise<unknown> =>
+  request('DELETE', `/stats${site ? `?${new URLSearchParams({ site })}` : ''}`);

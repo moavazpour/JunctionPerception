@@ -39,6 +39,40 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return parsed as T;
 }
 
+/** A detection area of a camera: a polygon in image pixels. */
+export interface RegionArea {
+  id: string;
+  name: string;
+  points: [number, number][];
+}
+
+/** A counting line of a camera in image pixels; a band also limits detections to near it. */
+export interface RegionLine {
+  id: string;
+  name: string;
+  points: [number, number][];
+  band_m: number;
+  speed_limit_kmh: number;
+}
+
+/** Where a camera accepts detections and counts road users (regions.json). */
+export interface Regions {
+  areas: RegionArea[];
+  lines: RegionLine[];
+}
+
+export async function fetchRegions(): Promise<Regions> {
+  const response = await fetch(siteUrl('/api/regions'));
+  if (!response.ok) {
+    throw new Error(`GET /api/regions failed: ${response.status}`);
+  }
+  return (await response.json()) as Regions;
+}
+
+export function saveRegions(regions: Regions): Promise<Regions> {
+  return post<Regions>(siteUrl('/api/regions'), regions);
+}
+
 export async function fetchControlPoints(): Promise<ControlPoint[]> {
   const response = await fetch(siteUrl('/api/calibration'));
   return ((await response.json()) as { points: ControlPoint[] }).points;

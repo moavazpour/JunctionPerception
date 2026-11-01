@@ -18,6 +18,7 @@ export default defineConfig({
         newSite: page('new-site.html'),
         system: page('system.html'),
         logs: page('logs.html'),
+        stats: page('stats.html'),
       },
       output: {
         // Three.js in its own chunk: it changes rarely and stays cached.
