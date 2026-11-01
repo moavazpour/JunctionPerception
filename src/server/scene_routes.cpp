@@ -222,4 +222,30 @@ void TwinServer::Impl::register_scene_routes() {
   });
 }
 
+void TwinServer::Impl::register_region_routes() {
+  CROW_ROUTE(app, "/api/regions")
+      .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)([this](const crow::request& r) {
+        try {
+          const std::scoped_lock lock(scene_mutex);
+          const auto path = scene.config.regions_path();
+          if (r.method == crow::HTTPMethod::GET) {
+            return json_response(json::parse(sources::load_regions(path).to_json()));
+          }
+          // Validated before it is stored; the pipeline takes it with the next frame.
+          auto regions = sources::DetectionRegions::parse(r.body);
+          write_text(path, regions.to_json());
+          spdlog::info("saved {} detection areas and {} lines of {}", regions.areas.size(),
+                       regions.lines.size(), camera_name(scene.config));
+          const auto body = json::parse(regions.to_json());
+          {
+            const std::scoped_lock control(control_mutex);
+            pending_regions = std::move(regions);
+          }
+          return json_response(body);
+        } catch (const std::exception& error) {
+          return json_response({{"error", error.what()}}, 400);
+        }
+      });
+}
+
 }  // namespace jp::server

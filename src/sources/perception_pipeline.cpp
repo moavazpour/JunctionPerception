@@ -32,6 +32,14 @@ localization::LocalizerOptions localizer_options(const core::LocalizationSetting
   o.reanchor_after = settings.reanchor_after;
   o.heading_min_speed_mps = settings.heading_min_speed_mps;
   o.forget_after_s = settings.forget_after_s;
+  o.use_keypoints = settings.keypoints_enabled;
+  o.keypoints.min_score = static_cast<float>(settings.keypoint_min_score);
+  o.keypoints.min_size_ratio = settings.keypoint_min_size_ratio;
+  o.keypoints.max_size_ratio = settings.keypoint_max_size_ratio;
+  o.keypoint_floor_std_m = settings.keypoint_floor_std_m;
+  o.keypoint_smoothing = settings.keypoint_smoothing;
+  o.keypoint_heading_when_moving = settings.keypoint_heading_when_moving;
+  o.keypoint_position = settings.keypoint_position;
   return o;
 }
 
@@ -68,6 +76,15 @@ PerceptionPipeline::Result PerceptionPipeline::process(const io::Frame& frame) {
   Result result;
   result.detections = detection::map_to_twin_classes(detector_->detect(frame.image), catalog_,
                                                      config_.detection.class_source);
+  if (!regions_.empty()) {
+    std::optional<Eigen::Matrix3d> image_to_ground;
+    if (ground_) {
+      image_to_ground = ground_->image_to_ground;
+    }
+    std::erase_if(result.detections, [&](const detection::Detection& d) {
+      return !regions_.accepts(d, image_to_ground);
+    });
+  }
   if (config_.riders.enabled) {
     result.detections = detection::associate_riders(std::move(result.detections), riders_);
   }

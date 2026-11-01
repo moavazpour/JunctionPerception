@@ -32,6 +32,8 @@ struct SceneConfig {
   [[nodiscard]] std::filesystem::path zones_path() const {
     return site_directory / "zones.geojson";
   }
+  /// Detection areas and counting lines of the camera (image pixels).
+  [[nodiscard]] std::filesystem::path regions_path() const { return directory / "regions.json"; }
   [[nodiscard]] std::filesystem::path control_points_path() const {
     return directory / "control_points.yaml";
   }

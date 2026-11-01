@@ -51,6 +51,7 @@ class LiveSource final : public WorldSource {
       out.image = pipeline_.localizes()
                       ? twin::draw_tracks(frame->image, result.objects, "")
                       : twin::draw_detections(frame->image, result.detections, "");
+      draw_regions(out.image, pipeline_.regions());
       out.raw_image = std::move(frame->image);
     }
     return out;
@@ -71,6 +72,7 @@ class LiveSource final : public WorldSource {
     return frames_->frame_count();
   }
   [[nodiscard]] std::string kind() const override { return "live"; }
+  void set_regions(const DetectionRegions& regions) override { pipeline_.set_regions(regions); }
 
  private:
   std::filesystem::path video_;
@@ -232,6 +234,8 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
   out.speed_std_mps = object.speed_std_mps;
   out.heading_rad = object.heading_rad;
   out.confidence = object.confidence;
+  out.length_m = object.length_m;
+  out.width_m = object.width_m;
   return out;
 }
 

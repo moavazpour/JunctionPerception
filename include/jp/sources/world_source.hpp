@@ -15,6 +15,7 @@
 #include "jp/core/world_state.hpp"
 #include "jp/localization/track_localizer.hpp"
 #include "jp/localization/validated_region.hpp"
+#include "jp/sources/detection_regions.hpp"
 
 namespace jp::sources {
 
@@ -45,6 +46,8 @@ class WorldSource {
   [[nodiscard]] virtual std::optional<std::int64_t> frame_count() const = 0;
   /// "live", "oracle" or "replay".
   [[nodiscard]] virtual std::string kind() const = 0;
+  /// Areas and lines where detections are accepted; only camera sources detect anything.
+  virtual void set_regions(const DetectionRegions& /*regions*/) {}
 };
 
 /// World object of a localized track (class properties from the catalog).

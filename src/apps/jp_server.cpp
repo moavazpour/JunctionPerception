@@ -107,6 +107,12 @@ void run(const ServerArgs& args) {
                input.string());
 
   auto source = make_source(startup.mode, input, pipeline, catalog, scene.ground);
+  if (const auto regions = jp::sources::load_regions(scene.config.regions_path());
+      !regions.empty()) {
+    spdlog::info("detections limited to {} areas and {} lines", regions.areas.size(),
+                 regions.lines.size());
+    source->set_regions(regions);
+  }
   jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events, catalog));
   if (scene.ground) {
     if (auto region = jp::sources::validated_region(scene.config, *scene.ground, pipeline.events)) {

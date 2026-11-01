@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "jp/calibration/ground_calibration.hpp"
@@ -11,11 +12,13 @@
 #include "jp/detection/rider_association.hpp"
 #include "jp/io/frame_source.hpp"
 #include "jp/localization/track_localizer.hpp"
+#include "jp/sources/detection_regions.hpp"
 #include "jp/tracking/byte_tracker.hpp"
 
 namespace jp::sources {
 
-/// Detection -> rider association -> tracking -> ground-plane localization for one frame.
+/// Detection -> region filter -> rider association -> tracking -> ground-plane localization for
+/// one frame.
 class PerceptionPipeline {
  public:
   struct Result {
@@ -35,6 +38,9 @@ class PerceptionPipeline {
 
   [[nodiscard]] const detection::Detector& detector() const { return *detector_; }
   [[nodiscard]] bool localizes() const { return localizer_.has_value(); }
+  /// Areas and lines where detections are accepted (empty: everywhere).
+  void set_regions(DetectionRegions regions) { regions_ = std::move(regions); }
+  [[nodiscard]] const DetectionRegions& regions() const { return regions_; }
 
  private:
   core::PipelineConfig config_;
@@ -44,6 +50,7 @@ class PerceptionPipeline {
   detection::RiderAssociationOptions riders_;
   tracking::ByteTracker tracker_;
   std::optional<localization::TrackLocalizer> localizer_;
+  DetectionRegions regions_;
 };
 
 [[nodiscard]] tracking::TrackerOptions tracker_options(const core::TrackingSettings& settings);

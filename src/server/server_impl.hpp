@@ -65,6 +65,7 @@ struct TwinServer::Impl {
   bool playing = true;
   std::optional<std::int64_t> pending_seek;
   std::optional<std::vector<vru::Zone>> pending_zones;
+  std::optional<sources::DetectionRegions> pending_regions;
 
   std::mutex status_mutex;
   nlohmann::json status = nlohmann::json::object();
@@ -85,6 +86,7 @@ struct TwinServer::Impl {
 
   void register_playback_routes();
   void register_scene_routes();
+  void register_region_routes();  // detection areas and counting lines (scene_routes.cpp)
   void play_loop(const std::future<void>& server);
   // Applies pending seeks and zone changes; returns whether playback is running.
   bool apply_controls();

@@ -224,15 +224,20 @@ void TwinServer::Impl::wait_until_due(std::int64_t timestamp_ns) {
 bool TwinServer::Impl::apply_controls() {
   std::optional<std::int64_t> seek;
   std::optional<std::vector<vru::Zone>> zones;
+  std::optional<sources::DetectionRegions> regions;
   bool is_playing = false;
   {
     const std::scoped_lock lock(control_mutex);
     seek = std::exchange(pending_seek, std::nullopt);
     zones = std::exchange(pending_zones, std::nullopt);
+    regions = std::exchange(pending_regions, std::nullopt);
     is_playing = playing;
   }
   if (zones) {
     events.set_zones(std::move(*zones));
+  }
+  if (regions) {
+    source->set_regions(*regions);
   }
   if (seek) {
     source->seek(*seek);
@@ -312,6 +317,7 @@ TwinServer::~TwinServer() = default;
 void TwinServer::run() {
   impl_->app.loglevel(crow::LogLevel::Warning);
   impl_->register_scene_routes();
+  impl_->register_region_routes();
   impl_->register_playback_routes();
   auto server = impl_->app.bindaddr(impl_->options.bind_address)
                     .port(static_cast<std::uint16_t>(impl_->options.port))
