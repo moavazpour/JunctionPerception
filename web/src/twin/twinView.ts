@@ -145,17 +145,12 @@ function lampGlow(): THREE.Texture {
   return glowTexture;
 }
 
-/** Pole with a three-lamp signal head facing +x (the group is turned to the heading). */
+/** White three-lamp signal head without a pole, facing +x (the group is turned to the heading). */
 function buildSignal(def: SignalDef): { root: THREE.Group; lamps: Record<Lamp, SignalLamp> } {
   const root = new THREE.Group();
-  const metal = new THREE.MeshStandardMaterial({ color: 0x59606b, roughness: 0.5, metalness: 0.5 });
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, def.height_m, 10), metal);
-  pole.rotation.x = Math.PI / 2;
-  pole.position.z = def.height_m / 2;
-  pole.castShadow = true;
   const head = new THREE.Mesh(
     new THREE.BoxGeometry(0.3, 0.42, 1.05),
-    new THREE.MeshStandardMaterial({ color: 0x1b1f24, roughness: 0.6 }),
+    new THREE.MeshStandardMaterial({ color: 0xf2f3f5, roughness: 0.5 }),
   );
   head.position.set(0.12, 0, def.height_m + 0.35);
   head.castShadow = true;
@@ -186,7 +181,7 @@ function buildSignal(def: SignalDef): { root: THREE.Group; lamps: Record<Lamp, S
     root.add(disc, glow);
     lamps[lamp] = { material, glow };
   });
-  root.add(pole, head);
+  root.add(head);
   return { root, lamps };
 }
 
