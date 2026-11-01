@@ -1,4 +1,5 @@
-# Development and build image: GCC 14, CMake, Ninja, vcpkg, clang tools, Node.js and ONNX Runtime.
+# Development and build image: GCC 14, CMake, Ninja, vcpkg, clang tools, Node.js, ONNX Runtime and
+# the Python packages of the site manager.
 # The default build is CPU-only (used by CI). For an NVIDIA GPU host, build on a CUDA + cuDNN base
 # with the CUDA build of ONNX Runtime (scripts/setup_server.sh does this when a GPU is present):
 #   --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
@@ -35,6 +36,12 @@ RUN git clone --branch "${VCPKG_TAG}" https://github.com/microsoft/vcpkg.git /op
 RUN curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_PACKAGE}.tgz" \
         | tar -xz -C /opt \
     && mv "/opt/${ORT_PACKAGE}" /opt/onnxruntime
+
+# Site manager (manager/jp_manager.py) and the map tool (tools/prepare_map_data.py).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3-aiohttp python3-yaml python3-requests python3-pyproj python3-lxml \
+    && rm -rf /var/lib/apt/lists/*
 
 # Caches live under /cache, which scripts/in_docker.sh mounts from the repository's .cache folder.
 ENV CC=gcc-14 \

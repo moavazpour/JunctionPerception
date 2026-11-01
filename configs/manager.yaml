@@ -1,0 +1,14 @@
+# Site manager settings (manager/jp_manager.py). Paths are relative to the repository root.
+listen:
+  address: 0.0.0.0        # inside the container; scripts/run_manager.sh publishes the port on the
+  port: 8080              # LAN address of the host only
+web_root: web/dist        # built console
+scenes_dir: scenes        # one folder per site
+map_cache: map_cache      # map layers per site (tools/prepare_map_data.py)
+state_dir: .cache/manager # generated server configs, backend state, deleted sites
+server_binary: build/release/src/apps/jp_server
+server_config: configs/server.yaml  # base settings of every site's server
+site_ports: [18100, 18199]          # local ports of the site servers
+max_running: 4            # sites that may run at the same time (GPU memory, decode load)
+log_lines: 5000           # kept per site
+restart_backoff_s: [1, 30]          # wait before restarting a crashed server, doubling up to max

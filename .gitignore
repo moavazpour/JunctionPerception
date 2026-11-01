@@ -32,3 +32,6 @@ __pycache__/
 # Editors
 .vscode/
 .idea/
+
+# Site settings and new sites edited in the console are local to a deployment
+scenes/*/site.yaml

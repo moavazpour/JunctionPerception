@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pushes main to GitHub and to the server's working copy, builds and tests on the server, then
-# restarts the twin server and checks that it answers.
+# restarts the site manager (console and site servers) and checks that it answers.
 # Configuration comes from deploy.env in the repository root (see deploy.env.example).
 # Usage: scripts/deploy.sh [cpp|web|all]
 set -euo pipefail
@@ -37,14 +37,14 @@ git push "${remote}:${DEPLOY_PATH}" main
     && scripts/setup_server.sh \
     && scripts/in_docker.sh scripts/build_and_test.sh '${target}' release \
     && JP_SERVER_ADDRESS='${DEPLOY_HOST}' JP_SERVER_PORT='${port}' \
-       JP_DATA_ROOT='${DEPLOY_DATA_ROOT}' scripts/run_server.sh"
+       JP_DATA_ROOT='${DEPLOY_DATA_ROOT}' scripts/run_manager.sh"
 
 for _ in $(seq 1 30); do
-    if curl -fsS "http://${DEPLOY_HOST}:${port}/api/status" >/dev/null 2>&1; then
-        echo "server up: http://${DEPLOY_HOST}:${port}"
+    if curl -fsS "http://${DEPLOY_HOST}:${port}/manager/api/health" >/dev/null 2>&1; then
+        echo "console up: http://${DEPLOY_HOST}:${port}"
         exit 0
     fi
     sleep 2
 done
-echo "server did not answer on http://${DEPLOY_HOST}:${port}" >&2
+echo "console did not answer on http://${DEPLOY_HOST}:${port}" >&2
 exit 1
