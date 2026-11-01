@@ -132,22 +132,25 @@ scripts/in_docker.sh scripts/build_and_test.sh all release  # C++ and frontend: 
 python tools/export_yolo26.py --variant yolo26s --imgsz 1280   # -> models/yolo26s_1280.onnx
 ```
 
-**Run the twin on a video.** Create `scenes/<name>/scene.yaml` with the video path (relative to
-the data root), the image size and the geographic anchor of the intersection (see
-`scenes/munich_5538/scene.yaml`), fetch its map layers, and start the server:
+**Start the console.** The site manager serves the web console and runs one twin server per active
+site (`scenes/<name>/`); the first start runs the scene of `configs/server.yaml`:
 
 ```bash
-python tools/prepare_map_data.py --scene scenes/<name>
-JP_SERVER_ADDRESS=<LAN address> JP_DATA_ROOT=<video folder> \
-    scripts/run_server.sh --scene scenes/<name> --mode live --input <video relative to the root>
+JP_SERVER_ADDRESS=<LAN address> JP_DATA_ROOT=<video folder> scripts/run_manager.sh
 ```
 
-The twin is at `http://<LAN address>:8080/`, the server binds to that address only.
+The console is at `http://<LAN address>:8080/`, bound to that address only. It shows every site
+with its live camera image and counters, the 3D twin of each site (top-down or tilted), and the
+system page with start, stop and restart of the backend, host and GPU load, and the logs of every
+server.
 
-**Calibrate a new intersection.** Open `http://<LAN address>:8080/calibrate.html`, click at least
-eight points in the camera image and the same points on the orthophoto, check the residuals, set
-the camera position if the points cannot constrain it, draw the zones, save and apply. Details:
-[docs/map-data.md](docs/map-data.md).
+**Add and calibrate an intersection.** In the console, *New site* asks for the camera source (video
+file below the data root, RTSP/HTTP stream or a recording), the image size and the geographic
+anchor, and downloads the map layers. Then open the site's *Calibration*: click at least eight
+points in the camera image and the same points on the orthophoto, check the residuals, set the
+camera position if the points cannot constrain it, draw the zones, save and apply. Details:
+[docs/map-data.md](docs/map-data.md). A single scene can still be served without the console:
+`scripts/run_server.sh --scene scenes/<name> --mode live --input <video>`.
 
 **Process a video offline**
 

@@ -115,7 +115,7 @@ events. Benchmark scenes, registered to LiDAR labels, are not restricted.
 | Endpoint | Description |
 |---|---|
 | `GET /api/scene` | Scene description: camera, image size, camera ground position, zones, class catalog |
-| `GET /api/status` | Playback state, frame, frame rate, processing latency, connected clients |
+| `GET /api/status` | Playback state, frame, frame rate, processing latency, road users, active events, clients |
 | `POST /api/playback` | `{"action": "play"}`, `{"action": "pause"}`, `{"action": "seek", "frame": n}` |
 | `WS /ws/world` | World state per frame (text) |
 | `WS /ws/video` | Camera images (binary): 8-byte little-endian frame index followed by a JPEG, rate-limited |
@@ -126,6 +126,34 @@ events. Benchmark scenes, registered to LiDAR labels, are not restricted.
 | `POST /api/zones` | Saves the zones of the scene (GeoJSON, scene ground frame); events use them at once |
 | `POST /api/restart` | Restarts the server, e.g. to apply a new calibration |
 | `GET /map/...` | Map layers of the scene (`map_cache/<scene>`, see docs/map-data.md) |
-| `GET /` | Built frontend (`web/dist`): twin at `/`, calibration tool at `/calibrate.html` |
+| `GET /` | Built frontend (`web/dist`) when the server runs on its own (`scripts/run_server.sh`) |
 
-Recordings are played in real time on their own timestamps (`configs/server.yaml`).
+Recordings are played in real time on their own timestamps (`configs/server.yaml`). Inputs
+containing `://` (RTSP, HTTP) are opened as camera streams; they report no frame count and cannot
+seek.
+
+## Site manager and console
+
+`manager/jp_manager.py` (Python, aiohttp; `configs/manager.yaml`) is the always-on service behind
+the web console. A site is a scene folder plus `scenes/<id>/site.yaml` (name, camera source,
+playback, video stream, active or not), edited in the console and kept out of git. The manager runs
+one `jp_server` per active site on a local port with a generated server config, restarts servers
+that exit (a calibration "apply" exits on purpose; crashes back off up to 30 s), keeps their output
+as logs and proxies each site under `/sites/<id>/` (HTTP and WebSockets). Stopping the backend stops
+all servers but keeps the console; the state survives restarts (`.cache/manager/state.json`).
+
+| Endpoint | Description |
+|---|---|
+| `GET /manager/api/sites` | Sites with settings, process state and live status |
+| `POST /manager/api/sites` | Creates a site (scene folder, `site.yaml`, optionally its map layers) |
+| `PATCH`, `DELETE /manager/api/sites/<id>` | Changes a site (restarts it if running); moves it to the trash |
+| `POST /manager/api/sites/<id>/<action>` | `start`, `stop`, `restart`, `prepare-map` |
+| `GET /manager/api/system` | Version, backend state, CPU, memory, disk, GPUs (`nvidia-smi`) |
+| `POST /manager/api/system/<action>` | `start-backend`, `stop-backend`, `restart-backend`, `restart-manager` |
+| `GET /manager/api/inputs` | Videos and sequences below the data root, recorded replays |
+| `GET /manager/api/logs`, `/logs/stream` | Recent log lines of the manager or a site; live as server-sent events |
+| `* /sites/<id>/...` | The site's server (the endpoints above); `/sites/<id>/map/...` also while stopped |
+
+The console (`web/`) has one page per view sharing a sidebar: overview, live twin, calibration,
+site settings, new site, system and logs. It has no authentication: publish it on a trusted
+network only.

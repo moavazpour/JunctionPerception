@@ -38,9 +38,10 @@ stays in `map_cache/` and is never committed.
 
 ## Calibration and zones
 
-`/calibrate.html` places the camera on this map. Corresponding points are picked in a camera
-frame and on the orthophoto; the server fits an image-to-ground homography with RANSAC and
-reports the error of every point in metres. Every fourth point is held out as a check point,
+The calibration page of a site in the console (`/calibrate.html?site=<id>`) places the camera on
+this map. Corresponding points are picked in a camera frame and on the orthophoto; the server fits
+an image-to-ground homography with RANSAC and reports the error of every point in metres. Every
+fourth point is held out as a check point,
 so the reported check error measures the calibration on points the fit has not seen. The camera
 position and height follow from the homography; they can be set by hand when the points do not
 constrain them. Saving writes `control_points.yaml` and `ground_homography.yaml` to the scene.
