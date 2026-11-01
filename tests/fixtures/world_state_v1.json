@@ -67,5 +67,14 @@
       "vehicle_state": null,
       "zone": "crosswalk_n"
     }
+  ],
+  "signals": [
+    {
+      "id": "signal_1",
+      "name": "North approach",
+      "state": "red",
+      "confidence": 0.93,
+      "since_ns": 1651673058000000000
+    }
   ]
 }

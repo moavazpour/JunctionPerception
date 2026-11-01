@@ -48,6 +48,15 @@ struct WorldEvent {
   std::optional<std::string> zone;
 };
 
+/// State of a traffic light watched by a camera (a signal area drawn on its image).
+struct SignalState {
+  std::string id;
+  std::string name;
+  std::string state;  ///< "red", "yellow", "red_yellow", "green", "off" or "unknown".
+  double confidence = 0.0;
+  std::int64_t since_ns = 0;  ///< Timestamp of the frame the state began.
+};
+
 /// Everything the twin knows at one frame.
 struct WorldState {
   int schema_version = kWorldStateSchemaVersion;
@@ -57,6 +66,7 @@ struct WorldState {
   std::string source;  ///< "live", "oracle" or "replay".
   std::vector<WorldObject> objects;
   std::vector<WorldEvent> events;
+  std::vector<SignalState> signals;  ///< Traffic lights of the camera (live sources).
 };
 
 }  // namespace jp::core

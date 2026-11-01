@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "jp/core/world_state.hpp"
 #include "jp/detection/detection.hpp"
 
 namespace jp::sources {
@@ -30,13 +31,29 @@ struct RegionLine {
   double speed_limit_kmh = 0.0;  ///< For the statistics; 0: not set.
 };
 
+/// A traffic light seen by a camera: the area of its signal head in image pixels (two points: a
+/// rectangle), and where it stands in the site's world frame, placed in the twin.
+struct RegionSignal {
+  std::string id;
+  std::string name;
+  std::vector<cv::Point2f> points;
+  std::optional<Eigen::Vector2d> position;  ///< World frame (m); empty until placed.
+  double heading_deg = 0.0;  ///< Direction the lamps face, from +x, counter-clockwise.
+  double height_m = 4.5;     ///< Height of the signal head above the road.
+
+  /// The area as a polygon (a rectangle for two points).
+  [[nodiscard]] std::vector<cv::Point2f> polygon() const;
+};
+
 /// Where a camera's detections are accepted: inside one of its areas (if it has any) and within
 /// the band of one of its banded lines (if it has any). Detections elsewhere are dropped before
 /// tracking, so they are neither tracked nor shown. Stored per camera in regions.json.
 struct DetectionRegions {
   std::vector<RegionArea> areas;
   std::vector<RegionLine> lines;
+  std::vector<RegionSignal> signals;  ///< Traffic lights; they do not limit detections.
 
+  /// No areas and no lines: every detection is accepted.
   [[nodiscard]] bool empty() const { return areas.empty() && lines.empty(); }
 
   /// Image point where a detection touches the ground: the centre of its bottom corners
@@ -58,5 +75,9 @@ struct DetectionRegions {
 
 /// Draws the areas and lines onto a camera image.
 void draw_regions(cv::Mat& canvas, const DetectionRegions& regions);
+
+/// Draws the signal areas in the colour each traffic light shows.
+void draw_signals(cv::Mat& canvas, const DetectionRegions& regions,
+                  const std::vector<core::SignalState>& states);
 
 }  // namespace jp::sources

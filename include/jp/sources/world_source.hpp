@@ -27,6 +27,7 @@ struct SourceFrame {
   std::vector<core::WorldObject> objects;
   cv::Mat image;      ///< BGR for display (live: with tracked boxes); empty if not requested.
   cv::Mat raw_image;  ///< BGR without overlays, for calibration; empty if not requested.
+  std::vector<core::SignalState> signals;  ///< Traffic lights of the camera (live sources).
 };
 
 /// Producer of world frames: "live" (camera pipeline), "oracle" (benchmark ground truth) or

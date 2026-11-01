@@ -22,7 +22,8 @@ add_executable(jp_tests
     vru/zones_events_test.cpp
     evaluation/evaluation_test.cpp
     server/server_config_test.cpp
-    server/detection_regions_test.cpp)
+    server/detection_regions_test.cpp
+    server/signal_reader_test.cpp)
 target_compile_definitions(jp_tests PRIVATE JP_EXPECTED_VERSION="${PROJECT_VERSION}"
     JP_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(jp_tests PRIVATE jp::core jp::io jp::benchmark jp::calibration

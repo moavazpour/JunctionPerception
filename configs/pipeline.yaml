@@ -74,3 +74,16 @@ events:
   end_frames: 3                    # frames without the condition before an event ends
   turning_window_s: 2.0            # a vehicle is turning if its heading changed by more than
   turning_threshold_deg: 20.0      # this over the window
+
+# Traffic lights: colour of the lit lamp inside each signal area drawn on a camera image
+# (Calibration, "Areas and lines"). A lit pixel is bright, clearly brighter than the rest of the
+# area and saturated; red, yellow (amber) and green are told apart by hue.
+signals:
+  min_value: 150                   # HSV value (0-255) of a lit pixel at least ...
+  value_above_median: 50           # ... and this much above the median of the area ...
+  min_saturation: 70               # ... with at least this saturation
+  min_lit_fraction: 0.01           # share of the area lit in one colour to count
+  min_lit_pixels: 6
+  pair_ratio: 0.4                  # red and yellow both lit (red-amber) above this ratio
+  confirm_frames: 2                # a new colour must persist this many frames
+  hold_frames: 10                  # unlit readings keep the last colour this long (LED flicker)

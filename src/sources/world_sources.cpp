@@ -12,6 +12,7 @@
 #include "jp/core/rigid_transform.hpp"
 #include "jp/io/frame_source.hpp"
 #include "jp/sources/perception_pipeline.hpp"
+#include "jp/sources/signal_reader.hpp"
 #include "jp/sources/world_source.hpp"
 #include "jp/twin/bev_plot.hpp"
 #include "jp/twin/debug_overlay.hpp"
@@ -30,6 +31,7 @@ class LiveSource final : public WorldSource {
              const std::optional<calibration::GroundCalibration>& ground)
       : video_(std::move(video)),
         catalog_(catalog),
+        signal_settings_(config.signals),
         pipeline_(config, catalog, ground),
         frames_(std::make_unique<io::VideoFileSource>(video_)) {}
 
@@ -45,6 +47,7 @@ class LiveSource final : public WorldSource {
     for (const auto& object : result.objects) {
       out.objects.push_back(to_world_object(object, catalog_));
     }
+    out.signals = read_signals(frame->image, frame->timestamp_ns);
     if (with_image) {
       // The side panel shows the camera image with the tracked boxes and their IDs (only the
       // detections while the scene is not calibrated).
@@ -52,6 +55,7 @@ class LiveSource final : public WorldSource {
                       ? twin::draw_tracks(frame->image, result.objects, "")
                       : twin::draw_detections(frame->image, result.detections, "");
       draw_regions(out.image, pipeline_.regions());
+      draw_signals(out.image, pipeline_.regions(), out.signals);
       out.raw_image = std::move(frame->image);
     }
     return out;
@@ -65,6 +69,7 @@ class LiveSource final : public WorldSource {
       }
     }
     pipeline_.reset();
+    filters_.clear();
     return true;
   }
 
@@ -72,13 +77,38 @@ class LiveSource final : public WorldSource {
     return frames_->frame_count();
   }
   [[nodiscard]] std::string kind() const override { return "live"; }
-  void set_regions(const DetectionRegions& regions) override { pipeline_.set_regions(regions); }
+  void set_regions(const DetectionRegions& regions) override {
+    pipeline_.set_regions(regions);
+    // Signals that are gone lose their history; the others keep it.
+    std::erase_if(filters_, [&](const auto& entry) {
+      return std::ranges::none_of(regions.signals,
+                                  [&](const auto& s) { return s.id == entry.first; });
+    });
+  }
 
  private:
+  std::vector<core::SignalState> read_signals(const cv::Mat& image, std::int64_t timestamp_ns) {
+    std::vector<core::SignalState> states;
+    for (const auto& signal : pipeline_.regions().signals) {
+      auto it = filters_.find(signal.id);
+      if (it == filters_.end()) {
+        it = filters_.emplace(signal.id, SignalFilter(signal_settings_)).first;
+      }
+      auto state =
+          it->second.update(read_signal(image, signal.polygon(), signal_settings_), timestamp_ns);
+      state.id = signal.id;
+      state.name = signal.name;
+      states.push_back(std::move(state));
+    }
+    return states;
+  }
+
   std::filesystem::path video_;
   core::ClassCatalog catalog_;
+  core::SignalSettings signal_settings_;
   PerceptionPipeline pipeline_;
   std::unique_ptr<io::VideoFileSource> frames_;
+  std::map<std::string, SignalFilter> filters_;
 };
 
 class OracleSource final : public WorldSource {

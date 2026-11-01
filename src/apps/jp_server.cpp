@@ -108,9 +108,9 @@ void run(const ServerArgs& args) {
 
   auto source = make_source(startup.mode, input, pipeline, catalog, scene.ground);
   if (const auto regions = jp::sources::load_regions(scene.config.regions_path());
-      !regions.empty()) {
-    spdlog::info("detections limited to {} areas and {} lines", regions.areas.size(),
-                 regions.lines.size());
+      !regions.empty() || !regions.signals.empty()) {
+    spdlog::info("{} detection areas, {} lines and {} traffic lights", regions.areas.size(),
+                 regions.lines.size(), regions.signals.size());
     source->set_regions(regions);
   }
   jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events, catalog));

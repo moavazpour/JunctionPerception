@@ -78,12 +78,25 @@ struct EventSettings {
 };
 
 /// Settings of configs/pipeline.yaml.
+/// Traffic-light colour from the signal areas of a camera (see configs/pipeline.yaml).
+struct SignalSettings {
+  int min_value = 150;             ///< A lit lamp pixel is at least this bright (HSV value) ...
+  int value_above_median = 50;     ///< ... and this much brighter than the area median ...
+  int min_saturation = 70;         ///< ... and this saturated.
+  double min_lit_fraction = 0.01;  ///< Share of the area that must be lit for a colour.
+  int min_lit_pixels = 6;
+  double pair_ratio = 0.4;  ///< Red and yellow both lit (red-amber) above this ratio.
+  int confirm_frames = 2;   ///< Frames a new colour must persist before it is reported.
+  int hold_frames = 10;     ///< Frames an unlit reading keeps the last colour (LED flicker).
+};
+
 struct PipelineConfig {
   DetectionSettings detection;
   RiderSettings riders;
   TrackingSettings tracking;
   LocalizationSettings localization;
   EventSettings events;
+  SignalSettings signals;
 };
 
 /// Parses the YAML text; relative paths are resolved against `base_dir`.

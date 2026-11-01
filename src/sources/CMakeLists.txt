@@ -1,4 +1,5 @@
-add_library(jp_sources perception_pipeline.cpp world_sources.cpp detection_regions.cpp)
+add_library(jp_sources perception_pipeline.cpp world_sources.cpp detection_regions.cpp
+    signal_reader.cpp)
 add_library(jp::sources ALIAS jp_sources)
 
 target_link_libraries(jp_sources

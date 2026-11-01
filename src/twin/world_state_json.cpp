@@ -112,13 +112,22 @@ std::string to_json(const core::WorldState& state) {
   for (const auto& e : state.events) {
     events.push_back(event_json(e));
   }
+  json signals = json::array();
+  for (const auto& s : state.signals) {
+    signals.push_back({{"id", s.id},
+                       {"name", s.name},
+                       {"state", s.state},
+                       {"confidence", rounded(s.confidence, 3)},
+                       {"since_ns", s.since_ns}});
+  }
   const json j = {{"schema_version", state.schema_version},
                   {"scene_id", state.scene_id},
                   {"frame", state.frame},
                   {"timestamp_ns", state.timestamp_ns},
                   {"source", state.source},
                   {"objects", objects},
-                  {"events", events}};
+                  {"events", events},
+                  {"signals", signals}};
   return j.dump();
 }
 
@@ -140,6 +149,12 @@ core::WorldState world_state_from_json(std::string_view text) {
     }
     for (const auto& e : j.at("events")) {
       state.events.push_back(event_from(e));
+    }
+    // Added after version 1 was published: recordings made before have none.
+    for (const auto& s : j.value("signals", json::array())) {
+      state.signals.push_back({s.at("id").get<std::string>(), s.value("name", ""),
+                               s.at("state").get<std::string>(), s.value("confidence", 0.0),
+                               s.value("since_ns", std::int64_t{0})});
     }
     return state;
   } catch (const nlohmann::json::exception& error) {

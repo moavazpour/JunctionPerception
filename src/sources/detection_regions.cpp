@@ -80,6 +80,15 @@ std::vector<cv::Point> rounded(const std::vector<cv::Point2f>& points) {
 
 }  // namespace
 
+std::vector<cv::Point2f> RegionSignal::polygon() const {
+  if (points.size() != 2) {
+    return points;
+  }
+  const auto& a = points[0];
+  const auto& b = points[1];
+  return {a, {b.x, a.y}, b, {a.x, b.y}};
+}
+
 cv::Point2f DetectionRegions::contact(const detection::Detection& detection) {
   if (detection.keypoints.size() == kCorners) {
     cv::Point2f sum(0.0F, 0.0F);
@@ -126,6 +135,19 @@ std::string DetectionRegions::to_json() const {
                             {"band_m", line.band_m},
                             {"speed_limit_kmh", line.speed_limit_kmh}});
   }
+  out["signals"] = json::array();
+  for (const auto& signal : signals) {
+    out["signals"].push_back(
+        {{"id", signal.id},
+         {"name", signal.name},
+         {"points", points_json(signal.points)},
+         {"position", signal.position
+                          ? json::array({std::round(signal.position->x() * 100.0) / 100.0,
+                                         std::round(signal.position->y() * 100.0) / 100.0})
+                          : json(nullptr)},
+         {"heading_deg", std::round(signal.heading_deg * 10.0) / 10.0},
+         {"height_m", signal.height_m}});
+  }
   return out.dump(2);
 }
 
@@ -145,6 +167,21 @@ DetectionRegions DetectionRegions::parse(const std::string& text) {
         throw std::runtime_error("band_m and speed_limit_kmh must not be negative");
       }
       regions.lines.push_back(std::move(line));
+    }
+    for (const auto& s : root.value("signals", json::array())) {
+      RegionSignal signal;
+      signal.id = s.at("id").get<std::string>();
+      signal.name = s.value("name", "");
+      signal.points = points_from(s, 2, "a signal area");
+      if (const auto it = s.find("position"); it != s.end() && !it->is_null()) {
+        signal.position = Eigen::Vector2d(it->at(0).get<double>(), it->at(1).get<double>());
+      }
+      signal.heading_deg = s.value("heading_deg", 0.0);
+      signal.height_m = s.value("height_m", 4.5);
+      if (signal.height_m <= 0.0 || signal.height_m > 20.0) {
+        throw std::runtime_error("height_m of a signal must be within (0, 20] m");
+      }
+      regions.signals.push_back(std::move(signal));
     }
     return regions;
   } catch (const json::exception& error) {
@@ -175,6 +212,27 @@ void draw_regions(cv::Mat& canvas, const DetectionRegions& regions) {
       cv::putText(canvas, line.name, points.front() + cv::Point(6, -8), cv::FONT_HERSHEY_SIMPLEX,
                   0.6, line_color, 2, cv::LINE_AA);
     }
+  }
+}
+
+void draw_signals(cv::Mat& canvas, const DetectionRegions& regions,
+                  const std::vector<core::SignalState>& states) {
+  for (const auto& signal : regions.signals) {
+    const auto state = std::ranges::find(states, signal.id, &core::SignalState::id);
+    const std::string shown = state == states.end() ? "unknown" : state->state;
+    cv::Scalar color(160, 160, 160);  // BGR: off or unknown
+    if (shown == "red") {
+      color = cv::Scalar(60, 60, 255);
+    } else if (shown == "yellow" || shown == "red_yellow") {
+      color = cv::Scalar(40, 190, 255);
+    } else if (shown == "green") {
+      color = cv::Scalar(90, 220, 60);
+    }
+    const auto points = rounded(signal.polygon());
+    cv::polylines(canvas, std::vector{points}, true, color, 3, cv::LINE_AA);
+    const std::string label = (signal.name.empty() ? signal.id : signal.name) + ": " + shown;
+    cv::putText(canvas, label, cv::boundingRect(points).tl() + cv::Point(0, -8),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv::LINE_AA);
   }
 }
 

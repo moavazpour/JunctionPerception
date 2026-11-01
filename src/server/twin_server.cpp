@@ -169,6 +169,7 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
   state.source = source->kind();
   state.objects = std::move(frame.objects);
   state.events = events.update(state.objects, frame.timestamp_ns);
+  state.signals = std::move(frame.signals);
   Prepared prepared;
   prepared.world = twin::to_json(state);
   if (!frame.image.empty()) {

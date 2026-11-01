@@ -30,6 +30,9 @@ TEST(WorldStateJson, ParsesSharedExample) {
   ASSERT_TRUE(state.events[0].min_distance_m.has_value());
   EXPECT_DOUBLE_EQ(*state.events[0].min_distance_m, 1.4);
   EXPECT_FALSE(state.events[1].time_to_closest_s.has_value());
+  ASSERT_EQ(state.signals.size(), 1U);
+  EXPECT_EQ(state.signals[0].state, "red");
+  EXPECT_EQ(state.signals[0].since_ns, 1651673058000000000);
 }
 
 TEST(WorldStateJson, RoundTripKeepsEveryField) {

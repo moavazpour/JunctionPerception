@@ -109,6 +109,18 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     e.end_frames = events["end_frames"].as<int>();
     e.turning_window_s = events["turning_window_s"].as<double>();
     e.turning_threshold_deg = events["turning_threshold_deg"].as<double>();
+
+    if (const YAML::Node signals = root["signals"]) {
+      SignalSettings& s = config.signals;
+      s.min_value = signals["min_value"].as<int>();
+      s.value_above_median = signals["value_above_median"].as<int>();
+      s.min_saturation = signals["min_saturation"].as<int>();
+      s.min_lit_fraction = signals["min_lit_fraction"].as<double>();
+      s.min_lit_pixels = signals["min_lit_pixels"].as<int>();
+      s.pair_ratio = signals["pair_ratio"].as<double>();
+      s.confirm_frames = signals["confirm_frames"].as<int>();
+      s.hold_frames = signals["hold_frames"].as<int>();
+    }
   } catch (const YAML::Exception& error) {
     throw std::runtime_error(std::string("invalid pipeline config: ") + error.what());
   }
