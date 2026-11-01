@@ -1,27 +1,38 @@
 """Site manager: the always-on service behind the web console.
 
-A site is a scene folder (scenes/<id>/: scene.yaml, calibration, zones) plus the runtime settings
-the console edits (scenes/<id>/site.yaml: name, camera source, playback, video stream). The manager
-runs one jp_server per active site on a local port and proxies it under /sites/<id>/, restarts
-servers that exit (a calibration "apply" exits on purpose), keeps their logs and reports the host.
+A site is one intersection: a scene folder scenes/<id>/ with scene.yaml (world frame at the
+intersection centre, map area), the zones shared by its cameras, and up to four cameras in
+scenes/<id>/cameras/<camera>/ (camera.yaml with name, approach and image size, plus the camera's
+calibration). The runtime settings the console edits (name, which cameras run, each camera's
+source, playback and video stream) are kept in scenes/<id>/site.yaml. Older single-camera scene
+folders (calibration next to scene.yaml, e.g. the benchmark scenes) are sites with one camera.
+
+The manager runs one jp_server per active camera on a local port and proxies it under
+/sites/<id>/cameras/<camera>/, restarts servers that exit (a calibration "apply" exits on
+purpose), keeps their logs and reports the host.
 
   GET  /manager/api/health                    liveness and version
   GET  /manager/api/system                    host, GPU, backend state
   POST /manager/api/system/<action>           start-backend | stop-backend | restart-backend |
                                               restart-manager
-  GET  /manager/api/sites                     all sites with runtime state and live status
-  POST /manager/api/sites                     create a site (scene folder + site.yaml)
+  GET  /manager/api/sites                     all sites with their cameras and live status
+  POST /manager/api/sites                     create a site (scene folder, cameras, site.yaml)
   GET  /manager/api/sites/<id>                one site
-  PATCH /manager/api/sites/<id>               change settings (restarts a running site)
+  PATCH /manager/api/sites/<id>               name, location, map area or map placement
   DELETE /manager/api/sites/<id>              stop and move the scene folder to the trash
   POST /manager/api/sites/<id>/<action>       start | stop | restart | prepare-map
+  POST /manager/api/sites/<id>/cameras        add a camera
+  PATCH /manager/api/sites/<id>/cameras/<c>   change a camera (restarts it if it runs)
+  DELETE /manager/api/sites/<id>/cameras/<c>  stop and move the camera folder to the trash
+  POST /manager/api/sites/<id>/cameras/<c>/<action>  start | stop | restart
   GET  /manager/api/inputs                    videos, sequences and replays to choose from
   GET  /manager/api/probe?input=              image size, frame rate and length of a video or stream
   POST /manager/api/videos                    upload a video (multipart "file") below the data root
-  GET  /manager/api/logs?source=&lines=       recent log lines (source: manager or a site id)
+  GET  /manager/api/logs?source=&lines=       recent log lines (manager, a site or site/camera)
   GET  /manager/api/logs/stream?source=       the same as server-sent events
   *    /sites/<id>/map/...                    map layers (also while the site is stopped)
-  *    /sites/<id>/...                        proxied to the site's jp_server (HTTP, WebSockets)
+  *    /sites/<id>/cameras/<c>/...            proxied to the camera's jp_server (HTTP, WebSockets)
+  *    /sites/<id>/...                        proxied to the site's first camera
   GET  /...                                   the built console (web/dist)
 
 Usage: python3 manager/jp_manager.py [--config configs/manager.yaml]
@@ -43,7 +54,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -53,14 +64,24 @@ from aiohttp import web
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{1,47}$")
+CAMERA_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+MAX_CAMERAS = 4
+# Arm of the intersection a camera watches.
+APPROACHES = (
+    "north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west",
+    "centre",
+)
 MODES = ("live", "oracle", "replay")
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v"}
+# Calibration files of a camera (moved along when a single-camera scene becomes an intersection).
+CAMERA_FILES = ("ground_homography.yaml", "control_points.yaml")
 # spdlog's default pattern: "[2026-11-01 12:00:00.123] [info] message".
 SPDLOG_LINE = re.compile(r"^\[[^\]]+\] \[(\w+)\] (.*)$")
 STATUS_INTERVAL_S = 1.0
 STOP_TIMEOUT_S = 8.0
 STABLE_RUN_S = 60.0
 INPUT_SCAN_DEPTH = 4
+DEFAULT_RADIUS_M = 200.0
 
 log = logging.getLogger("manager")
 
@@ -80,7 +101,8 @@ class LogLine:
 
 
 class LogHub:
-    """Recent lines per source (the manager and each site) and live subscribers."""
+    """Recent lines per source (the manager, each site and each camera "site/camera") and live
+    subscribers. A site's source also covers the lines of its cameras."""
 
     def __init__(self, capacity: int) -> None:
         self.capacity = capacity
@@ -90,16 +112,25 @@ class LogHub:
     def add(self, source: str, level: str, message: str) -> None:
         line = LogLine(time.time(), level, source, message)
         self.lines.setdefault(source, collections.deque(maxlen=self.capacity)).append(line)
-        for key in (source, "*"):
+        for key in {source, source.split("/")[0], "*"}:
             for queue in self.subscribers.get(key, ()):
                 if queue.qsize() < 1000:
                     queue.put_nowait(line)
 
     def recent(self, source: str, count: int) -> list[LogLine]:
         if source == "*":
-            merged = [line for lines in self.lines.values() for line in lines]
-            return sorted(merged, key=lambda line: line.time)[-count:]
-        return list(self.lines.get(source, ()))[-count:]
+            groups = list(self.lines.values())
+        elif "/" in source:
+            groups = [self.lines.get(source, collections.deque())]
+        else:
+            groups = [
+                lines for key, lines in self.lines.items()
+                if key == source or key.startswith(source + "/")
+            ]
+        if len(groups) == 1:
+            return list(groups[0])[-count:]
+        merged = [line for lines in groups for line in lines]
+        return sorted(merged, key=lambda line: line.time)[-count:]
 
     def subscribe(self, source: str) -> asyncio.Queue[LogLine]:
         queue: asyncio.Queue[LogLine] = asyncio.Queue()
@@ -153,6 +184,7 @@ class ManagerConfig:
         resolve = lambda p: (REPO_ROOT / p).resolve()  # noqa: E731
         ports = raw["site_ports"]
         backoff = raw["restart_backoff_s"]
+        data_root = Path(os.environ.get("JP_DATA_ROOT", raw.get("data_root", "/data")))
         return ManagerConfig(
             address=raw["listen"]["address"],
             port=int(raw["listen"]["port"]),
@@ -167,9 +199,8 @@ class ManagerConfig:
             log_lines=int(raw["log_lines"]),
             backoff_s=(float(backoff[0]), float(backoff[1])),
             state_dir=resolve(raw["state_dir"]),
-            data_root=Path(os.environ.get("JP_DATA_ROOT", raw.get("data_root", "/data"))),
-            upload_dir=Path(os.environ.get("JP_DATA_ROOT", raw.get("data_root", "/data")))
-            / raw.get("upload_dir", "uploads"),
+            data_root=data_root,
+            upload_dir=data_root / raw.get("upload_dir", "uploads"),
             upload_max_bytes=int(float(raw.get("upload_max_gb", 20)) * 1024**3),
             probe_timeout_s=float(raw.get("probe_timeout_s", 20)),
         )
@@ -186,30 +217,26 @@ def write_yaml(path: Path, data: dict[str, Any], header: str = "") -> None:
     path.write_text(header + text, encoding="utf-8")
 
 
+def git_tracked(path: Path) -> bool:
+    """Whether a file is part of the repository (then the manager leaves its layout alone)."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    # 1: not tracked; anything else (also "not a repository") counts as tracked, to be safe.
+    return result.returncode != 1
+
+
 class BadRequest(Exception):
     """Invalid request content; becomes a 400 response with the message."""
 
 
-# ------------------------------------------------------------------------------------ sites
-
-
-def default_settings(scene_id: str, scene: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
-    """Settings of a site without site.yaml: the startup scene of server.yaml runs, others don't."""
-    startup = base.get("startup", {})
-    is_startup = Path(str(startup.get("scene", ""))).name == scene_id
-    source = scene.get("source") or {}
-    if is_startup:
-        mode, source_input = startup.get("mode", "live"), startup.get("input", "")
-    else:
-        mode, source_input = "live", source.get("video", "")
-    return {
-        "name": scene_id.replace("_", " "),
-        "description": "",
-        "enabled": is_startup,
-        "source": {"mode": mode, "input": source_input},
-        "playback": dict(base.get("playback", {"loop": True, "speed": 1.0})),
-        "video": dict(base.get("video", {"max_fps": 5, "width_px": 960, "jpeg_quality": 70})),
-    }
+# --------------------------------------------------------------------------------- settings
 
 
 def merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
@@ -222,12 +249,34 @@ def merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def validate_settings(settings: dict[str, Any]) -> None:
+def default_camera_settings(
+    folder: Path, definition: dict[str, Any], base: dict[str, Any]
+) -> dict[str, Any]:
+    """Runtime settings of a camera without stored ones: the startup scene of server.yaml runs
+    its configured source, other cameras their recorded video."""
+    startup = base.get("startup", {})
+    is_startup = Path(str(startup.get("scene", ""))).name == folder.name
+    source = definition.get("source") or {}
+    if is_startup:
+        mode, source_input = startup.get("mode", "live"), startup.get("input", "")
+    else:
+        mode, source_input = "live", source.get("video", "")
+    return {
+        "enabled": True,
+        "source": {"mode": mode, "input": source_input},
+        "playback": dict(base.get("playback", {"loop": True, "speed": 1.0})),
+        "video": dict(base.get("video", {"max_fps": 5, "width_px": 960, "jpeg_quality": 70})),
+    }
+
+
+def validate_camera_settings(settings: dict[str, Any], require_source: bool = True) -> None:
     source = settings["source"]
     if source.get("mode") not in MODES:
         raise BadRequest("source.mode must be live, oracle or replay")
-    if not isinstance(source.get("input"), str) or not source["input"].strip():
-        raise BadRequest("the site needs a camera source (video, stream URL or recording)")
+    if not isinstance(source.get("input"), str):
+        raise BadRequest("source.input must be a string")
+    if require_source and not source["input"].strip():
+        raise BadRequest("the camera needs a source (video, stream URL or recording)")
     if "://" in source["input"] and not re.match(r"^(rtsp|rtsps|http|https)://", source["input"]):
         raise BadRequest("stream URLs must start with rtsp://, rtsps://, http:// or https://")
     playback, video = settings["playback"], settings["video"]
@@ -241,9 +290,33 @@ def validate_settings(settings: dict[str, Any]) -> None:
         raise BadRequest("video.jpeg_quality must be between 30 and 95")
 
 
+def image_size(value: Any) -> list[int]:
+    if not (isinstance(value, list) and len(value) == 2 and all(int(v) >= 64 for v in value)):
+        raise BadRequest("image_size_px must be [width, height] in pixels")
+    return [int(value[0]), int(value[1])]
+
+
+def geo_anchor(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        raise BadRequest("the location needs lat_deg and lon_deg")
+    lat, lon = float(value["lat_deg"]), float(value["lon_deg"])
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise BadRequest("latitude must be within ±90°, longitude within ±180°")
+    return {"lat_deg": lat, "lon_deg": lon, "alt_m": float(value.get("alt_m") or 0)}
+
+
+def approach(value: Any) -> str:
+    if value not in APPROACHES:
+        raise BadRequest("approach must be one of " + ", ".join(APPROACHES))
+    return str(value)
+
+
+# ---------------------------------------------------------------------------------- cameras
+
+
 @dataclass
-class SiteRuntime:
-    """Process state of one site; `state` is what the console shows."""
+class Runtime:
+    """Process state of one camera server; `state` is what the console shows."""
 
     state: str = "stopped"  # stopped | starting | running | stopping | backoff | failed
     process: asyncio.subprocess.Process | None = None
@@ -254,64 +327,66 @@ class SiteRuntime:
     error: str | None = None
     status: dict[str, Any] | None = None
     backoff_s: float = 0.0
-    map_job: dict[str, Any] | None = None
     restart_now: bool = False
     stopping: bool = False
     supervisor: asyncio.Task[None] | None = None
-    tasks: set[asyncio.Task[Any]] = field(default_factory=set)
 
 
-class Site:
-    def __init__(self, manager: Manager, scene_dir: Path) -> None:
-        self.manager = manager
-        self.dir = scene_dir
-        self.id = scene_dir.name
-        self.runtime = SiteRuntime()
-        self.reload()
+class Camera:
+    """One camera of a site and its jp_server."""
 
-    def reload(self) -> None:
-        self.scene = read_yaml(self.dir / "scene.yaml")
-        stored = read_yaml(self.dir / "site.yaml")
-        self.settings = merge(default_settings(self.id, self.scene, self.manager.base_config), stored)
-
-    def save_settings(self) -> None:
-        write_yaml(
-            self.dir / "site.yaml",
-            self.settings,
-            "# Site settings edited in the console (manager/jp_manager.py).\n",
-        )
+    def __init__(self, site: Site, camera_id: str, folder: Path, single: bool) -> None:
+        self.site = site
+        self.manager = site.manager
+        self.id = camera_id
+        self.dir = folder
+        # Single-camera scene: the camera's definition is the scene itself.
+        self.single = single
+        self.runtime = Runtime()
+        self.definition: dict[str, Any] = {}
+        self.settings: dict[str, Any] = {}
 
     @property
-    def georeferenced(self) -> bool:
-        """World frame is local east-north-up at the geo anchor (custom scenes)."""
-        return bool(self.scene.get("geo_anchor"))
+    def key(self) -> str:
+        """Log source and display key: "site/camera"."""
+        return f"{self.site.id}/{self.id}"
+
+    def load(self, stored: dict[str, Any] | None) -> None:
+        self.definition = self.site.scene if self.single else read_yaml(self.dir / "camera.yaml")
+        defaults = default_camera_settings(self.dir, self.definition, self.manager.base_config)
+        self.settings = merge(defaults, stored or {})
 
     @property
-    def location(self) -> dict[str, Any] | None:
-        """Geographic position of the site: its geo anchor or, for scenes in a sensor frame, the
-        anchor of the map layers (aligned in the console with map.transform)."""
-        return self.scene.get("geo_anchor") or (self.scene.get("map") or {}).get("anchor")
+    def name(self) -> str:
+        return str(self.definition.get("name") or self.id.replace("_", " ").capitalize())
 
     @property
     def enabled(self) -> bool:
-        return bool(self.settings.get("enabled"))
+        return bool(self.settings.get("enabled", True))
+
+    def save_definition(self, changes: dict[str, Any]) -> None:
+        if self.single:
+            scene = merge(self.site.scene, changes)
+            write_yaml(self.site.dir / "scene.yaml", scene)
+            self.site.scene = scene
+        else:
+            self.definition = merge(self.definition, changes)
+            write_yaml(
+                self.dir / "camera.yaml",
+                self.definition,
+                f"# Camera of the site {self.site.id}; source and runtime settings: ../../site.yaml.\n",
+            )
 
     def describe(self) -> dict[str, Any]:
         r = self.runtime
         return {
             "id": self.id,
-            "name": self.settings.get("name") or self.id,
-            "description": self.settings.get("description", ""),
+            "name": self.name,
+            "approach": self.definition.get("approach", "centre"),
+            "image_size_px": self.definition.get("image_size_px"),
             "enabled": self.enabled,
-            "kind": self.scene.get("kind", "custom"),
-            "image_size_px": self.scene.get("image_size_px"),
-            "geo_anchor": self.location,
-            "georeferenced": self.georeferenced,
-            "map_radius_m": (self.scene.get("map") or {}).get("radius_m"),
-            "map_transform": (self.scene.get("map") or {}).get("transform"),
             "calibrated": (self.dir / "ground_homography.yaml").is_file(),
-            "has_map": (self.manager.config.map_cache / self.id / "map.json").is_file(),
-            "zones": (self.dir / "zones.geojson").is_file(),
+            "control_points": (self.dir / "control_points.yaml").is_file(),
             "source": self.settings["source"],
             "playback": self.settings["playback"],
             "video": self.settings["video"],
@@ -325,12 +400,11 @@ class Site:
                 "last_exit": r.last_exit,
                 "error": r.error,
                 "status": r.status,
-                "map_job": r.map_job,
             },
         }
 
     def server_yaml(self) -> Path:
-        """Server config of this site: the shared base with its port, playback and video."""
+        """Server config of this camera: the shared base with its port, playback and video."""
         config = json.loads(json.dumps(self.manager.base_config))
         config["server"]["bind_address"] = "127.0.0.1"
         config["server"]["port"] = self.runtime.port
@@ -342,28 +416,31 @@ class Site:
             "mode": source["mode"],
             "input": source["input"],
         }
-        path = self.manager.config.state_dir / "sites" / self.id / "server.yaml"
+        path = self.manager.config.state_dir / "sites" / self.site.id / self.id / "server.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_yaml(path, config, f"# Generated by the manager for site {self.id}.\n")
+        write_yaml(path, config, f"# Generated by the manager for camera {self.key}.\n")
         return path
 
     # -------------------------------------------------------------------- process control
 
+    def log(self, level: str, message: str) -> None:
+        self.manager.logs.add(self.key, level, message)
+
     def start(self) -> None:
-        """Runs the site's server and keeps it running until stop()."""
+        """Runs the camera's server and keeps it running until stop()."""
         r = self.runtime
         if r.supervisor and not r.supervisor.done():
             return
         if not str(self.settings["source"].get("input", "")).strip():
-            r.state, r.error = "failed", "no camera source configured: set one in the site settings"
-            self.manager.logs.add(self.id, "error", r.error)
+            r.state, r.error = "failed", "no source configured: set one in the camera settings"
+            self.log("error", r.error)
             return
-        running = sum(1 for s in self.manager.sites.values() if s.is_active())
+        running = sum(1 for c in self.manager.cameras() if c.is_active())
         if running >= self.manager.config.max_running:
             r.state, r.error = "failed", (
-                f"capacity reached: at most {self.manager.config.max_running} sites run at once"
+                f"capacity reached: at most {self.manager.config.max_running} cameras run at once"
             )
-            self.manager.logs.add(self.id, "error", r.error)
+            self.log("error", r.error)
             return
         r.error = None
         r.backoff_s = 0.0
@@ -405,7 +482,7 @@ class Site:
         try:
             await asyncio.wait_for(process.wait(), STOP_TIMEOUT_S)
         except asyncio.TimeoutError:
-            self.manager.logs.add(self.id, "warning", "server did not stop in time; killed")
+            self.log("warning", "server did not stop in time; killed")
             process.kill()
             await process.wait()
 
@@ -422,7 +499,7 @@ class Site:
                     "--data-root",
                     str(cfg.data_root),
                 ]
-                self.manager.logs.add(self.id, "info", f"starting server on port {r.port}")
+                self.log("info", f"starting server on port {r.port}")
                 r.state, r.status, r.restart_now = "starting", None, False
                 r.started_at = time.time()
                 try:
@@ -435,7 +512,7 @@ class Site:
                     )
                 except OSError as error:
                     r.state, r.error = "failed", f"cannot start {cfg.server_binary}: {error}"
-                    self.manager.logs.add(self.id, "error", r.error)
+                    self.log("error", r.error)
                     return
                 assert r.process.stdout is not None
                 await self.pump(r.process.stdout)
@@ -443,12 +520,12 @@ class Site:
                 ran = time.time() - (r.started_at or time.time())
                 r.last_exit, r.status, r.started_at = code, None, None
                 if r.stopping:
-                    self.manager.logs.add(self.id, "info", "server stopped")
+                    self.log("info", "server stopped")
                     return
                 if r.restart_now or code == 0:
                     # Restart from the console, or the server's own /api/restart after a
                     # calibration was applied.
-                    self.manager.logs.add(self.id, "info", f"server exited ({code}); restarting")
+                    self.log("info", f"server exited ({code}); restarting")
                     r.restarts += 1
                     continue
                 r.backoff_s = (
@@ -457,9 +534,7 @@ class Site:
                     else min(r.backoff_s * 2, cfg.backoff_s[1])
                 )
                 r.state, r.error = "backoff", f"server exited with code {code}"
-                self.manager.logs.add(
-                    self.id, "error", f"server exited with code {code}; retry in {r.backoff_s:.0f} s"
-                )
+                self.log("error", f"server exited with code {code}; retry in {r.backoff_s:.0f} s")
                 await asyncio.sleep(r.backoff_s)
                 r.restarts += 1
         finally:
@@ -475,7 +550,7 @@ class Site:
                 continue
             match = SPDLOG_LINE.match(text)
             level, message = (match.group(1), match.group(2)) if match else ("info", text)
-            self.manager.logs.add(self.id, "warning" if level == "warn" else level, message)
+            self.log("warning" if level == "warn" else level, message)
 
     async def poll_status(self, session: aiohttp.ClientSession) -> None:
         r = self.runtime
@@ -486,26 +561,255 @@ class Site:
             async with session.get(f"http://127.0.0.1:{r.port}/api/status", timeout=timeout) as resp:
                 r.status = await resp.json()
                 if r.state == "starting":
-                    self.manager.logs.add(self.id, "info", "server is up")
+                    self.log("info", "server is up")
                 r.state = "running"
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             r.status = None
 
+
+# ------------------------------------------------------------------------------------ sites
+
+
+class Site:
+    def __init__(self, manager: Manager, scene_dir: Path) -> None:
+        self.manager = manager
+        self.dir = scene_dir
+        self.id = scene_dir.name
+        self.cameras: dict[str, Camera] = {}
+        self.map_job: dict[str, Any] | None = None
+        self.tasks: set[asyncio.Task[Any]] = set()
+        self.reload()
+
+    @property
+    def single(self) -> bool:
+        """An older single-camera scene: the calibration lies next to scene.yaml."""
+        return not (self.dir / "cameras").is_dir()
+
+    def reload(self) -> None:
+        self.scene = read_yaml(self.dir / "scene.yaml")
+        stored = read_yaml(self.dir / "site.yaml")
+        folders = (
+            [(self.id, self.dir)]
+            if self.single
+            else sorted(
+                (p.name, p)
+                for p in (self.dir / "cameras").iterdir()
+                if (p / "camera.yaml").is_file() and CAMERA_ID.match(p.name)
+            )
+        )
+        stored_cameras = stored.get("cameras") or {}
+        if not stored_cameras and "source" in stored and folders:
+            # site.yaml of a single-camera site: its settings belong to the first camera.
+            stored_cameras = {
+                folders[0][0]: {k: stored[k] for k in ("source", "playback", "video") if k in stored}
+            }
+        cameras: dict[str, Camera] = {}
+        for camera_id, folder in folders:
+            camera = self.cameras.get(camera_id) or Camera(self, camera_id, folder, self.single)
+            camera.dir = folder
+            camera.load(stored_cameras.get(camera_id))
+            cameras[camera_id] = camera
+        self.cameras = cameras
+        startup = any(
+            Path(str(self.manager.base_config.get("startup", {}).get("scene", ""))).name == c.dir.name
+            for c in cameras.values()
+        )
+        self.settings = {
+            "name": stored.get("name") or self.id.replace("_", " "),
+            "description": stored.get("description", ""),
+            "enabled": bool(stored.get("enabled", startup)),
+        }
+
+    def save_settings(self) -> None:
+        data = dict(self.settings)
+        data["cameras"] = {c.id: c.settings for c in self.cameras.values()}
+        write_yaml(
+            self.dir / "site.yaml",
+            data,
+            "# Site settings edited in the console (manager/jp_manager.py).\n",
+        )
+
+    def convert_to_intersection(self) -> None:
+        """Turns a single-camera scene into an intersection whose first camera keeps the
+        calibration, image size and settings."""
+        stored = {c.id: c.settings for c in self.cameras.values()}
+        folder = self.dir / "cameras" / "cam1"
+        folder.mkdir(parents=True)
+        for name in CAMERA_FILES:
+            if (self.dir / name).is_file():
+                shutil.move(str(self.dir / name), str(folder / name))
+        scene = dict(self.scene)
+        camera = {
+            "name": "Camera 1",
+            "approach": "centre",
+            "image_size_px": scene.pop("image_size_px", [1920, 1080]),
+        }
+        if scene.get("source"):
+            camera["source"] = scene.pop("source")
+        scene.pop("calibration", None)
+        write_yaml(folder / "camera.yaml", camera)
+        write_yaml(self.dir / "scene.yaml", scene)
+        old = next(iter(stored.values()), None)
+        self.cameras = {}
+        self.reload()
+        if old is not None and "cam1" in self.cameras:
+            self.cameras["cam1"].settings = old
+        self.save_settings()
+        log.info("site %s: now an intersection with cameras in %s", self.id, self.dir / "cameras")
+
+    @property
+    def georeferenced(self) -> bool:
+        """World frame is local east-north-up at the geo anchor (custom sites)."""
+        return bool(self.scene.get("geo_anchor"))
+
+    @property
+    def location(self) -> dict[str, Any] | None:
+        """Geographic position of the site: its geo anchor (the intersection centre) or, for
+        scenes in a sensor frame, the anchor of the map layers (aligned with map.transform)."""
+        return self.scene.get("geo_anchor") or (self.scene.get("map") or {}).get("anchor")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.settings.get("enabled"))
+
+    def state(self) -> str:
+        """Summary of the cameras: stopped | starting | running | partial | stopping | backoff |
+        failed."""
+        states = [c.runtime.state for c in self.cameras.values() if c.runtime.state != "stopped"]
+        if not states:
+            return "stopped"
+        if all(s == "running" for s in states):
+            return "running"
+        if "running" in states:
+            return "partial"
+        for state in ("starting", "stopping", "backoff"):
+            if state in states:
+                return state
+        return "failed"
+
+    def describe(self) -> dict[str, Any]:
+        errors = [f"{c.name}: {c.runtime.error}" for c in self.cameras.values() if c.runtime.error]
+        return {
+            "id": self.id,
+            "name": self.settings.get("name") or self.id,
+            "description": self.settings.get("description", ""),
+            "enabled": self.enabled,
+            "kind": self.scene.get("kind", "custom"),
+            "layout": "single" if self.single else "intersection",
+            "geo_anchor": self.location,
+            "georeferenced": self.georeferenced,
+            "map_radius_m": (self.scene.get("map") or {}).get("radius_m"),
+            "map_transform": (self.scene.get("map") or {}).get("transform"),
+            "has_map": (self.manager.config.map_cache / self.id / "map.json").is_file(),
+            "zones": (self.dir / "zones.geojson").is_file(),
+            "max_cameras": 1 if self.single and self.scene.get("kind") == "benchmark" else MAX_CAMERAS,
+            "cameras": [c.describe() for c in self.cameras.values()],
+            "runtime": {
+                "state": self.state(),
+                "error": "; ".join(errors) or None,
+                "map_job": self.map_job,
+            },
+        }
+
+    def camera(self, camera_id: str) -> Camera:
+        camera = self.cameras.get(camera_id)
+        if not camera:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "no such camera"}), content_type="application/json"
+            )
+        return camera
+
+    def start(self) -> None:
+        for camera in self.cameras.values():
+            if camera.enabled:
+                camera.start()
+
+    async def stop(self) -> None:
+        await asyncio.gather(*(c.stop() for c in self.cameras.values()))
+
+    async def restart(self) -> None:
+        await asyncio.gather(*(c.restart() for c in self.cameras.values() if c.enabled))
+
+    def is_active(self) -> bool:
+        return any(c.is_active() for c in self.cameras.values())
+
+    async def add_camera(self, body: dict[str, Any]) -> Camera:
+        if self.scene.get("kind") == "benchmark":
+            raise BadRequest("benchmark scenes have one camera")
+        if len(self.cameras) >= MAX_CAMERAS:
+            raise BadRequest(f"an intersection has at most {MAX_CAMERAS} cameras")
+        if self.single:
+            # The first camera's files move to cameras/cam1/: its server restarts from there.
+            was_active = self.is_active()
+            await self.stop()
+            self.convert_to_intersection()
+            if was_active:
+                self.start()
+        camera_id = str(body.get("id") or "").strip().lower() or next(
+            f"cam{n}" for n in range(1, 100) if f"cam{n}" not in self.cameras
+            and not (self.dir / "cameras" / f"cam{n}").exists()
+        )
+        if not CAMERA_ID.match(camera_id):
+            raise BadRequest("camera id: 1–32 characters, lowercase letters, digits, - and _")
+        folder = self.dir / "cameras" / camera_id
+        if camera_id in self.cameras or folder.exists():
+            raise BadRequest(f"the site has a camera {camera_id} already")
+        settings = merge(
+            default_camera_settings(folder, {}, self.manager.base_config),
+            {k: body[k] for k in ("enabled", "source", "playback", "video") if k in body},
+        )
+        validate_camera_settings(settings, require_source=False)
+        definition = {
+            "name": str(body.get("name") or f"Camera {len(self.cameras) + 1}"),
+            "approach": approach(body.get("approach", "centre")),
+            "image_size_px": image_size(body.get("image_size_px") or [1920, 1080]),
+        }
+        source_input = settings["source"]["input"]
+        if source_input and "://" not in source_input and settings["source"]["mode"] == "live":
+            definition["source"] = {"video": source_input}
+        folder.mkdir(parents=True)
+        created = datetime.date.today().isoformat()
+        write_yaml(
+            folder / "camera.yaml",
+            definition,
+            f"# Camera of the site {self.id}, created in the console on {created}.\n",
+        )
+        camera = Camera(self, camera_id, folder, single=False)
+        camera.load(settings)
+        self.cameras[camera_id] = camera
+        self.cameras = dict(sorted(self.cameras.items()))
+        self.save_settings()
+        log.info("site %s: added camera %s", self.id, camera_id)
+        return camera
+
+    async def remove_camera(self, camera: Camera) -> None:
+        if self.single:
+            raise BadRequest("this site has a single camera; delete the site instead")
+        await camera.stop()
+        trash = self.manager.config.state_dir / "trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        shutil.move(str(camera.dir), str(trash / f"{self.id}-{camera.id}-{stamp}"))
+        del self.cameras[camera.id]
+        self.save_settings()
+        log.info("site %s: removed camera %s (moved to %s)", self.id, camera.id, trash)
+
     async def prepare_map(self) -> None:
-        r = self.runtime
-        if r.map_job and r.map_job["state"] == "running":
+        if self.map_job and self.map_job["state"] == "running":
             raise BadRequest("map data is already being prepared")
         if not self.location:
-            raise BadRequest("the site needs a geographic anchor (latitude, longitude) first")
-        r.map_job = {"state": "running", "started_at": time.time(), "message": "downloading"}
+            raise BadRequest("the site needs a geographic location (latitude, longitude) first")
+        self.map_job = {"state": "running", "started_at": time.time(), "message": "downloading"}
         task = asyncio.create_task(self._map_job())
-        r.tasks.add(task)
-        task.add_done_callback(r.tasks.discard)
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     async def _map_job(self) -> None:
-        r = self.runtime
-        assert r.map_job is not None
-        self.manager.logs.add(self.id, "info", "preparing map layers (orthophoto, OSM, buildings)")
+        job = self.map_job
+        assert job is not None
+        logs = self.manager.logs
+        radius = (self.scene.get("map") or {}).get("radius_m", DEFAULT_RADIUS_M)
+        logs.add(self.id, "info", f"preparing map layers within {radius:.0f} m (imagery, OSM, buildings)")
         process = await asyncio.create_subprocess_exec(
             sys.executable,
             str(REPO_ROOT / "tools" / "prepare_map_data.py"),
@@ -522,15 +826,15 @@ class Site:
         async for raw in process.stdout:
             last = raw.decode("utf-8", "replace").rstrip()
             if last:
-                self.manager.logs.add(self.id, "info", f"map: {last}")
+                logs.add(self.id, "info", f"map: {last}")
         code = await process.wait()
-        ok = code == 0
-        r.map_job.update(
-            state="done" if ok else "failed",
+        ok_ = code == 0
+        job.update(
+            state="done" if ok_ else "failed",
             finished_at=time.time(),
-            message="map layers ready" if ok else (last or f"exit code {code}"),
+            message="map layers ready" if ok_ else (last or f"exit code {code}"),
         )
-        self.manager.logs.add(self.id, "info" if ok else "error", f"map: {r.map_job['message']}")
+        logs.add(self.id, "info" if ok_ else "error", f"map: {job['message']}")
 
 
 # ---------------------------------------------------------------------------------- manager
@@ -565,12 +869,29 @@ class Manager:
 
     def load_sites(self) -> None:
         for scene_dir in sorted(self.config.scenes_dir.iterdir()):
-            if (scene_dir / "scene.yaml").is_file() and SITE_ID.match(scene_dir.name):
-                try:
-                    self.sites[scene_dir.name] = Site(self, scene_dir)
-                except (yaml.YAMLError, OSError, KeyError) as error:
-                    log.error("cannot load site %s: %s", scene_dir.name, error)
-        log.info("%d sites in %s", len(self.sites), self.config.scenes_dir)
+            if not ((scene_dir / "scene.yaml").is_file() and SITE_ID.match(scene_dir.name)):
+                continue
+            try:
+                site = Site(self, scene_dir)
+                if (
+                    site.single
+                    and site.scene.get("kind", "custom") == "custom"
+                    and not git_tracked(scene_dir / "scene.yaml")
+                ):
+                    # Sites made in the console before intersections existed.
+                    site.convert_to_intersection()
+                self.sites[scene_dir.name] = site
+            except (yaml.YAMLError, OSError, KeyError) as error:
+                log.error("cannot load site %s: %s", scene_dir.name, error)
+        log.info(
+            "%d sites with %d cameras in %s",
+            len(self.sites),
+            sum(len(s.cameras) for s in self.sites.values()),
+            self.config.scenes_dir,
+        )
+
+    def cameras(self) -> list[Camera]:
+        return [c for s in self.sites.values() for c in s.cameras.values()]
 
     def load_state(self) -> None:
         if self.state_file.is_file():
@@ -580,12 +901,12 @@ class Manager:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         self.state_file.write_text(json.dumps({"backend_on": self.backend_on}))
 
-    def free_port(self, site: Site) -> int:
-        used = {s.runtime.port for s in self.sites.values() if s is not site and s.is_active()}
+    def free_port(self, camera: Camera) -> int:
+        used = {c.runtime.port for c in self.cameras() if c is not camera and c.is_active()}
         for port in range(self.config.first_port, self.config.last_port + 1):
             if port not in used:
                 return port
-        raise RuntimeError("no free site port")
+        raise RuntimeError("no free camera port")
 
     def site(self, site_id: str) -> Site:
         site = self.sites.get(site_id)
@@ -613,11 +934,12 @@ class Manager:
     async def status_loop(self) -> None:
         assert self.session is not None
         while True:
-            await asyncio.gather(*(s.poll_status(self.session) for s in self.sites.values()))
+            await asyncio.gather(*(c.poll_status(self.session) for c in self.cameras()))
             await asyncio.sleep(STATUS_INTERVAL_S)
 
     def system(self) -> dict[str, Any]:
         sites = list(self.sites.values())
+        cameras = self.cameras()
         return {
             "version": self.version,
             "started_at": self.started_at,
@@ -625,7 +947,9 @@ class Manager:
             "backend_on": self.backend_on,
             "sites_total": len(sites),
             "sites_enabled": sum(s.enabled for s in sites),
-            "sites_running": sum(s.runtime.state == "running" for s in sites),
+            "sites_running": sum(s.state() in ("running", "partial") for s in sites),
+            "cameras_total": len(cameras),
+            "cameras_running": sum(c.runtime.state == "running" for c in cameras),
             "max_running": self.config.max_running,
             "data_root": str(self.config.data_root),
             "server_binary": str(self.config.server_binary),
@@ -744,27 +1068,45 @@ async def body_of(request: web.Request) -> dict[str, Any]:
     return body
 
 
-def scene_yaml(body: dict[str, Any], site_id: str) -> dict[str, Any]:
-    size = body.get("image_size_px")
-    if not (isinstance(size, list) and len(size) == 2 and all(int(v) >= 64 for v in size)):
-        raise BadRequest("image_size_px must be [width, height] in pixels")
-    scene: dict[str, Any] = {
+def site_scene(body: dict[str, Any], site_id: str) -> dict[str, Any]:
+    """scene.yaml of a new intersection: the world frame at its centre and the map area."""
+    if not body.get("geo_anchor"):
+        raise BadRequest("the site needs the location of the intersection centre")
+    radius = float(body.get("map_radius_m") or DEFAULT_RADIUS_M)
+    if not 50 <= radius <= 1000:
+        raise BadRequest("the map radius must be between 50 and 1000 m")
+    return {
         "scene_id": site_id,
         "kind": "custom",
-        "image_size_px": [int(size[0]), int(size[1])],
+        "geo_anchor": geo_anchor(body["geo_anchor"]),
+        "map": {"radius_m": radius},
     }
-    source_input = (body.get("source") or {}).get("input", "")
-    if source_input and "://" not in source_input:
-        scene["source"] = {"video": source_input}
-    anchor = body.get("geo_anchor")
-    if anchor:
-        lat, lon = float(anchor["lat_deg"]), float(anchor["lon_deg"])
-        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-            raise BadRequest("latitude must be within ±90°, longitude within ±180°")
-        scene["geo_anchor"] = {"lat_deg": lat, "lon_deg": lon, "alt_m": float(anchor.get("alt_m", 0))}
-    scene["map"] = {"radius_m": float(body.get("map_radius_m") or 250)}
-    scene["calibration"] = "ground_homography.yaml"
-    return scene
+
+
+async def proxy(request: web.Request, manager: Manager, camera: Camera, path: str):
+    port = camera.runtime.port
+    if camera.runtime.state not in ("running", "starting") or port is None:
+        return ok({"error": f"camera {camera.key} is not running"}, 503)
+    url = f"http://127.0.0.1:{port}/{path}"
+    assert manager.session is not None
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return await proxy_websocket(request, manager.session, url)
+    try:
+        async with manager.session.request(
+            request.method,
+            url,
+            params=request.query,
+            data=await request.read(),
+            headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as upstream:
+            body = await upstream.read()
+            headers = {"Cache-Control": "no-store"}
+            if "Content-Type" in upstream.headers:
+                headers["Content-Type"] = upstream.headers["Content-Type"]
+            return web.Response(body=body, status=upstream.status, headers=headers)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+        return ok({"error": f"camera {camera.key} did not answer: {error}"}, 502)
 
 
 def routes(manager: Manager) -> web.RouteTableDef:
@@ -809,26 +1151,37 @@ def routes(manager: Manager) -> web.RouteTableDef:
         scene_dir = manager.config.scenes_dir / site_id
         if site_id in manager.sites or scene_dir.exists():
             raise BadRequest(f"a site named {site_id} exists already")
-        settings = merge(
-            default_settings(site_id, {}, manager.base_config),
-            {
-                "name": str(body.get("name") or site_id),
-                "description": str(body.get("description") or ""),
-                "enabled": bool(body.get("enabled", False)),
-                "source": body.get("source") or {},
-            },
-        )
-        validate_settings(settings)
-        scene = scene_yaml(body, site_id)
-        scene_dir.mkdir(parents=True)
+        cameras = body.get("cameras") or []
+        if not isinstance(cameras, list) or len(cameras) > MAX_CAMERAS:
+            raise BadRequest(f"an intersection has 1 to {MAX_CAMERAS} cameras")
+        scene = site_scene(body, site_id)
+        for camera in cameras:
+            approach(camera.get("approach", "centre"))
+            image_size(camera.get("image_size_px") or [1920, 1080])
+        (scene_dir / "cameras").mkdir(parents=True)
         created = datetime.date.today().isoformat()
-        write_yaml(scene_dir / "scene.yaml", scene, f"# Created in the console on {created}.\n")
+        write_yaml(
+            scene_dir / "scene.yaml",
+            scene,
+            f"# Intersection created in the console on {created}; cameras in cameras/.\n",
+        )
         site = Site(manager, scene_dir)
-        site.settings = settings
-        site.save_settings()
+        site.settings = {
+            "name": str(body.get("name") or site_id),
+            "description": str(body.get("description") or ""),
+            "enabled": bool(body.get("enabled", False)),
+        }
         manager.sites[site_id] = site
-        log.info("created site %s", site_id)
-        if body.get("prepare_map") and scene.get("geo_anchor"):
+        try:
+            for camera in cameras:
+                await site.add_camera(camera)
+        except BadRequest:
+            del manager.sites[site_id]
+            shutil.rmtree(scene_dir, ignore_errors=True)
+            raise
+        site.save_settings()
+        log.info("created site %s with %d cameras", site_id, len(site.cameras))
+        if body.get("prepare_map"):
             await site.prepare_map()
         if site.enabled and manager.backend_on:
             site.start()
@@ -842,32 +1195,27 @@ def routes(manager: Manager) -> web.RouteTableDef:
     async def update_site(request: web.Request) -> web.Response:
         site = manager.site(request.match_info["id"])
         body = await body_of(request)
-        allowed = {k: body[k] for k in ("name", "description", "source", "playback", "video") if k in body}
-        settings = merge(site.settings, allowed)
-        validate_settings(settings)
-        scene_keys = ("image_size_px", "geo_anchor", "map_radius_m")
-        if any(k in body for k in scene_keys):
-            current = {
-                "image_size_px": site.scene.get("image_size_px"),
-                "geo_anchor": site.location,
-                "map_radius_m": (site.scene.get("map") or {}).get("radius_m"),
-                "source": settings["source"],
-            }
-            changed = scene_yaml(merge(current, {k: body[k] for k in scene_keys if k in body}), site.id)
-            scene = dict(site.scene)
-            scene["image_size_px"] = changed["image_size_px"]
-            scene["map"] = {**(scene.get("map") or {}), **changed["map"]}
-            if "geo_anchor" in changed:
-                if site.georeferenced:
-                    scene["geo_anchor"] = changed["geo_anchor"]
-                else:
-                    # Scenes in a sensor frame (benchmark): the location only places the map.
-                    scene["map"]["anchor"] = changed["geo_anchor"]
-            if scene != site.scene:
-                write_yaml(site.dir / "scene.yaml", scene)
+        for key in ("name", "description"):
+            if key in body:
+                site.settings[key] = str(body[key])
+        scene = dict(site.scene)
+        world_changed = False
+        if "map_radius_m" in body:
+            radius = float(body["map_radius_m"])
+            if not 50 <= radius <= 1000:
+                raise BadRequest("the map radius must be between 50 and 1000 m")
+            scene["map"] = {**(scene.get("map") or {}), "radius_m": radius}
+        if body.get("geo_anchor"):
+            anchor = geo_anchor(body["geo_anchor"])
+            if site.georeferenced:
+                # The world frame of every camera moves with it: their servers restart.
+                world_changed = anchor != scene.get("geo_anchor")
+                scene["geo_anchor"] = anchor
+            else:
+                # Scenes in a sensor frame (benchmark): the location only places the map.
+                scene["map"] = {**(scene.get("map") or {}), "anchor": anchor}
         if "map_transform" in body:
             transform = body["map_transform"]
-            scene = dict(site.scene)
             scene["map"] = {
                 **(scene.get("map") or {}),
                 "transform": {
@@ -876,13 +1224,12 @@ def routes(manager: Manager) -> web.RouteTableDef:
                     "y_m": float(transform["y_m"]),
                 },
             }
+        if scene != site.scene:
             write_yaml(site.dir / "scene.yaml", scene)
-        site.settings = settings
         site.save_settings()
         site.reload()
         log.info("updated site %s", site.id)
-        # Aligning the map changes only what the console draws; everything else restarts the site.
-        if site.is_active() and (allowed or any(k in body for k in scene_keys)):
+        if world_changed and site.is_active():
             await site.restart()
         return ok(site.describe())
 
@@ -898,15 +1245,87 @@ def routes(manager: Manager) -> web.RouteTableDef:
         log.info("deleted site %s (moved to %s)", site.id, trash)
         return ok({"ok": True})
 
+    # Registered before /sites/<id>/<action>, which would take "cameras" for an action.
+    @r.post(f"{api}/sites/{{id}}/cameras")
+    async def add_camera(request: web.Request) -> web.Response:
+        site = manager.site(request.match_info["id"])
+        camera = await site.add_camera(await body_of(request))
+        if site.enabled and camera.enabled and manager.backend_on:
+            camera.start()
+        return ok(site.describe(), 201)
+
+    @r.patch(f"{api}/sites/{{id}}/cameras/{{camera}}")
+    async def update_camera(request: web.Request) -> web.Response:
+        site = manager.site(request.match_info["id"])
+        camera = site.camera(request.match_info["camera"])
+        body = await body_of(request)
+        allowed = {k: body[k] for k in ("source", "playback", "video") if k in body}
+        settings = merge(camera.settings, allowed)
+        validate_camera_settings(settings, require_source=False)
+        changes: dict[str, Any] = {}
+        if "name" in body:
+            changes["name"] = str(body["name"]).strip() or camera.name
+        if "approach" in body:
+            changes["approach"] = approach(body["approach"])
+        if "image_size_px" in body:
+            changes["image_size_px"] = image_size(body["image_size_px"])
+        source_input = settings["source"]["input"]
+        if "source" in allowed and not camera.single and source_input and "://" not in source_input:
+            changes["source"] = {"video": source_input}
+        if changes:
+            camera.save_definition(changes)
+        camera.settings = settings
+        site.save_settings()
+        site.reload()
+        log.info("updated camera %s", camera.key)
+        # Name and approach only label the camera; everything else restarts its server.
+        if camera.is_active() and (allowed or "image_size_px" in changes):
+            await camera.restart()
+        return ok(site.describe())
+
+    @r.delete(f"{api}/sites/{{id}}/cameras/{{camera}}")
+    async def delete_camera(request: web.Request) -> web.Response:
+        site = manager.site(request.match_info["id"])
+        await site.remove_camera(site.camera(request.match_info["camera"]))
+        return ok(site.describe())
+
+    @r.post(f"{api}/sites/{{id}}/cameras/{{camera}}/{{action}}")
+    async def camera_action(request: web.Request) -> web.Response:
+        site = manager.site(request.match_info["id"])
+        camera = site.camera(request.match_info["camera"])
+        action = request.match_info["action"]
+        if action == "start":
+            if not manager.backend_on:
+                raise BadRequest("the backend is stopped; start it under System first")
+            camera.settings["enabled"] = True
+            site.settings["enabled"] = True
+            site.save_settings()
+            camera.start()
+        elif action == "stop":
+            camera.settings["enabled"] = False
+            site.save_settings()
+            await camera.stop()
+        elif action == "restart":
+            await camera.restart()
+        else:
+            raise BadRequest(f"unknown action {action}")
+        log.info("camera %s: %s", camera.key, action)
+        return ok(site.describe())
+
     @r.post(f"{api}/sites/{{id}}/{{action}}")
     async def site_action(request: web.Request) -> web.Response:
         site = manager.site(request.match_info["id"])
         action = request.match_info["action"]
         if action == "start":
-            site.settings["enabled"] = True
-            site.save_settings()
             if not manager.backend_on:
                 raise BadRequest("the backend is stopped; start it under System first")
+            if not site.cameras:
+                raise BadRequest("the site has no camera yet: add one in its settings")
+            site.settings["enabled"] = True
+            if not any(c.enabled for c in site.cameras.values()):
+                for camera in site.cameras.values():
+                    camera.settings["enabled"] = True
+            site.save_settings()
             site.start()
         elif action == "stop":
             site.settings["enabled"] = False
@@ -957,10 +1376,10 @@ def routes(manager: Manager) -> web.RouteTableDef:
     async def upload_video(request: web.Request) -> web.Response:
         """Stores an uploaded video below the data root (multipart field "file")."""
         reader = await request.multipart()
-        field = await reader.next()
-        if field is None or field.name != "file" or not field.filename:
+        part = await reader.next()
+        if part is None or part.name != "file" or not part.filename:
             raise BadRequest('expected a multipart field "file"')
-        name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(field.filename).name).strip("._") or "video"
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(part.filename).name).strip("._") or "video"
         if Path(name).suffix.lower() not in VIDEO_EXTENSIONS:
             raise BadRequest("supported videos: " + ", ".join(sorted(VIDEO_EXTENSIONS)))
         folder = manager.config.upload_dir
@@ -977,7 +1396,7 @@ def routes(manager: Manager) -> web.RouteTableDef:
         size = 0
         try:
             with partial.open("wb") as out:
-                while chunk := await field.read_chunk(1024 * 1024):
+                while chunk := await part.read_chunk(1024 * 1024):
                     size += len(chunk)
                     if size > manager.config.upload_max_bytes:
                         raise BadRequest("the video is larger than the upload limit")
@@ -1020,41 +1439,34 @@ def routes(manager: Manager) -> web.RouteTableDef:
             manager.logs.unsubscribe(source, queue)
         return response
 
-    @r.route("*", "/sites/{id}/map/{path:.*}")
-    async def site_map(request: web.Request) -> web.StreamResponse:
-        site = manager.site(request.match_info["id"])
+    def serve_map(site: Site, path: str) -> web.StreamResponse:
         root = (manager.config.map_cache / site.id).resolve()
-        file = (root / request.match_info["path"]).resolve()
+        file = (root / path).resolve()
         if not file.is_file() or root not in file.parents:
             raise web.HTTPNotFound()
         return web.FileResponse(file)
 
+    @r.route("*", "/sites/{id}/map/{path:.*}")
+    async def site_map(request: web.Request) -> web.StreamResponse:
+        return serve_map(manager.site(request.match_info["id"]), request.match_info["path"])
+
+    @r.route("*", "/sites/{id}/cameras/{camera}/map/{path:.*}")
+    async def camera_map(request: web.Request) -> web.StreamResponse:
+        return serve_map(manager.site(request.match_info["id"]), request.match_info["path"])
+
+    @r.route("*", "/sites/{id}/cameras/{camera}/{path:.*}")
+    async def camera_proxy(request: web.Request) -> web.StreamResponse:
+        site = manager.site(request.match_info["id"])
+        camera = site.camera(request.match_info["camera"])
+        return await proxy(request, manager, camera, request.match_info["path"])
+
     @r.route("*", "/sites/{id}/{path:.*}")
     async def site_proxy(request: web.Request) -> web.StreamResponse:
         site = manager.site(request.match_info["id"])
-        port = site.runtime.port
-        if site.runtime.state not in ("running", "starting") or port is None:
-            return ok({"error": f"site {site.id} is not running"}, 503)
-        url = f"http://127.0.0.1:{port}/{request.match_info['path']}"
-        assert manager.session is not None
-        if request.headers.get("Upgrade", "").lower() == "websocket":
-            return await proxy_websocket(request, manager.session, url)
-        try:
-            async with manager.session.request(
-                request.method,
-                url,
-                params=request.query,
-                data=await request.read(),
-                headers={"Content-Type": request.headers.get("Content-Type", "application/json")},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as upstream:
-                body = await upstream.read()
-                headers = {"Cache-Control": "no-store"}
-                if "Content-Type" in upstream.headers:
-                    headers["Content-Type"] = upstream.headers["Content-Type"]
-                return web.Response(body=body, status=upstream.status, headers=headers)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
-            return ok({"error": f"site {site.id} did not answer: {error}"}, 502)
+        if not site.cameras:
+            return ok({"error": f"site {site.id} has no camera"}, 503)
+        camera = next(iter(site.cameras.values()))
+        return await proxy(request, manager, camera, request.match_info["path"])
 
     @r.get("/{path:.*}")
     async def static(request: web.Request) -> web.StreamResponse:
