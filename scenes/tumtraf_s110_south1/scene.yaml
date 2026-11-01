@@ -20,3 +20,5 @@ calibration: ground_homography.yaml
 map:
   radius_m: 250
   transform: {yaw_deg: -165.6, x_m: 0.0, y_m: 0.0}
+  # Position of the S110 gantry, set in the console.
+  anchor: {lat_deg: 48.249367, lon_deg: 11.6308, alt_m: 7.0}
