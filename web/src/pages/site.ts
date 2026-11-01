@@ -146,7 +146,10 @@ class CameraPanel {
       camera.regions.areas + camera.regions.lines.length > 0
         ? h(
             'span',
-            { class: 'tag', title: 'Detection areas and counting lines (Calibration → Areas and lines)' },
+            {
+              class: 'tag',
+              title: 'Detection areas and counting lines (Calibration → Areas and lines)',
+            },
             icon('route'),
             `${camera.regions.areas} areas · ${camera.regions.lines.length} lines`,
           )

@@ -261,7 +261,9 @@ class CalibrationApp {
   private finishRegion(kind: 'area' | 'line'): void {
     const points = this.drawingRegion;
     if (points.length < (kind === 'area' ? 3 : 2)) {
-      this.message(kind === 'area' ? 'An area needs at least three points.' : 'A line needs two points.');
+      this.message(
+        kind === 'area' ? 'An area needs at least three points.' : 'A line needs two points.',
+      );
       return;
     }
     const taken = new Set([...this.regions.areas, ...this.regions.lines].map((r) => r.id));
@@ -314,14 +316,21 @@ class CalibrationApp {
         input.min = '0';
         input.step = '0.5';
         input.value = String(value);
-        input.addEventListener('change', () => set(Math.max(0, Number.parseFloat(input.value) || 0)));
+        input.addEventListener('change', () =>
+          set(Math.max(0, Number.parseFloat(input.value) || 0)),
+        );
         wrap.append(label, input);
         return wrap;
       };
       item.append(
-        number('band m', line.band_m, 'Only road users this close to the line are detected (0: the line only counts)', (v) => {
-          line.band_m = v;
-        }),
+        number(
+          'band m',
+          line.band_m,
+          'Only road users this close to the line are detected (0: the line only counts)',
+          (v) => {
+            line.band_m = v;
+          },
+        ),
         number('limit km/h', line.speed_limit_kmh, 'Speed limit for the statistics', (v) => {
           line.speed_limit_kmh = v;
         }),
@@ -349,8 +358,7 @@ class CalibrationApp {
       return null;
     }
     // Direction A crosses from the left of the line (as drawn, on the ground) to its right.
-    const left =
-      (gb[0] - ga[0]) * (probe[1] - ga[1]) - (gb[1] - ga[1]) * (probe[0] - ga[0]) > 0;
+    const left = (gb[0] - ga[0]) * (probe[1] - ga[1]) - (gb[1] - ga[1]) * (probe[0] - ga[0]) > 0;
     const sign = left ? -1 : 1;
     const reach = Math.min(60, length * 0.25);
     return [mid, [mid[0] + normal[0] * reach * sign, mid[1] + normal[1] * reach * sign]];

@@ -82,7 +82,13 @@ function range(period: Period): { from?: number; to?: number } {
 }
 
 function defaultBucket(period: Period): number {
-  return period === 'hour' ? 300 : period === 'week' || period === 'all' ? 3600 : period === 'month' ? 86400 : 900;
+  return period === 'hour'
+    ? 300
+    : period === 'week' || period === 'all'
+      ? 3600
+      : period === 'month'
+        ? 86400
+        : 900;
 }
 
 const pct = (v: number | null | undefined): string =>
@@ -159,7 +165,15 @@ function lineTable(lines: LineStats[], sites: Site[]): HTMLElement {
     h(
       'table',
       { class: 'table stats-table' },
-      h('thead', {}, h('tr', {}, head.map((t) => h('th', {}, t)))),
+      h(
+        'thead',
+        {},
+        h(
+          'tr',
+          {},
+          head.map((t) => h('th', {}, t)),
+        ),
+      ),
       h(
         'tbody',
         {},
@@ -172,7 +186,12 @@ function lineTable(lines: LineStats[], sites: Site[]): HTMLElement {
             'tr',
             {},
             h('td', { class: 'strong' }, lineName(sites, l)),
-            h('td', { class: 'num' }, `${l.count}`, l.vru > 0 ? h('span', { class: 'muted' }, ` (${l.vru} VRU)`) : null),
+            h(
+              'td',
+              { class: 'num' },
+              `${l.count}`,
+              l.vru > 0 ? h('span', { class: 'muted' }, ` (${l.vru} VRU)`) : null,
+            ),
             h('td', { class: 'num' }, `${l.directions.A} / ${l.directions.B}`),
             h('td', { class: 'num' }, num(l.flow_vph)),
             h('td', { class: 'num' }, num(l.flow_pcuph)),
@@ -180,7 +199,9 @@ function lineTable(lines: LineStats[], sites: Site[]): HTMLElement {
             h(
               'td',
               { class: 'num' },
-              peak ? `${timeLabel(peak.start, 900, true)} · ${peak.volume} · ${num(peak.phf, 2)}` : '–',
+              peak
+                ? `${timeLabel(peak.start, 900, true)} · ${peak.volume} · ${num(peak.phf, 2)}`
+                : '–',
             ),
             h('td', { class: 'num' }, speedCell(s)),
             h('td', { class: 'num' }, num(s.space_mean)),
@@ -241,21 +262,32 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
   const counted = lines.filter((l) => l.speed_kmh.n > 0);
   const weighted = (pick: (s: SpeedStats) => number | undefined): number | null => {
     const n = counted.reduce((sum, l) => sum + l.speed_kmh.n, 0);
-    return n > 0 ? counted.reduce((sum, l) => sum + (pick(l.speed_kmh) ?? 0) * l.speed_kmh.n, 0) / n : null;
+    return n > 0
+      ? counted.reduce((sum, l) => sum + (pick(l.speed_kmh) ?? 0) * l.speed_kmh.n, 0) / n
+      : null;
   };
   const heavy = lines.reduce((sum, l) => sum + (l.heavy_share ?? 0) * l.vehicles, 0);
-  const busiest = [...lines].sort((a, b) => (b.peak_hour?.volume ?? 0) - (a.peak_hour?.volume ?? 0))[0];
+  const busiest = [...lines].sort(
+    (a, b) => (b.peak_hour?.volume ?? 0) - (a.peak_hour?.volume ?? 0),
+  )[0];
   const events = report.events;
 
   const kpis = h(
     'section',
     { class: 'kpis' },
-    kpi('activity', 'Vehicles counted', `${vehicles}`, `${report.totals.count} road users on ${lines.length} lines`),
+    kpi(
+      'activity',
+      'Vehicles counted',
+      `${vehicles}`,
+      `${report.totals.count} road users on ${lines.length} lines`,
+    ),
     kpi(
       'route',
       'Flow rate',
       flows.length ? `${Math.round(flows.reduce((a, b) => a + b, 0))} veh/h` : '–',
-      pcus.length ? `${Math.round(pcus.reduce((a, b) => a + b, 0))} pcu/h over all lines` : 'over the observed time',
+      pcus.length
+        ? `${Math.round(pcus.reduce((a, b) => a + b, 0))} pcu/h over all lines`
+        : 'over the observed time',
     ),
     kpi(
       'clock',
@@ -263,7 +295,12 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
       counted.length ? `${num(weighted((s) => s.mean))} · ${num(weighted((s) => s.p85))}` : '–',
       'km/h, vehicles',
     ),
-    kpi('building', 'Heavy vehicles', vehicles ? pct(heavy / vehicles) : '–', 'trucks, trailers and buses'),
+    kpi(
+      'building',
+      'Heavy vehicles',
+      vehicles ? pct(heavy / vehicles) : '–',
+      'trucks, trailers and buses',
+    ),
     kpi(
       'pulse',
       'Peak hour factor',
@@ -277,7 +314,9 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
       'conflict',
       'Safety events',
       `${events.count}`,
-      events.min_ttc_s !== null ? `shortest time to conflict ${events.min_ttc_s} s` : 'VRU conflicts and crosswalks',
+      events.min_ttc_s !== null
+        ? `shortest time to conflict ${events.min_ttc_s} s`
+        : 'VRU conflicts and crosswalks',
       events.by_type['VRU_VEHICLE_CONFLICT'] ? 'warn' : '',
     ),
   );
@@ -309,7 +348,17 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
           h(
             'table',
             { class: 'table' },
-            h('thead', {}, h('tr', {}, ['Camera', 'From line', 'To line', 'Road users', 'Share by type'].map((t) => h('th', {}, t)))),
+            h(
+              'thead',
+              {},
+              h(
+                'tr',
+                {},
+                ['Camera', 'From line', 'To line', 'Road users', 'Share by type'].map((t) =>
+                  h('th', {}, t),
+                ),
+              ),
+            ),
             h(
               'tbody',
               {},
@@ -317,7 +366,14 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
                 h(
                   'tr',
                   {},
-                  h('td', {}, lineName(sites, { site: m.site, camera: m.camera, name: '' }).replace(/ — $/, '')),
+                  h(
+                    'td',
+                    {},
+                    lineName(sites, { site: m.site, camera: m.camera, name: '' }).replace(
+                      / — $/,
+                      '',
+                    ),
+                  ),
                   h('td', { class: 'strong' }, m.from_name),
                   h('td', { class: 'strong' }, m.to_name),
                   h('td', { class: 'num' }, `${m.count}`),
@@ -345,8 +401,16 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
     h(
       'div',
       { class: 'grid-2 stats-grid' },
-      card('Volume', `Road users per ${BUCKETS.find((b) => b.value === bucket)?.label ?? 'interval'}, by type`, volumeChart(report.series, bucket, multiDay)),
-      card('Speeds', 'Vehicle spot speeds at the lines, mean and 85th percentile', speedChart(report.series, bucket, multiDay)),
+      card(
+        'Volume',
+        `Road users per ${BUCKETS.find((b) => b.value === bucket)?.label ?? 'interval'}, by type`,
+        volumeChart(report.series, bucket, multiDay),
+      ),
+      card(
+        'Speeds',
+        'Vehicle spot speeds at the lines, mean and 85th percentile',
+        speedChart(report.series, bucket, multiDay),
+      ),
       card('Speed distribution', 'Vehicles per 5 km/h', histogram),
       card('Daily profile', 'Road users by hour of the day', hourly),
     ),
@@ -365,14 +429,35 @@ function render(report: StatsReport, sites: Site[], bucket: number): HTMLElement
         'dl',
         { class: 'kv definitions' },
         [
-          ['Flow rate', 'Vehicles (or passenger car units: car 1, van 1.5, truck and bus 2, trailer 2.5, motorcycle 0.5, bicycle 0.3) per hour of observed time, i.e. while the camera ran.'],
-          ['Peak hour factor', 'Volume of the busiest hour divided by four times its busiest 15 minutes (HCM). 1.0: even demand; lower: peaky demand; used to size signal timing for the peak 15 minutes.'],
-          ['Heavy vehicles', 'Share of trucks, trailers and buses among the vehicles; reduces saturation flow at signals.'],
-          ['Spot speeds', 'Speed of each vehicle as it crosses the line. Mean is the time-mean speed; space-mean is the harmonic mean, used with flow for density. The 85th percentile is the usual basis for speed limits; pace is the 10 km/h band holding most vehicles.'],
-          ['Headway', 'Time between consecutive vehicles crossing a line in one direction; short headways (under 2 s) indicate platoons or saturated flow.'],
+          [
+            'Flow rate',
+            'Vehicles (or passenger car units: car 1, van 1.5, truck and bus 2, trailer 2.5, motorcycle 0.5, bicycle 0.3) per hour of observed time, i.e. while the camera ran.',
+          ],
+          [
+            'Peak hour factor',
+            'Volume of the busiest hour divided by four times its busiest 15 minutes (HCM). 1.0: even demand; lower: peaky demand; used to size signal timing for the peak 15 minutes.',
+          ],
+          [
+            'Heavy vehicles',
+            'Share of trucks, trailers and buses among the vehicles; reduces saturation flow at signals.',
+          ],
+          [
+            'Spot speeds',
+            'Speed of each vehicle as it crosses the line. Mean is the time-mean speed; space-mean is the harmonic mean, used with flow for density. The 85th percentile is the usual basis for speed limits; pace is the 10 km/h band holding most vehicles.',
+          ],
+          [
+            'Headway',
+            'Time between consecutive vehicles crossing a line in one direction; short headways (under 2 s) indicate platoons or saturated flow.',
+          ],
           ['Density', 'Flow rate divided by space-mean speed (vehicles per km).'],
-          ['Turning movements', 'Road users crossing two lines of one camera, from the first to the last line: the input for signal phasing and intersection design.'],
-          ['Safety events', 'VRUs on crosswalks and predicted VRU–vehicle conflicts, with the time to the closest approach.'],
+          [
+            'Turning movements',
+            'Road users crossing two lines of one camera, from the first to the last line: the input for signal phasing and intersection design.',
+          ],
+          [
+            'Safety events',
+            'VRUs on crosswalks and predicted VRU–vehicle conflicts, with the time to the closest approach.',
+          ],
         ].flatMap(([term, text]) => [h('dt', {}, term), h('dd', {}, text)]),
       ),
     ),
@@ -426,7 +511,9 @@ async function start(): Promise<void> {
     lineSelect.disabled = !chosen;
     fill(
       bucketSelect,
-      BUCKETS.map((b) => h('option', { value: String(b.value), selected: b.value === bucket }, b.label)),
+      BUCKETS.map((b) =>
+        h('option', { value: String(b.value), selected: b.value === bucket }, b.label),
+      ),
     );
   };
 
@@ -454,7 +541,14 @@ async function start(): Promise<void> {
               {},
               'Draw lines across the lanes in a camera’s Calibration, tab "Areas and lines", and save. While the camera runs, every road user crossing a line is recorded here with time, type, direction and speed.',
             ),
-            sites[0] ? h('a', { class: 'btn primary', href: links.calibration(sites[0].id) }, icon('calibration'), 'Open calibration') : null,
+            sites[0]
+              ? h(
+                  'a',
+                  { class: 'btn primary', href: links.calibration(sites[0].id) },
+                  icon('calibration'),
+                  'Open calibration',
+                )
+              : null,
           ),
         );
       } else {
@@ -477,7 +571,11 @@ async function start(): Promise<void> {
   siteSelect.addEventListener('change', () => {
     site = siteSelect.value;
     line = '';
-    history.replaceState(null, '', site ? `/stats.html?site=${encodeURIComponent(site)}` : '/stats.html');
+    history.replaceState(
+      null,
+      '',
+      site ? `/stats.html?site=${encodeURIComponent(site)}` : '/stats.html',
+    );
     fillSelects();
     void load();
   });
@@ -489,9 +587,18 @@ async function start(): Promise<void> {
     bucket = Number(bucketSelect.value);
     void load();
   });
-  const refresh = h('button', { type: 'button', class: 'btn small ghost icon-only', title: 'Refresh' }, icon('restart'));
+  const refresh = h(
+    'button',
+    { type: 'button', class: 'btn small ghost icon-only', title: 'Refresh' },
+    icon('restart'),
+  );
   refresh.addEventListener('click', () => void load());
-  const reset = h('button', { type: 'button', class: 'btn small ghost', title: 'Delete recorded statistics' }, icon('trash'), 'Reset');
+  const reset = h(
+    'button',
+    { type: 'button', class: 'btn small ghost', title: 'Delete recorded statistics' },
+    icon('trash'),
+    'Reset',
+  );
   reset.addEventListener('click', async () => {
     const name = shell.sites().find((s) => s.id === site)?.name;
     const ok = await confirmDialog({
@@ -506,7 +613,9 @@ async function start(): Promise<void> {
     }
   });
 
-  shell.setActions(h('a', { class: 'btn small', href: links.twin() }, icon('globe'), 'Digital twin'));
+  shell.setActions(
+    h('a', { class: 'btn small', href: links.twin() }, icon('globe'), 'Digital twin'),
+  );
   shell.content.append(
     h(
       'div',
