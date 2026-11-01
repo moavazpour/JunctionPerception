@@ -108,11 +108,13 @@ class CalibrationApp {
   private readonly imageCanvas: PanZoomCanvas;
   private readonly mapCanvas: PanZoomCanvas;
   private nextPoint = 1;
+  private readonly calibrated: boolean;
 
   constructor(
     scene: SceneDescription,
     private readonly map: MapData,
   ) {
+    this.calibrated = scene.calibrated;
     this.imageCanvas = new PanZoomCanvas(
       element('#image'),
       false,
@@ -146,7 +148,8 @@ class CalibrationApp {
     this.regions = await fetchRegions().catch(() => ({ areas: [], lines: [], signals: [] }));
     this.nextPoint = this.points.length + 1;
     await this.refit();
-    this.setMode('points');
+    // Without map layers there is nothing to click control points on.
+    this.setMode(this.map.ortho || this.map.osm ? 'points' : 'regions');
   }
 
   private bindControls(): void {
@@ -520,7 +523,10 @@ class CalibrationApp {
     const summary = element('#summary');
     const fit = this.fit;
     if (!fit) {
-      summary.textContent = `${this.points.length} points · need at least 4 fit points`;
+      summary.textContent =
+        this.points.length === 0 && this.calibrated
+          ? 'Calibrated without control points (e.g. from the dataset); new points would replace it'
+          : `${this.points.length} points · need at least 4 fit points`;
       return;
     }
     const check =
@@ -1027,19 +1033,30 @@ async function start(): Promise<void> {
   }
   const scene = await fetchScene();
   element('#scene-id').textContent = ` · ${scene.image_size_px[0]} × ${scene.image_size_px[1]} px`;
-  if (!scene.map || !scene.geo_anchor) {
-    const text =
-      scene.kind === 'benchmark'
-        ? 'Benchmark scenes are calibrated from their labels. To show the map, set the location under Settings, prepare the map and align it in the live twin.'
-        : siteId
-          ? 'This site has no geographic anchor or map layers yet: set its location and prepare the map under Settings.'
-          : 'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
-    element('#message').textContent = text;
-    toast(text, 'error');
-    return;
+  let map: MapData;
+  if (scene.map && scene.geo_anchor) {
+    element('#map-note').textContent = ' · aerial image, OpenStreetMap roads';
+    map = await loadMapData(siteUrl(scene.map));
+  } else {
+    // Without map layers in the scene frame (not geo-referenced, e.g. a dataset or sensor frame)
+    // the camera image still takes ROIs, lines and signals; control points need the map.
+    const text = scene.calibrated
+      ? 'This scene is not geo-referenced, so no map is shown: the camera keeps its calibration, ROIs, lines and signals can be drawn on the camera image.'
+      : siteId
+        ? 'This site has no geographic anchor or map layers yet: set its location and prepare the map under Settings to calibrate the camera.'
+        : 'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
+    element('#map-note').textContent = ' · not geo-referenced';
+    toast(text, scene.calibrated ? 'info' : 'error');
+    map = {
+      base: '',
+      manifest: { scene_id: scene.scene_id, radius_m: 100, layers: {}, attribution: {} },
+      ortho: null,
+      roadmap: null,
+      osm: null,
+      buildings: [],
+    };
   }
-  element('#map-note').textContent = ' · aerial image, OpenStreetMap roads';
-  const app = new CalibrationApp(scene, await loadMapData(siteUrl(scene.map)));
+  const app = new CalibrationApp(scene, map);
   await app.start();
   await ensureFrames(() => app.loadFrame());
 }
