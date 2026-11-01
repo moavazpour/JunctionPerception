@@ -126,7 +126,10 @@ scripts/setup_server.sh                                     # development image 
 scripts/in_docker.sh scripts/build_and_test.sh all release  # C++ and frontend: build, lint, test
 ```
 
-**Export the detector** (needs the `ultralytics` and `onnx` Python packages)
+**Detector.** The default is the keypoint model `models/jp_pose5_736x1280.onnx` (five classes, each
+with the four bottom corners of its 3D box; not in git, copy it into `models/`). The box-only
+YOLO26 detector can be exported instead (needs the `ultralytics` and `onnx` Python packages) and
+selected with `detection.model` and `class_source: coco` in `configs/pipeline.yaml`:
 
 ```bash
 python tools/export_yolo26.py --variant yolo26s --imgsz 1280   # -> models/yolo26s_1280.onnx

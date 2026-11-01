@@ -92,11 +92,12 @@ zone for conflicts; `null` otherwise).
 
 ## Keypoint detector
 
-A detector may also return keypoints: `models/jp_pose5_384x640.onnx` (classes car, pedestrian,
+A detector may also return keypoints: `models/jp_pose5_736x1280.onnx` (classes car, pedestrian,
 bike, Trucks, Buses; class source `jp_pose5`) gives, per detection, the four bottom corners of the
 object's 3D box (x, y, visibility), in an end-to-end output of shape (1, 300, 6 + 4 × 3) at a
-640 × 384 letterboxed input. When all four corners are visible, the localizer projects them to
-the ground: their centre is the measurement (it needs no footprint model, so its floor is smaller,
+1280 × 736 letterboxed input (the size is read from the model; trained at 640, it finds clearly
+more at 1280: TUMTraf recall 0.52 instead of 0.44). When all four corners are visible, the
+localizer projects them to the ground: their centre is the measurement (it needs no footprint model, so its floor is smaller,
 `localization.keypoints.floor_std_m`), the long side gives the heading also of standing road users
 (the front follows the motion, else the held heading) and the sides give length and width. Corner
 sets whose size is implausible for the class fall back to the box model. Select the model with

@@ -41,7 +41,7 @@ sources:
     BICYCLE: bicycle
     PEDESTRIAN: pedestrian
     OTHER: other
-  # Keypoint model (models/jp_pose5_384x640.onnx): five classes, each detection with the four
+  # Keypoint model (models/jp_pose5_736x1280.onnx): five classes, each detection with the four
   # bottom corners of its 3D box. "bike" covers ridden two-wheelers.
   jp_pose5:
     car: car

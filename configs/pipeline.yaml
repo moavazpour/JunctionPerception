@@ -1,10 +1,12 @@
 # Perception pipeline settings. Paths are relative to the repository root.
 detection:
-  model: models/yolo26s_1280.onnx  # end-to-end YOLO26 export (tools/export_yolo26.py)
+  # Keypoint model: five classes, each with the four bottom corners of its 3D box. The box-only
+  # YOLO26 export (tools/export_yolo26.py) is models/yolo26s_1280.onnx with class_source coco.
+  model: models/jp_pose5_736x1280.onnx
   confidence_threshold: 0.1        # low enough for the tracker's second association stage
   execution_provider: cuda         # cuda (falls back to cpu if unavailable) or cpu
   cuda_device: 0
-  class_source: coco               # label source in configs/classes.yaml
+  class_source: jp_pose5           # label source in configs/classes.yaml
   # A person riding a detected bicycle or motorcycle becomes one two-wheeler object.
   rider_association:
     enabled: true

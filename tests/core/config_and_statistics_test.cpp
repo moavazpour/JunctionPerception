@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "jp/core/class_catalog.hpp"
 #include "jp/core/pipeline_config.hpp"
 #include "jp/core/statistics.hpp"
 
@@ -71,7 +72,12 @@ events: {crosswalk_min_frames: 3, conflict_horizon_s: 3.0, conflict_step_s: 0.1,
 TEST(PipelineConfig, RepositoryConfigIsValid) {
   const auto config =
       jp::core::load_pipeline_config(JP_SOURCE_DIR "/configs/pipeline.yaml", JP_SOURCE_DIR);
-  EXPECT_EQ(config.detection.class_source, "coco");
+  // Every label of the configured detector maps onto a twin class.
+  EXPECT_EQ(config.detection.class_source, "jp_pose5");
+  const auto catalog = jp::core::ClassCatalog::load(JP_SOURCE_DIR "/configs/classes.yaml");
+  for (const char* label : {"car", "pedestrian", "bike", "Trucks", "Buses"}) {
+    EXPECT_TRUE(catalog.map(config.detection.class_source, label).has_value()) << label;
+  }
 }
 
 TEST(Statistics, Summarizes) {
