@@ -89,4 +89,35 @@ sources:
   EXPECT_EQ(mapped[1].twin_class, "car");
 }
 
+TEST(Letterbox, FitsRectangularNetworkInput) {
+  // 1920 x 1080 into 640 x 384: scaled to 640 x 360 and padded by 12 px above and below, as
+  // Ultralytics feeds a pose model exported at 384 x 640.
+  const auto lb = Letterbox::fit(cv::Size(1920, 1080), cv::Size(640, 384));
+  EXPECT_EQ(lb.resized_width, 640);
+  EXPECT_EQ(lb.resized_height, 360);
+  EXPECT_EQ(lb.pad_left, 0);
+  EXPECT_EQ(lb.pad_top, 12);
+  const cv::Point2f point = lb.to_image(cv::Point2f(320.0F, 192.0F));
+  EXPECT_FLOAT_EQ(point.x, 960.0F);
+  EXPECT_FLOAT_EQ(point.y, 540.0F);
+  EXPECT_EQ(lb.apply(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar::all(0))).size(), cv::Size(640, 384));
+}
+
+TEST(YoloOutput, ParsesKeypointsOfPoseRows) {
+  // x1 y1 x2 y2 score class, then four corners (x, y, visibility).
+  const std::array<float, 36> output = {
+      10, 20, 50,   80, 0.9F, 3,    11, 70, 0.9F,
+      48, 72, 0.8F, 45, 79,   0.7F, 12, 78, 0.95F,  // truck with corners
+      0,  0,  0,    0,  0.0F, 0,    0,  0,  0,
+      0,  0,  0,    0,  0,    0,    0,  0,  0};  // padding row
+  const auto detections = jp::detection::parse_end2end_output(output, 0.25F, 18);
+  ASSERT_EQ(detections.size(), 1U);
+  EXPECT_EQ(detections[0].class_id, 3);
+  ASSERT_EQ(detections[0].keypoints.size(), 4U);
+  EXPECT_FLOAT_EQ(detections[0].keypoints[1].pixel.x, 48.0F);
+  EXPECT_FLOAT_EQ(detections[0].keypoints[3].score, 0.95F);
+  EXPECT_THROW(static_cast<void>(jp::detection::parse_end2end_output(output, 0.25F, 8)),
+               std::invalid_argument);
+}
+
 }  // namespace

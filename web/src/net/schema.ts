@@ -24,6 +24,9 @@ export interface WorldObject {
   turning: boolean;
   /** Inside the region validated for safety events; objects outside take part in none. */
   validated: boolean;
+  /** Footprint measured from the box corners (keypoint models); absent or null otherwise. */
+  length_m?: number | null;
+  width_m?: number | null;
 }
 
 export interface WorldEvent {
@@ -82,7 +85,11 @@ const objectFields: Record<keyof WorldObject, FieldCheck> = {
   zones: arrayOf(isString),
   turning: isBoolean,
   validated: isBoolean,
+  length_m: nullable(isNumber),
+  width_m: nullable(isNumber),
 };
+// Fields added after version 1 was published; older recordings lack them.
+const optionalObjectFields = new Set(['length_m', 'width_m']);
 
 const eventFields: Record<keyof WorldEvent, FieldCheck> = {
   id: isNumber,
@@ -96,15 +103,21 @@ const eventFields: Record<keyof WorldEvent, FieldCheck> = {
   zone: nullable(isString),
 };
 
-function hasExactFields<T>(value: unknown, fields: Record<keyof T, FieldCheck>): value is T {
+function hasExactFields<T>(
+  value: unknown,
+  fields: Record<keyof T, FieldCheck>,
+  optional: Set<string> = new Set(),
+): value is T {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
   const record = value as Record<string, unknown>;
   const expected = Object.keys(fields);
   return (
-    Object.keys(record).length === expected.length &&
-    expected.every((key) => key in record && fields[key as keyof T](record[key]))
+    Object.keys(record).every((key) => key in fields) &&
+    expected.every((key) =>
+      key in record ? fields[key as keyof T](record[key]) : optional.has(key),
+    )
   );
 }
 
@@ -114,7 +127,7 @@ const stateFields: Record<keyof WorldState, FieldCheck> = {
   frame: isNumber,
   timestamp_ns: isNumber,
   source: oneOf('live', 'oracle', 'replay'),
-  objects: arrayOf((o) => hasExactFields<WorldObject>(o, objectFields)),
+  objects: arrayOf((o) => hasExactFields<WorldObject>(o, objectFields, optionalObjectFields)),
   events: arrayOf((e) => hasExactFields<WorldEvent>(e, eventFields)),
 };
 

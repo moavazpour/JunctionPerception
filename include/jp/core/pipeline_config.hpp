@@ -48,6 +48,15 @@ struct LocalizationSettings {
   int reanchor_after = 3;
   double heading_min_speed_mps = 0.5;
   double forget_after_s = 5.0;
+  /// Keypoint models: footprint from the four bottom corners (see configs/pipeline.yaml).
+  bool keypoints_enabled = true;
+  double keypoint_min_score = 0.5;
+  double keypoint_min_size_ratio = 0.4;
+  double keypoint_max_size_ratio = 2.5;
+  double keypoint_floor_std_m = 0.6;
+  double keypoint_smoothing = 0.3;
+  bool keypoint_heading_when_moving = false;
+  bool keypoint_position = false;
 };
 
 /// VRU zone and event detection (see configs/pipeline.yaml).

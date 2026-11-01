@@ -82,6 +82,16 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     l.reanchor_after = localization["reanchor_after"].as<int>();
     l.heading_min_speed_mps = localization["heading_min_speed_mps"].as<double>();
     l.forget_after_s = localization["forget_after_s"].as<double>();
+    if (const YAML::Node keypoints = localization["keypoints"]) {
+      l.keypoints_enabled = keypoints["enabled"].as<bool>();
+      l.keypoint_min_score = keypoints["min_score"].as<double>();
+      l.keypoint_min_size_ratio = keypoints["min_size_ratio"].as<double>();
+      l.keypoint_max_size_ratio = keypoints["max_size_ratio"].as<double>();
+      l.keypoint_floor_std_m = keypoints["floor_std_m"].as<double>();
+      l.keypoint_smoothing = keypoints["smoothing"].as<double>();
+      l.keypoint_heading_when_moving = keypoints["heading_when_moving"].as<bool>();
+      l.keypoint_position = keypoints["position"].as<bool>();
+    }
 
     const YAML::Node events = section(root, "events");
     EventSettings& e = config.events;

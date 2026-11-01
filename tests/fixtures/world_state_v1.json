@@ -20,7 +20,9 @@
       "confidence": 0.81,
       "zones": [],
       "turning": false,
-      "validated": true
+      "validated": true,
+      "length_m": 4.42,
+      "width_m": 1.83
     },
     {
       "id": 42,
@@ -37,7 +39,9 @@
       "confidence": 0.66,
       "zones": ["crosswalk_n"],
       "turning": false,
-      "validated": false
+      "validated": false,
+      "length_m": null,
+      "width_m": null
     }
   ],
   "events": [

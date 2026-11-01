@@ -49,7 +49,7 @@ class OnnxYoloDetector final : public Detector {
     const auto t1 = Clock::now();
 
     const Ort::MemoryInfo memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    const std::array<std::int64_t, 4> shape = {1, 3, input_size_, input_size_};
+    const std::array<std::int64_t, 4> shape = {1, 3, input_size_.height, input_size_.width};
     const Ort::Value input = Ort::Value::CreateTensor<float>(memory, input_.data(), input_.size(),
                                                              shape.data(), shape.size());
     const std::array<const char*, 1> input_names = {input_name_.c_str()};
@@ -62,9 +62,12 @@ class OnnxYoloDetector final : public Detector {
     const std::span<const float> values(outputs.front().GetTensorData<float>(),
                                         info.GetElementCount());
     std::vector<Detection> detections;
-    for (const auto& raw : parse_end2end_output(values, threshold_)) {
+    for (const auto& raw : parse_end2end_output(values, threshold_, row_size_)) {
       Detection d;
       d.box = letterbox.to_image(raw.box, image.size());
+      for (const auto& k : raw.keypoints) {
+        d.keypoints.push_back({letterbox.to_image(k.pixel), k.score});
+      }
       d.score = raw.score;
       d.source_class = raw.class_id;
       if (raw.class_id >= 0 && static_cast<std::size_t>(raw.class_id) < class_names_.size()) {
@@ -100,34 +103,38 @@ class OnnxYoloDetector final : public Detector {
     input_name_ = session_.GetInputNameAllocated(0, allocator).get();
     output_name_ = session_.GetOutputNameAllocated(0, allocator).get();
     const auto input_shape = session_.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
-    if (input_shape.size() != 4 || input_shape[1] != 3 || input_shape[2] != input_shape[3] ||
-        input_shape[2] <= 0) {
-      throw std::runtime_error("expected a static square input of shape (1, 3, S, S)");
+    if (input_shape.size() != 4 || input_shape[1] != 3 || input_shape[2] <= 0 ||
+        input_shape[3] <= 0) {
+      throw std::runtime_error("expected a static input of shape (1, 3, H, W)");
     }
-    input_size_ = static_cast<int>(input_shape[2]);
+    input_size_ = cv::Size(static_cast<int>(input_shape[3]), static_cast<int>(input_shape[2]));
     const auto output_shape = session_.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
-    if (output_shape.size() != 3 || output_shape[2] != static_cast<std::int64_t>(kEnd2EndRowSize)) {
-      throw std::runtime_error("expected an end-to-end output of shape (1, N, 6)");
+    const auto row = output_shape.size() == 3 ? output_shape[2] : 0;
+    const auto base = static_cast<std::int64_t>(kEnd2EndRowSize);
+    if (row < base || (row - base) % static_cast<std::int64_t>(kKeypointValues) != 0) {
+      throw std::runtime_error(
+          "expected an end-to-end output of shape (1, N, 6), or (1, N, 6 + 3k) with keypoints");
     }
+    row_size_ = static_cast<std::size_t>(row);
     const auto metadata = session_.GetModelMetadata();
     const auto names = metadata.LookupCustomMetadataMapAllocated("names", allocator);
     if (!names) {
       throw std::runtime_error("model has no class names metadata");
     }
     class_names_ = parse_class_names(names.get());
-    const auto side = static_cast<std::size_t>(input_size_);
-    input_.resize(3U * side * side);
+    input_.resize(3U * static_cast<std::size_t>(input_size_.area()));
+    spdlog::info("detector input {} x {}, {} classes, {} keypoints", input_size_.width,
+                 input_size_.height, class_names_.size(), (row_size_ - base) / kKeypointValues);
   }
 
   // BGR uint8 HWC -> RGB float CHW in [0, 1].
   void fill_input(const cv::Mat& letterboxed) {
     cv::Mat rgb;
     cv::cvtColor(letterboxed, rgb, cv::COLOR_BGR2RGB);
-    const auto plane =
-        static_cast<std::size_t>(input_size_) * static_cast<std::size_t>(input_size_);
+    const auto plane = static_cast<std::size_t>(input_size_.area());
     std::array<cv::Mat, 3> channels;
     for (std::size_t c = 0; c < channels.size(); ++c) {
-      channels.at(c) = cv::Mat(input_size_, input_size_, CV_32F,
+      channels.at(c) = cv::Mat(input_size_.height, input_size_.width, CV_32F,
                                std::span<float>(input_).subspan(c * plane, plane).data());
     }
     cv::Mat as_float;
@@ -141,7 +148,8 @@ class OnnxYoloDetector final : public Detector {
   std::string backend_;
   std::string input_name_;
   std::string output_name_;
-  int input_size_ = 0;
+  cv::Size input_size_;
+  std::size_t row_size_ = kEnd2EndRowSize;
   std::vector<std::string> class_names_;
   std::vector<float> input_;
   DetectorTimings timings_;

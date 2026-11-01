@@ -7,13 +7,18 @@
 
 namespace jp::detection {
 
-std::vector<RawDetection> parse_end2end_output(std::span<const float> output, float min_score) {
-  if (output.size() % kEnd2EndRowSize != 0) {
-    throw std::invalid_argument("end-to-end output size is not a multiple of 6");
+std::vector<RawDetection> parse_end2end_output(std::span<const float> output, float min_score,
+                                               std::size_t row_size) {
+  if (row_size < kEnd2EndRowSize || (row_size - kEnd2EndRowSize) % kKeypointValues != 0) {
+    throw std::invalid_argument("end-to-end rows must hold 6 values plus 3 per keypoint");
   }
+  if (output.size() % row_size != 0) {
+    throw std::invalid_argument("end-to-end output size is not a multiple of the row size");
+  }
+  const std::size_t keypoints = (row_size - kEnd2EndRowSize) / kKeypointValues;
   std::vector<RawDetection> detections;
-  for (std::size_t offset = 0; offset < output.size(); offset += kEnd2EndRowSize) {
-    const auto row = output.subspan(offset, kEnd2EndRowSize);
+  for (std::size_t offset = 0; offset < output.size(); offset += row_size) {
+    const auto row = output.subspan(offset, row_size);
     const float score = row[4];
     if (score < min_score) {
       continue;
@@ -22,7 +27,12 @@ std::vector<RawDetection> parse_end2end_output(std::span<const float> output, fl
     d.box = cv::Rect2f(row[0], row[1], row[2] - row[0], row[3] - row[1]);
     d.score = score;
     d.class_id = static_cast<int>(std::lround(row[5]));
-    detections.push_back(d);
+    d.keypoints.reserve(keypoints);
+    for (std::size_t k = 0; k < keypoints; ++k) {
+      const auto values = row.subspan(kEnd2EndRowSize + (k * kKeypointValues), kKeypointValues);
+      d.keypoints.push_back({cv::Point2f(values[0], values[1]), values[2]});
+    }
+    detections.push_back(std::move(d));
   }
   return detections;
 }

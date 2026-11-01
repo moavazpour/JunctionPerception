@@ -24,6 +24,9 @@ struct WorldObject {
   std::optional<double> speed_std_mps;  ///< Speed uncertainty; empty if not estimated.
   std::optional<double> heading_rad;    ///< Empty while the heading is unknown.
   double confidence = 0.0;
+  /// Measured footprint (keypoint models), else empty: the twin uses the class size then.
+  std::optional<double> length_m;
+  std::optional<double> width_m;
   std::vector<std::string> zones;  ///< Zones containing the object.
   bool turning = false;            ///< Vehicle heading changed strongly over the last seconds.
   /// Inside the region where the calibration is validated and fine enough for safety events;

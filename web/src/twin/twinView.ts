@@ -1057,6 +1057,15 @@ export class TwinView {
       const delta = angleDelta(tracked.drawnHeading, target);
       tracked.drawnHeading += THREE.MathUtils.clamp(delta, -rate * dt, rate * dt);
       tracked.heading.rotation.z = tracked.drawnHeading;
+      // Keypoint models measure the footprint: the class model is stretched to it.
+      const info = this.classInfo(object.class);
+      const stretch = (measured: number | null | undefined, nominal: number): number =>
+        measured ? THREE.MathUtils.clamp(measured / nominal, 0.5, 2) : 1;
+      tracked.model.scale.set(
+        stretch(object.length_m, info.length_m),
+        stretch(object.width_m, info.width_m),
+        1,
+      );
 
       if (tracked.fade < 1) {
         tracked.fade = Math.min(1, tracked.fade + dt / FADE_IN_S);

@@ -41,6 +41,18 @@ localization:
   reanchor_after: 3                # rejected frames in a row before the track is re-anchored
   heading_min_speed_mps: 0.5       # below this speed the last heading is held
   forget_after_s: 5.0
+  # Keypoint models (four bottom corners of the 3D box): the projected corners give the
+  # footprint centre, the heading (from the long side, also of standing objects) and the size;
+  # detections without four visible, plausibly sized corners fall back to bias_correction.
+  keypoints:
+    enabled: true
+    min_score: 0.5                 # visibility every corner needs
+    min_size_ratio: 0.4            # measured length and width within these factors of the
+    max_size_ratio: 2.5            # class size (configs/classes.yaml)
+    floor_std_m: 0.6               # isotropic measurement floor of a corner footprint
+    smoothing: 0.3                 # weight of a new measurement in heading and size
+    heading_when_moving: false     # moving road users keep the heading of their motion
+    position: false                # position from the corner centre (else from the box fit)
 
 # VRU zones and events.
 events:

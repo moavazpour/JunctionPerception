@@ -48,7 +48,9 @@ json object_json(const core::WorldObject& o) {
       {"confidence", rounded(o.confidence, kMetre)},
       {"zones", o.zones},
       {"turning", o.turning},
-      {"validated", o.validated}};
+      {"validated", o.validated},
+      {"length_m", o.length_m ? json(rounded(*o.length_m, kMetre)) : json(nullptr)},
+      {"width_m", o.width_m ? json(rounded(*o.width_m, kMetre)) : json(nullptr)}};
 }
 
 json event_json(const core::WorldEvent& e) {
@@ -80,6 +82,8 @@ core::WorldObject object_from(const json& j) {
   o.zones = j.at("zones").get<std::vector<std::string>>();
   o.turning = j.at("turning").get<bool>();
   o.validated = j.value("validated", true);
+  o.length_m = optional_field<double>(j, "length_m");
+  o.width_m = optional_field<double>(j, "width_m");
   return o;
 }
 

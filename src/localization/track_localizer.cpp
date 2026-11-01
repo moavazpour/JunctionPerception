@@ -1,6 +1,7 @@
 #include "jp/localization/track_localizer.hpp"
 
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 #include "jp/localization/ground_projection.hpp"
@@ -45,13 +46,26 @@ std::vector<LocalizedObject> TrackLocalizer::update(
       continue;
     }
     const auto& info = catalog_.info(track.twin_class);
-    const Eigen::Matrix2d cov = measurement_cov(contact_pixel(track.detection.box));
+    std::optional<GroundFootprint> footprint;
+    if (options_.use_keypoints) {
+      footprint = keypoint_footprint(track.detection.keypoints, image_to_ground_,
+                                     ObjectSize{info.length_m, info.width_m, info.height_m},
+                                     options_.keypoints);
+    }
 
     auto it = states_.find(track.id);
     const std::optional<double> held_heading =
         it == states_.end() ? std::nullopt : it->second.heading_rad;
+    // The corners can give the footprint centre directly; otherwise it is estimated from the box
+    // (with the heading the corners keep for standing road users).
+    const bool corner_position = footprint && options_.keypoint_position;
+    const Eigen::Matrix2d cov =
+        corner_position
+            ? measurement_cov(footprint->pixel_center, options_.keypoint_floor_std_m)
+            : measurement_cov(contact_pixel(track.detection.box), options_.measurement_floor_std_m);
     const Eigen::Vector2d measured =
-        footprint_center(*contact, track.detection.box, info, held_heading);
+        corner_position ? footprint->center
+                        : footprint_center(*contact, track.detection.box, info, held_heading);
 
     if (it == states_.end()) {
       it = states_
@@ -63,7 +77,9 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     State& state = it->second;
     const Eigen::Vector2d velocity = state.filter.velocity();
     const double speed = velocity.norm();
-    if (speed >= options_.heading_min_speed_mps) {
+    if (footprint) {
+      apply_footprint(state, *footprint, speed, velocity);
+    } else if (speed >= options_.heading_min_speed_mps) {
       state.heading_rad = std::atan2(velocity.y(), velocity.x());
     }
 
@@ -79,6 +95,11 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     object.speed_mps = speed;
     object.speed_std_mps = state.filter.speed_std();
     object.heading_rad = state.heading_rad;
+    if (state.size) {
+      object.length_m = state.size->x();
+      object.width_m = state.size->y();
+    }
+    object.from_keypoints = footprint.has_value();
     objects.push_back(std::move(object));
   }
 
@@ -89,9 +110,40 @@ std::vector<LocalizedObject> TrackLocalizer::update(
   return objects;
 }
 
-Eigen::Matrix2d TrackLocalizer::measurement_cov(const Eigen::Vector2d& pixel) const {
-  const double floor = options_.measurement_floor_std_m;
-  Eigen::Matrix2d cov = floor * floor * Eigen::Matrix2d::Identity();
+void TrackLocalizer::apply_footprint(State& state, const GroundFootprint& footprint, double speed,
+                                     const Eigen::Vector2d& velocity) const {
+  const double k = options_.keypoint_smoothing;
+  const Eigen::Vector2d size(footprint.length_m, footprint.width_m);
+  state.size = state.size ? Eigen::Vector2d(((1.0 - k) * *state.size) + (k * size)) : size;
+  // The long side is the axis of the object; which end is the front follows its motion, else
+  // the heading it had.
+  std::optional<double> reference = state.heading_rad;
+  if (speed >= options_.heading_min_speed_mps) {
+    reference = std::atan2(velocity.y(), velocity.x());
+    if (!options_.keypoint_heading_when_moving) {
+      // The motion gives the heading of moving road users more steadily than the corners.
+      state.heading_rad = reference;
+      return;
+    }
+  }
+  if (!reference) {
+    // The corners do not tell the front from the back: without a motion seen so far the
+    // heading stays unknown rather than half the time reversed.
+    return;
+  }
+  const double axis = orient_axis(footprint.axis_rad, *reference);
+  if (!state.heading_rad) {
+    state.heading_rad = axis;
+    return;
+  }
+  // Smoothed on the circle: turn the held heading part of the way towards the measurement.
+  const double delta = std::remainder(axis - *state.heading_rad, 2.0 * std::numbers::pi);
+  state.heading_rad = std::remainder(*state.heading_rad + (k * delta), 2.0 * std::numbers::pi);
+}
+
+Eigen::Matrix2d TrackLocalizer::measurement_cov(const Eigen::Vector2d& pixel,
+                                                double floor_std_m) const {
+  Eigen::Matrix2d cov = floor_std_m * floor_std_m * Eigen::Matrix2d::Identity();
   if (const auto jacobian = ground_jacobian(pixel, image_to_ground_)) {
     const double s = options_.measurement_pixel_std;
     cov += s * s * (*jacobian) * jacobian->transpose();

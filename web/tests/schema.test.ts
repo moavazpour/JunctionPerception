@@ -27,3 +27,15 @@ describe('world-state schema', () => {
     expect(isWorldState({ ...state, events })).toBe(false);
   });
 });
+
+describe('world-state schema additions', () => {
+  it('accepts objects without the measured footprint of older recordings', () => {
+    const state = structuredClone(fixture) as Record<string, unknown>;
+    const objects = structuredClone(state['objects']) as Record<string, unknown>[];
+    for (const o of objects) {
+      delete o['length_m'];
+      delete o['width_m'];
+    }
+    expect(isWorldState({ ...state, objects })).toBe(true);
+  });
+});

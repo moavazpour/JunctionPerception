@@ -14,18 +14,20 @@ constexpr double kPadBias = 0.1;
 
 }  // namespace
 
-Letterbox Letterbox::fit(const cv::Size& image_size, int input_size) {
+Letterbox Letterbox::fit(const cv::Size& image_size, const cv::Size& input_size) {
   Letterbox lb;
-  lb.input_size = input_size;
-  lb.scale = std::min(static_cast<float>(input_size) / static_cast<float>(image_size.width),
-                      static_cast<float>(input_size) / static_cast<float>(image_size.height));
+  lb.input_width = input_size.width;
+  lb.input_height = input_size.height;
+  lb.scale =
+      std::min(static_cast<float>(input_size.width) / static_cast<float>(image_size.width),
+               static_cast<float>(input_size.height) / static_cast<float>(image_size.height));
   lb.resized_width = static_cast<int>(std::lround(static_cast<float>(image_size.width) * lb.scale));
   lb.resized_height =
       static_cast<int>(std::lround(static_cast<float>(image_size.height) * lb.scale));
   lb.pad_left = static_cast<int>(
-      std::lround((static_cast<double>(input_size - lb.resized_width) / 2.0) - kPadBias));
+      std::lround((static_cast<double>(input_size.width - lb.resized_width) / 2.0) - kPadBias));
   lb.pad_top = static_cast<int>(
-      std::lround((static_cast<double>(input_size - lb.resized_height) / 2.0) - kPadBias));
+      std::lround((static_cast<double>(input_size.height - lb.resized_height) / 2.0) - kPadBias));
   return lb;
 }
 
@@ -45,8 +47,13 @@ cv::Rect2f Letterbox::to_image(const cv::Rect2f& input_box, const cv::Size& imag
   return {x1, y1, x2 - x1, y2 - y1};
 }
 
+cv::Point2f Letterbox::to_image(const cv::Point2f& input_point) const {
+  return {(input_point.x - static_cast<float>(pad_left)) / scale,
+          (input_point.y - static_cast<float>(pad_top)) / scale};
+}
+
 cv::Mat Letterbox::apply(const cv::Mat& image) const {
-  cv::Mat canvas(input_size, input_size, image.type(), cv::Scalar::all(kPadValue));
+  cv::Mat canvas(input_height, input_width, image.type(), cv::Scalar::all(kPadValue));
   cv::Mat resized;
   cv::resize(image, resized, cv::Size(resized_width, resized_height), 0.0, 0.0, cv::INTER_LINEAR);
   resized.copyTo(canvas(cv::Rect(pad_left, pad_top, resized_width, resized_height)));
