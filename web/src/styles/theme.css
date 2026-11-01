@@ -809,3 +809,139 @@ input[type='range'] {
   max-width: 420px;
   margin: 0 0 8px;
 }
+
+/* ------------------------------------------------------------------------- day (light) theme */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f3f5f9;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f7fa;
+  --surface-3: #e9edf3;
+  --hover: rgb(30 60 110 / 6%);
+  --border: #e2e7ee;
+  --border-strong: #d0d8e3;
+  --text: #121c2c;
+  --text-2: #475569;
+  --text-3: #7d8aa0;
+
+  --accent: #2378e8;
+  --accent-strong: #1d6bd6;
+  --accent-soft: rgb(35 120 232 / 10%);
+  --cyan: #0ea5c6;
+  --ok: #12a26a;
+  --ok-soft: rgb(18 162 106 / 11%);
+  --warn: #d48806;
+  --warn-soft: rgb(212 136 6 / 12%);
+  --danger: #e5364a;
+  --danger-soft: rgb(229 54 74 / 10%);
+  --violet: #7c5ce6;
+
+  --shadow: 0 1px 2px rgb(16 30 54 / 5%), 0 6px 20px rgb(16 30 54 / 6%);
+  --shadow-float: 0 14px 40px rgb(16 30 54 / 16%);
+  --glass: rgb(255 255 255 / 84%);
+}
+
+:root[data-theme='light'] .btn:hover,
+:root[data-theme='light'] .input:hover,
+:root[data-theme='light'] .choice:hover {
+  border-color: #b8c3d3;
+}
+
+:root[data-theme='light'] .btn.danger {
+  color: var(--danger);
+}
+
+:root[data-theme='light'] .segmented button.active {
+  background: var(--bg-elev);
+  box-shadow: 0 1px 3px rgb(16 30 54 / 14%);
+}
+
+:root[data-theme='light'] .backdrop {
+  background: rgb(20 30 50 / 35%);
+}
+
+:root[data-theme='light'] .sidebar {
+  background: #fbfcfe;
+}
+
+:root[data-theme='light'] .topbar {
+  background: rgb(255 255 255 / 86%);
+}
+
+:root[data-theme='light'] .banner.info {
+  color: var(--accent-strong);
+}
+
+:root[data-theme='light'] .banner.danger,
+:root[data-theme='light'] .site-error {
+  color: var(--danger);
+}
+
+:root[data-theme='light'] .site-thumb {
+  background:
+    radial-gradient(circle at 30% 20%, rgb(35 120 232 / 10%), transparent 60%),
+    repeating-linear-gradient(0deg, transparent 0 23px, rgb(30 60 110 / 6%) 23px 24px),
+    repeating-linear-gradient(90deg, transparent 0 23px, rgb(30 60 110 / 6%) 23px 24px), #eef2f7;
+}
+
+:root[data-theme='light'] .site-thumb .state .pill {
+  background: rgb(255 255 255 / 85%);
+}
+
+:root[data-theme='light'] .save-bar {
+  background: rgb(255 255 255 / 94%);
+}
+
+:root[data-theme='light'] .log-view {
+  background: #fbfcfe;
+}
+
+:root[data-theme='light'] .log-line {
+  color: #263449;
+}
+
+:root[data-theme='light'] .log-line .src {
+  color: var(--accent-strong);
+}
+
+:root[data-theme='light'] .log-line.warning .msg {
+  color: #8a5a00;
+}
+
+:root[data-theme='light'] .log-line.error .msg,
+:root[data-theme='light'] .log-line.critical .msg {
+  color: #b4202f;
+}
+
+:root[data-theme='light'] .twin-stage {
+  background: #dde4ec;
+}
+
+:root[data-theme='light'] .glass {
+  border-color: rgb(30 60 110 / 10%);
+  box-shadow: 0 10px 30px rgb(16 30 54 / 12%);
+}
+
+:root[data-theme='light'] .toolbar .segmented {
+  background: rgb(233 237 243 / 85%);
+}
+
+:root[data-theme='light'] .attribution a {
+  color: rgb(40 55 80 / 75%);
+}
+
+:root[data-theme='light'] .stage-notice {
+  background: rgb(255 240 242 / 95%);
+  color: var(--danger);
+}
+
+:root[data-theme='light'] .calib-sidebar .hint {
+  color: var(--accent-strong);
+}
+
+.theme-toggle .icon {
+  font-size: 17px;
+}

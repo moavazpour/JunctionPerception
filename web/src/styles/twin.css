@@ -75,12 +75,12 @@
 
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
   justify-content: flex-end;
-  max-width: calc(100% - 220px);
+  max-width: calc(100% - 200px);
   padding: 6px 8px 6px 6px;
+  white-space: nowrap;
 }
 
 .toolbar .segmented {
@@ -442,4 +442,33 @@
   .legend {
     display: none;
   }
+}
+
+.align-bar {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px 8px 14px;
+  color: var(--text-2);
+  font-size: 13px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.align-bar > .icon {
+  color: var(--accent);
+  font-size: 17px;
+}
+
+.align-bar .readout {
+  color: var(--text);
+  font-weight: 600;
+}
+
+#twin.aligning {
+  cursor: move;
 }

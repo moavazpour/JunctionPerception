@@ -1,13 +1,17 @@
 import {
   type InputFile,
   type Inputs,
+  type ProbeResult,
+  probeInput,
   type SiteSource,
   SOURCE_LABELS,
   type SourceKind,
   sourceKind,
+  uploadVideo,
 } from '../net/manager';
 import { fill, h } from './dom';
-import { formatBytes } from './format';
+import { toast } from './feedback';
+import { formatBytes, formatDuration } from './format';
 import { icon, type IconName } from './icons';
 
 const KINDS: { kind: SourceKind; icon: IconName; text: string }[] = [
@@ -41,12 +45,104 @@ export function sourceEditor(
   initial: SiteSource,
   inputs: Inputs | null,
   onChange: () => void,
+  /** Called with the size, rate and length of the chosen video or stream once it was opened. */
+  onProbe: (result: ProbeResult) => void = () => undefined,
 ): SourceEditor {
   let kind = sourceKind(initial);
   const values: Record<SourceKind, string> = { file: '', stream: '', replay: '', oracle: '' };
   values[kind] = initial.input;
   const cards = h('div', { class: 'choice-grid' });
   const detail = h('div', { class: 'stack' });
+  const probeLine = h('div', { class: 'probe-line' });
+  let probeTimer = 0;
+  let probeRun = 0;
+
+  /** Opens the chosen video or stream on the server to read its size, after typing stops. */
+  const scheduleProbe = (delayMs = 700): void => {
+    clearTimeout(probeTimer);
+    const value = values[kind];
+    if ((kind !== 'file' && kind !== 'stream') || !value) {
+      fill(probeLine);
+      return;
+    }
+    probeTimer = window.setTimeout(() => {
+      const run = ++probeRun;
+      probeLine.className = 'probe-line';
+      fill(probeLine, h('span', { class: 'spinner' }), 'Opening the video…');
+      probeInput(value)
+        .then((result) => {
+          if (run !== probeRun) {
+            return;
+          }
+          const length =
+            result.frames && result.fps > 0
+              ? ` · ${formatDuration(result.frames / result.fps)}`
+              : '';
+          fill(
+            probeLine,
+            icon('check'),
+            `Detected ${result.width} × ${result.height} px · ${result.fps.toFixed(1)} fps${length}`,
+          );
+          probeLine.className = 'probe-line ok';
+          onProbe(result);
+        })
+        .catch((error: unknown) => {
+          if (run === probeRun) {
+            fill(probeLine, icon('alert'), (error as Error).message);
+            probeLine.className = 'probe-line error';
+          }
+        });
+    }, delayMs);
+  };
+
+  const uploadRow = (): HTMLElement => {
+    const file = h('input', {
+      type: 'file',
+      accept: 'video/*,.mp4,.mov,.mkv,.avi,.m4v',
+      hidden: true,
+    });
+    const bar = h('span', {});
+    const progress = h('div', { class: 'meter', hidden: true }, bar);
+    const button = h(
+      'button',
+      { type: 'button', class: 'btn small' },
+      icon('upload'),
+      'Upload a video',
+    );
+    button.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const chosen = file.files?.[0];
+      if (!chosen) {
+        return;
+      }
+      button.disabled = true;
+      progress.hidden = false;
+      uploadVideo(chosen, (f) => (bar.style.width = `${(f * 100).toFixed(1)}%`))
+        .then(({ path }) => {
+          values.file = path;
+          inputs?.videos.push({ path, size: chosen.size });
+          lists.file.element.append(h('option', { value: path }, formatBytes(chosen.size)));
+          renderDetail();
+          onChange();
+          scheduleProbe(0);
+          toast(`Uploaded ${chosen.name}`, 'ok');
+        })
+        .catch((error: unknown) => toast((error as Error).message, 'error'))
+        .finally(() => {
+          button.disabled = false;
+          progress.hidden = true;
+          file.value = '';
+        });
+    });
+    return h(
+      'div',
+      { class: 'upload-row' },
+      button,
+      h('small', {}, 'or pick a file from your computer; it is copied to the server.'),
+      progress,
+      file,
+    );
+  };
   const lists = {
     file: datalist(inputs?.videos ?? []),
     replay: datalist(inputs?.replays ?? []),
@@ -87,6 +183,7 @@ export function sourceEditor(
     element.addEventListener('input', () => {
       values[kind] = element.value.trim();
       onChange();
+      scheduleProbe();
     });
     return element;
   };
@@ -109,6 +206,8 @@ export function sourceEditor(
               `Path below the data root of the server; pick from the list (${count(inputs?.videos ?? [])}) or type it.`,
             ),
           ),
+          uploadRow(),
+          probeLine,
           lists.file.element,
         );
         break;
@@ -132,6 +231,7 @@ export function sourceEditor(
             icon('info'),
             h('span', {}, 'Live streams have no timeline: pause and seek are not available.'),
           ),
+          probeLine,
         );
         break;
       case 'replay':
@@ -174,6 +274,7 @@ export function sourceEditor(
   const render = (): void => {
     renderCards();
     renderDetail();
+    scheduleProbe(0);
   };
   render();
 
@@ -211,7 +312,7 @@ export const IMAGE_SIZES: { label: string; size: [number, number] }[] = [
 export function imageSizeField(
   initial: [number, number],
   onChange: () => void,
-): { root: HTMLElement; value(): [number, number] } {
+): { root: HTMLElement; value(): [number, number]; set(size: [number, number]): void } {
   const select = h('select', { class: 'input' });
   const preset = IMAGE_SIZES.findIndex((p) => p.size[0] === initial[0] && p.size[1] === initial[1]);
   IMAGE_SIZES.forEach((p, i) =>
@@ -252,10 +353,18 @@ export function imageSizeField(
         { class: 'field' },
         h('span', {}, 'Camera image size'),
         select,
-        h('small', {}, 'Resolution of the video; the calibration refers to it.'),
+        h('small', {}, 'Detected from the video when it is opened; the calibration refers to it.'),
       ),
       custom,
     ),
     value: () => [Number(width.value), Number(height.value)],
+    set: (size) => {
+      const index = IMAGE_SIZES.findIndex((p) => p.size[0] === size[0] && p.size[1] === size[1]);
+      select.value = index >= 0 ? String(index) : 'custom';
+      width.value = String(size[0]);
+      height.value = String(size[1]);
+      custom.hidden = index >= 0;
+      onChange();
+    },
   };
 }

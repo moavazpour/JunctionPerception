@@ -68,6 +68,8 @@ export class OrbitRig {
   private readonly plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   /** True while the user drags; hover feedback is suspended meanwhile. */
   dragging = false;
+  /** False while another tool (map alignment) owns pointer drags; the wheel still zooms. */
+  interactive = true;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -165,6 +167,9 @@ export class OrbitRig {
   }
 
   private onPointerDown(e: PointerEvent): void {
+    if (!this.interactive) {
+      return;
+    }
     const rotate = e.button === 2 || e.shiftKey;
     this.drag = {
       x: e.offsetX,

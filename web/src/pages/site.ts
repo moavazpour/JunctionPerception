@@ -89,7 +89,9 @@ class SettingsForm {
     this.name.value = site.name;
     this.description = h('textarea', { class: 'input', rows: 2, maxlength: 400 });
     this.description.value = site.description;
-    this.source = sourceEditor(site.source, inputs, changed);
+    this.source = sourceEditor(site.source, inputs, changed, (probe) =>
+      this.imageSize.set([probe.width, probe.height]),
+    );
     this.imageSize = imageSizeField(site.image_size_px ?? [1920, 1080], changed);
     this.lat = numberInput(site.geo_anchor?.lat_deg, {
       step: 0.000001,
@@ -287,7 +289,9 @@ class SettingsForm {
             h(
               'p',
               { class: 'help' },
-              'The anchor is the origin of the twin (usually the centre of the intersection or the camera). Map layers: orthophoto and LoD2 buildings (Bavaria), roads and crossings from OpenStreetMap.',
+              site.georeferenced
+                ? 'The anchor is the origin of the twin (usually the centre of the intersection or the camera). Map layers: aerial imagery (Google with an API key, else the Bavarian orthophoto), LoD2 buildings, roads and crossings from OpenStreetMap.'
+                : 'This scene uses a sensor frame (benchmark), so the location only places the map: enter the position of the camera mast, prepare the map, then fine-align it in the live twin with "Align map".',
             ),
             this.mapStatus,
           ),

@@ -1,26 +1,27 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-import { TWIN } from '../twin/palette';
-import type { Building, MapData, Point, Polyline } from './mapData';
+import { twinPalette, type TwinPalette } from '../twin/palette';
+import type { Building, ImageLayer, MapData, Point, Polyline } from './mapData';
 
-/** Colours of the stylized map: dark asphalt, soft markings (see src/twin/palette.ts). */
-export const MAP_PALETTE = {
-  road: TWIN.road,
-  path: TWIN.path,
-  marking: TWIN.marking,
-  building: TWIN.building,
-  buildingEdge: TWIN.buildingEdge,
-} as const;
+/**
+ * Colour role of a map mesh (userData.role): TwinView recolours meshes by role when the theme
+ * changes, so the layers are built once.
+ */
+export type MapRole = 'road' | 'path' | 'marking' | 'building' | 'buildingEdge' | 'image';
 
 const BUILDING_EDGE_OPACITY = 0.55;
 // Edges between faces that meet at less than this angle are not drawn (roof triangulation).
 const BUILDING_EDGE_ANGLE_DEG = 25;
 
-const ROAD_Z = 0.006;
-const PATH_Z = 0.004;
-const MARKING_Z = 0.01;
-const ORTHO_Z = 0.003;
+// Heights of the flat layers above the ground: a few centimetres apart, so they never fight for
+// the same depth even far from the camera.
+export const LAYER_Z = {
+  image: 0.02,
+  path: 0.03,
+  road: 0.04,
+  marking: 0.06,
+} as const;
 const STRIPE_LENGTH_M = 0.5;
 const STRIPE_GAP_M = 0.5;
 
@@ -57,18 +58,19 @@ function zebraGeometry(a: Point, b: Point, width: number): THREE.BufferGeometry[
     const t = (s + STRIPE_LENGTH_M / 2) / length;
     const stripe = new THREE.PlaneGeometry(STRIPE_LENGTH_M, width);
     stripe.rotateZ(Math.atan2(dy, dx));
-    stripe.translate(a[0] + dx * t, a[1] + dy * t, MARKING_Z);
+    stripe.translate(a[0] + dx * t, a[1] + dy * t, LAYER_Z.marking);
     stripes.push(stripe);
   }
   return stripes;
 }
 
-function flatMesh(geometry: THREE.BufferGeometry, color: number): THREE.Mesh {
+function flatMesh(geometry: THREE.BufferGeometry, role: MapRole, color: number): THREE.Mesh {
   const mesh = new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 }),
   );
   mesh.receiveShadow = true;
+  mesh.userData['role'] = role;
   return mesh;
 }
 
@@ -78,7 +80,7 @@ function mergedRibbons(lines: Polyline[], z: number): THREE.BufferGeometry | nul
   return valid.length > 0 ? mergeGeometries(valid) : null;
 }
 
-function buildingMesh(buildings: Building[]): THREE.Group | null {
+function buildingMesh(buildings: Building[], palette: TwinPalette): THREE.Group | null {
   const geometries = buildings
     .filter((b) => b.footprint.length >= 3)
     .map((b) => {
@@ -91,37 +93,36 @@ function buildingMesh(buildings: Building[]): THREE.Group | null {
   const merged = mergeGeometries(geometries.map((g) => g.toNonIndexed()));
   const mesh = new THREE.Mesh(
     merged,
-    new THREE.MeshStandardMaterial({
-      color: MAP_PALETTE.building,
-      roughness: 0.9,
-      metalness: 0.05,
-    }),
+    new THREE.MeshStandardMaterial({ color: palette.building, roughness: 0.9, metalness: 0.05 }),
   );
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  // Outlines give the blocks an architectural look on the dark ground.
+  mesh.userData['role'] = 'building';
+  // Outlines give the blocks an architectural look.
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(merged, BUILDING_EDGE_ANGLE_DEG),
     new THREE.LineBasicMaterial({
-      color: MAP_PALETTE.buildingEdge,
+      color: palette.buildingEdge,
       transparent: true,
       opacity: BUILDING_EDGE_OPACITY,
     }),
   );
+  edges.userData['role'] = 'buildingEdge';
   return new THREE.Group().add(mesh, edges);
 }
 
-/** Stylized map from OSM roads, paths and crossings: dark flat surfaces, light zebras. */
+/** Stylized map from OSM roads, paths and crossings: flat surfaces and zebra stripes. */
 export function buildStylizedLayer(map: MapData): THREE.Group {
+  const palette = twinPalette();
   const group = new THREE.Group();
   if (map.osm) {
-    const roads = mergedRibbons(map.osm.roads, ROAD_Z);
+    const roads = mergedRibbons(map.osm.roads, LAYER_Z.road);
     if (roads) {
-      group.add(flatMesh(roads, MAP_PALETTE.road));
+      group.add(flatMesh(roads, 'road', palette.road));
     }
-    const paths = mergedRibbons(map.osm.paths, PATH_Z);
+    const paths = mergedRibbons(map.osm.paths, LAYER_Z.path);
     if (paths) {
-      group.add(flatMesh(paths, MAP_PALETTE.path));
+      group.add(flatMesh(paths, 'path', palette.path));
     }
     const stripes = map.osm.crossings.flatMap((c) =>
       c.kind === 'way' && c.points && c.points.length >= 2
@@ -129,7 +130,7 @@ export function buildStylizedLayer(map: MapData): THREE.Group {
         : [],
     );
     if (stripes.length > 0) {
-      const zebras = flatMesh(mergeGeometries(stripes), MAP_PALETTE.marking);
+      const zebras = flatMesh(mergeGeometries(stripes), 'marking', palette.marking);
       Object.assign(zebras.material, { transparent: true, opacity: 0.75 });
       group.add(zebras);
     }
@@ -137,43 +138,63 @@ export function buildStylizedLayer(map: MapData): THREE.Group {
   return group;
 }
 
-/** LoD2 buildings as dark extruded blocks with outlined edges. */
+/** LoD2 buildings as extruded blocks with outlined edges. */
 export function buildBuildingLayer(map: MapData): THREE.Group {
   const group = new THREE.Group();
-  const mesh = buildingMesh(map.buildings);
+  const mesh = buildingMesh(map.buildings, twinPalette());
   if (mesh) {
     group.add(mesh);
   }
   return group;
 }
 
-/** Orthophoto on a quad through its four world corners. */
-export function buildOrthoLayer(map: MapData): THREE.Mesh | null {
-  if (!map.ortho) {
+/** A georeferenced image (aerial photo, road map) on a quad through its four world corners. */
+export function buildImageLayer(map: MapData, layer: ImageLayer | null): THREE.Mesh | null {
+  if (!layer) {
     return null;
   }
-  const [tl, tr, br, bl] = map.ortho.corners;
+  const [tl, tr, br, bl] = layer.corners;
+  const z = LAYER_Z.image;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     'position',
-    new THREE.Float32BufferAttribute(
-      [...tl, ORTHO_Z, ...tr, ORTHO_Z, ...br, ORTHO_Z, ...bl, ORTHO_Z],
-      3,
-    ),
+    new THREE.Float32BufferAttribute([...tl, z, ...tr, z, ...br, z, ...bl, z], 3),
   );
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2));
   geometry.setIndex([0, 3, 1, 1, 3, 2]);
   geometry.computeVertexNormals();
-  const texture = new THREE.TextureLoader().load(map.base + map.ortho.image);
+  const texture = new THREE.TextureLoader().load(map.base + layer.image);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
-  // Slightly dimmed and without tone mapping, so the photo keeps its colours in the dark twin.
+  // Without tone mapping, so the image keeps its colours; tinted per theme.
   const mesh = new THREE.Mesh(
     geometry,
-    new THREE.MeshBasicMaterial({ map: texture, color: 0xd2d8e2, toneMapped: false }),
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      color: twinPalette().imageTint,
+      toneMapped: false,
+    }),
   );
-  mesh.receiveShadow = false;
+  mesh.userData['role'] = 'image';
   return mesh;
+}
+
+/** Applies the colours of a palette to map meshes built above (by their role). */
+export function recolorMap(root: THREE.Object3D, palette: TwinPalette): void {
+  const colors: Record<MapRole, number> = {
+    road: palette.road,
+    path: palette.path,
+    marking: palette.marking,
+    building: palette.building,
+    buildingEdge: palette.buildingEdge,
+    image: palette.imageTint,
+  };
+  root.traverse((child) => {
+    const role = child.userData['role'] as MapRole | undefined;
+    if (role && (child instanceof THREE.Mesh || child instanceof THREE.LineSegments)) {
+      (child.material as THREE.MeshStandardMaterial).color.setHex(colors[role]);
+    }
+  });
 }
 
 /** Attribution lines of the layers in use, e.g. "© OpenStreetMap contributors (ODbL 1.0)". */

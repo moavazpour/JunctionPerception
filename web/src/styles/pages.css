@@ -788,3 +788,39 @@
 .site-metrics strong {
   white-space: nowrap;
 }
+
+.upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.upload-row small {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.upload-row .meter {
+  flex: 1 1 100%;
+}
+
+.probe-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.probe-line:empty {
+  display: none;
+}
+
+.probe-line.ok {
+  color: var(--ok);
+}
+
+.probe-line.error {
+  color: var(--danger);
+}

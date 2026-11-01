@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { ClassInfo } from '../net/client';
-import { classColor, TWIN } from './palette';
+import { classColor, twinPalette } from './palette';
 
 /** Opacity of objects outside the validated region: tracked and shown, but not evaluated. */
 export const UNVALIDATED_OPACITY = 0.3;
@@ -26,7 +26,7 @@ export function makeMaterials(className: string, look: ObjectLook): ObjectMateri
     : { transparent: true, opacity: UNVALIDATED_OPACITY, depthWrite: false };
   const color = new THREE.Color(classColor(className));
   const emissive = look.conflict
-    ? new THREE.Color(TWIN.conflict)
+    ? new THREE.Color(twinPalette().conflict)
     : look.highlighted
       ? color.clone()
       : new THREE.Color(0x000000);
@@ -165,9 +165,9 @@ export function buildContactShadow(info: ClassInfo): THREE.Mesh {
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.5, 24),
     new THREE.MeshBasicMaterial({
-      color: TWIN.shadow,
+      color: twinPalette().shadow,
       transparent: true,
-      opacity: 0.35,
+      opacity: twinPalette().shadowOpacity,
       depthWrite: false,
     }),
   );
@@ -198,7 +198,7 @@ export function buildConflictHalo(info: ClassInfo): THREE.Mesh {
   const halo = new THREE.Mesh(
     new THREE.RingGeometry(radius * 0.55, radius, 48),
     new THREE.MeshBasicMaterial({
-      color: TWIN.conflict,
+      color: twinPalette().conflict,
       transparent: true,
       opacity: 0.45,
       depthWrite: false,
@@ -206,6 +206,55 @@ export function buildConflictHalo(info: ClassInfo): THREE.Mesh {
   );
   halo.position.z = 0.04;
   return halo;
+}
+
+/** Ring under the road user the pointer is on. */
+export function buildSelectionRing(info: ClassInfo): THREE.Mesh {
+  const radius = Math.max(info.length_m, info.width_m) * 0.7 + 1.1;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(radius * 0.9, radius, 48),
+    new THREE.MeshBasicMaterial({
+      color: twinPalette().cameraView,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+    }),
+  );
+  ring.position.z = 0.05;
+  return ring;
+}
+
+/**
+ * Fades an object in or out: `fade` (0..1) multiplies the opacity each material was built with.
+ * Fully visible objects draw opaque again, so they sort and shadow normally.
+ */
+export function setFade(object: THREE.Object3D, fade: number): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+    const materials: THREE.Material[] = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
+    for (const material of materials) {
+      const data = material.userData as { baseOpacity?: number; baseTransparent?: boolean };
+      if (data.baseOpacity === undefined) {
+        data.baseOpacity = material.opacity;
+        data.baseTransparent = material.transparent;
+      }
+      const transparent = fade < 1 || data.baseTransparent === true;
+      if (material.transparent !== transparent) {
+        material.transparent = transparent;
+        material.needsUpdate = true;
+      }
+      material.opacity = data.baseOpacity * fade;
+      material.depthWrite = !transparent;
+    }
+    if (child.userData['baseCastShadow'] === undefined) {
+      child.userData['baseCastShadow'] = child.castShadow;
+    }
+    child.castShadow = child.userData['baseCastShadow'] === true && fade > 0.5;
+  });
 }
 
 /** Releases the GPU resources of an object and its children. */

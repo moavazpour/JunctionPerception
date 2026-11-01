@@ -1,4 +1,5 @@
 /** Client of the site manager (manager/jp_manager.py): sites, processes, logs and the host. */
+import type { MapTransform } from '../twin/twinView';
 import type { ServerStatus } from './client';
 
 export type SourceMode = 'live' | 'oracle' | 'replay';
@@ -43,8 +44,13 @@ export interface Site {
   enabled: boolean;
   kind: string;
   image_size_px: [number, number] | null;
+  /** Geographic position: the geo anchor, or for sensor-frame scenes the anchor of the map. */
   geo_anchor: GeoAnchor | null;
+  /** World frame is east-north-up at the geo anchor (false: a sensor frame, e.g. benchmark). */
+  georeferenced: boolean;
   map_radius_m: number | null;
+  /** Placement of the map in a sensor-frame scene, aligned in the twin. */
+  map_transform: MapTransform | null;
   calibrated: boolean;
   has_map: boolean;
   zones: boolean;
@@ -63,6 +69,7 @@ export interface SitePatch {
   image_size_px?: [number, number];
   geo_anchor?: GeoAnchor | null;
   map_radius_m?: number;
+  map_transform?: MapTransform;
 }
 
 export interface NewSite extends SitePatch {
@@ -230,3 +237,47 @@ export const SOURCE_LABELS: Record<SourceKind, string> = {
   oracle: 'Benchmark labels',
   replay: 'Recorded replay',
 };
+
+/** What jp_server --probe reports about a video or stream. */
+export interface ProbeResult {
+  width: number;
+  height: number;
+  fps: number;
+  frames: number | null;
+}
+
+export const probeInput = (input: string): Promise<ProbeResult> =>
+  request('GET', `/probe?${new URLSearchParams({ input })}`);
+
+/** Uploads a video below the data root; reports the sent fraction (0..1) while uploading. */
+export function uploadVideo(
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<{ path: string; size: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/videos`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(e.loaded / e.total);
+      }
+    };
+    xhr.onload = () => {
+      let body: { path?: string; size?: number; error?: string } = {};
+      try {
+        body = JSON.parse(xhr.responseText) as typeof body;
+      } catch {
+        // Fall through to the status check.
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body.path) {
+        resolve({ path: body.path, size: body.size ?? file.size });
+      } else {
+        reject(new Error(body.error ?? `upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('upload failed: connection lost'));
+    const form = new FormData();
+    form.append('file', file);
+    xhr.send(form);
+  });
+}

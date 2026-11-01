@@ -13,7 +13,16 @@ import {
   saveCalibration,
   saveZones,
 } from '../net/calibrationApi';
-import { fetchScene, type SceneDescription, setSite, siteUrl } from '../net/client';
+import {
+  fetchScene,
+  fetchStatus,
+  type SceneDescription,
+  sendPlayback,
+  setSite,
+  siteUrl,
+  subscribeVideo,
+} from '../net/client';
+import { getSite, siteAction } from '../net/manager';
 import { h, param } from '../ui/dom';
 import { toast } from '../ui/feedback';
 import { icon } from '../ui/icons';
@@ -172,7 +181,8 @@ class CalibrationApp {
     }
   }
 
-  private loadFrame(): void {
+  /** Loads the latest camera frame of the site. */
+  loadFrame(): void {
     this.image.onload = () => {
       const canvas = this.imageCanvas.canvas;
       this.imageCanvas.view.fit(
@@ -185,7 +195,7 @@ class CalibrationApp {
       );
       this.imageCanvas.redraw();
     };
-    this.image.onerror = () => this.message('No camera image yet: start playback in the twin.');
+    this.image.onerror = () => this.message('Waiting for the first camera frame…');
     this.image.src = siteUrl(`/api/frame?t=${Date.now()}`);
   }
 
@@ -655,6 +665,29 @@ function layout(): HTMLElement {
   );
 }
 
+/**
+ * The calibration needs a current camera frame: keep the site's camera images flowing (the
+ * server encodes frames only for viewers) and resume paused playback.
+ */
+async function ensureFrames(onFirstFrame: () => void): Promise<void> {
+  let first = true;
+  subscribeVideo(() => {
+    if (first) {
+      first = false;
+      onFirstFrame();
+    }
+  });
+  try {
+    const status = await fetchStatus();
+    if (status.playing === false) {
+      await sendPlayback({ action: 'play' });
+      toast('Playback resumed to get a camera frame.', 'info');
+    }
+  } catch {
+    // The site reports its status once it runs; the frame arrives with the first image.
+  }
+}
+
 async function start(): Promise<void> {
   const siteId = param('site');
   const shell = await mountShell({
@@ -673,22 +706,32 @@ async function start(): Promise<void> {
       h('a', { class: 'btn small', href: links.twin(siteId) }, icon('twin'), 'Live twin'),
       h('a', { class: 'btn small', href: links.settings(siteId) }, icon('settings'), 'Settings'),
     );
+    const site = await getSite(siteId).catch(() => null);
+    if (site && !site.enabled) {
+      await siteAction(siteId, 'start')
+        .then(() => toast(`${site.name} is starting for the calibration.`, 'info'))
+        .catch((error: unknown) => toast((error as Error).message, 'error'));
+    }
     await waitForSite(shell.content, siteId, 'calibrate it against the camera image');
   }
   shell.content.append(layout());
   const scene = await fetchScene();
   element('#scene-id').textContent = ` · ${scene.image_size_px[0]} × ${scene.image_size_px[1]} px`;
   if (!scene.map || !scene.geo_anchor) {
-    const text = siteId
-      ? 'This site has no geographic anchor or map layers yet: set its location and prepare the map under Settings.'
-      : 'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
+    const text =
+      scene.kind === 'benchmark'
+        ? 'Benchmark scenes are calibrated from their labels. To show the map, set the location under Settings, prepare the map and align it in the live twin.'
+        : siteId
+          ? 'This site has no geographic anchor or map layers yet: set its location and prepare the map under Settings.'
+          : 'This scene has no geo anchor or map layers; run tools/prepare_map_data.py for it first.';
     element('#message').textContent = text;
     toast(text, 'error');
     return;
   }
-  element('#map-note').textContent = ' · orthophoto, OpenStreetMap roads';
+  element('#map-note').textContent = ' · aerial image, OpenStreetMap roads';
   const app = new CalibrationApp(scene, await loadMapData(siteUrl(scene.map)));
   await app.start();
+  await ensureFrames(() => app.loadFrame());
 }
 
 void start();

@@ -4,6 +4,7 @@ import '../styles/shell.css';
 import { listSites, managerAvailable, type Site, siteState, systemInfo } from '../net/manager';
 import { type Child, fill, h } from './dom';
 import { brandMark, icon, type IconName } from './icons';
+import { currentTheme, setTheme } from './theme';
 
 export type Page =
   | 'overview'
@@ -68,6 +69,20 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
   const actions = h('div', { class: 'topbar-actions' });
   const content = h('main', { class: `content${options.fullBleed ? ' full' : ''}` });
   const crumbs = h('div', { class: 'crumbs' });
+  const themeButton = h('button', {
+    type: 'button',
+    class: 'btn ghost small icon-only theme-toggle',
+  });
+  const renderThemeButton = (): void => {
+    const light = currentTheme() === 'light';
+    fill(themeButton, icon(light ? 'moon' : 'sun'));
+    themeButton.title = light ? 'Night mode' : 'Day mode';
+  };
+  themeButton.addEventListener('click', () => {
+    setTheme(currentTheme() === 'light' ? 'dark' : 'light');
+    renderThemeButton();
+  });
+  renderThemeButton();
 
   const app = h(
     'div',
@@ -89,7 +104,12 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
       nav,
       footer,
     ),
-    h('div', { class: 'main' }, h('header', { class: 'topbar' }, crumbs, actions), content),
+    h(
+      'div',
+      { class: 'main' },
+      h('header', { class: 'topbar' }, crumbs, actions, themeButton),
+      content,
+    ),
   );
   document.body.replaceChildren(app);
 

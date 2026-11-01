@@ -51,7 +51,12 @@ async function start(): Promise<void> {
     }
   });
   id.addEventListener('input', () => (idEdited = id.value !== ''));
-  const source = sourceEditor({ mode: 'live', input: '' }, inputs, () => undefined);
+  const source = sourceEditor(
+    { mode: 'live', input: '' },
+    inputs,
+    () => undefined,
+    (probe) => imageSize.set([probe.width, probe.height]),
+  );
   const imageSize = imageSizeField([1920, 1080], () => undefined);
   const lat = h('input', {
     class: 'input num',

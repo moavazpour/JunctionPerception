@@ -1,6 +1,6 @@
 import '../styles/twin.css';
 
-import { loadMapData } from '../map/mapData';
+import { loadMapData, type MapData } from '../map/mapData';
 import { attributionLines } from '../map/mapLayers';
 import {
   fetchScene,
@@ -10,17 +10,21 @@ import {
   subscribeVideo,
   subscribeWorld,
 } from '../net/client';
-
-import { CLASS_LABELS } from '../twin/palette';
-import { type BaseLayer, TwinView } from '../twin/twinView';
+import { getSite, type Site, updateSite } from '../net/manager';
 import type { ViewMode } from '../twin/orbitRig';
+import { CLASS_LABELS } from '../twin/palette';
+import { type BaseLayer, type MapTransform, TwinView } from '../twin/twinView';
 import { fill, h, param, segmented, toggle } from '../ui/dom';
-import { waitForSite } from '../ui/siteGate';
+import { toast, withBusy } from '../ui/feedback';
 import { icon } from '../ui/icons';
 import { links, mountShell } from '../ui/shell';
 import { SidePanel } from '../ui/sidePanel';
+import { waitForSite } from '../ui/siteGate';
+import { currentTheme, onThemeChange } from '../ui/theme';
 
 const STATUS_INTERVAL_MS = 1000;
+// Status requests that may fail in a row before the site counts as unreachable.
+const MISSED_STATUS_LIMIT = 3;
 
 function layout(): HTMLElement {
   return h(
@@ -32,6 +36,7 @@ function layout(): HTMLElement {
       h('canvas', { id: 'twin' }),
       h('div', { class: 'hud hud-tl' }, h('div', { id: 'live-chip', class: 'glass chip' })),
       h('div', { id: 'view-controls', class: 'hud hud-tr glass toolbar' }),
+      h('div', { id: 'align-bar', class: 'align-bar glass', hidden: true }),
       h('div', { id: 'legend', class: 'hud hud-bl glass legend' }),
       h('div', { id: 'tooltip', class: 'tooltip glass', hidden: true }),
       h('p', { id: 'attribution', class: 'attribution' }),
@@ -91,7 +96,7 @@ function layout(): HTMLElement {
   );
 }
 
-function setupControls(view: TwinView, hasOrtho: boolean, hasMap: boolean): void {
+function setupControls(view: TwinView, map: MapData | null, site: Site | null): void {
   const controls = document.querySelector<HTMLElement>('#view-controls');
   if (!controls) {
     return;
@@ -104,20 +109,23 @@ function setupControls(view: TwinView, hasOrtho: boolean, hasMap: boolean): void
     '3d',
     (value) => view.setViewMode(value),
   );
-  const layer = segmented<BaseLayer>(
-    [
-      { value: 'map', label: 'Map', icon: icon('map') },
-      { value: 'ortho', label: 'Aerial', icon: icon('image'), disabled: !hasOrtho },
-    ],
-    'map',
-    (value) => view.showLayer(value),
-  );
+  const layers: { value: BaseLayer; label: string; icon: Node; disabled?: boolean }[] = [
+    { value: 'map', label: 'Map', icon: icon('map') },
+    { value: 'ortho', label: 'Aerial', icon: icon('image'), disabled: !map?.ortho },
+  ];
+  if (map?.roadmap) {
+    layers.push({ value: 'roadmap', label: 'Road map', icon: icon('route') });
+  }
+  const layer = segmented<BaseLayer>(layers, 'map', (value) => view.showLayer(value));
+  // Sensor-frame scenes (benchmark) place their map by hand.
+  const canAlign = map !== null && site !== null && !site.georeferenced;
   fill(
     controls,
     mode.root,
-    hasMap ? layer.root : null,
-    hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
+    map ? layer.root : null,
+    map ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
+    canAlign && site ? alignButton(view, site) : null,
     h(
       'button',
       {
@@ -129,6 +137,60 @@ function setupControls(view: TwinView, hasOrtho: boolean, hasMap: boolean): void
       icon('recenter'),
     ),
   );
+}
+
+/** "Align map": drag the map onto the road users, then save its placement for the site. */
+function alignButton(view: TwinView, site: Site): HTMLElement {
+  const button = h('button', { type: 'button', class: 'btn small' }, icon('align'), 'Align map');
+  const bar = document.querySelector<HTMLElement>('#align-bar');
+  if (!bar) {
+    return button;
+  }
+  const readout = h('span', { class: 'num readout' });
+  const show = (t: MapTransform): void => {
+    readout.textContent = `${t.yaw_deg.toFixed(1)}° · ${t.x_m.toFixed(1)} m, ${t.y_m.toFixed(1)} m`;
+  };
+  let before = view.mapTransform;
+  const finish = (): void => {
+    view.setAlignMode(false);
+    bar.hidden = true;
+    button.disabled = false;
+  };
+  const save = h('button', { type: 'button', class: 'btn small primary' }, icon('check'), 'Save');
+  save.addEventListener('click', () => {
+    void withBusy(
+      save,
+      () => updateSite(site.id, { map_transform: view.mapTransform }),
+      'Map placement saved',
+    ).then((saved) => {
+      if (saved) {
+        finish();
+      }
+    });
+  });
+  const cancel = h('button', { type: 'button', class: 'btn small ghost' }, 'Cancel');
+  cancel.addEventListener('click', () => {
+    view.setMapTransform(before);
+    finish();
+  });
+  fill(
+    bar,
+    icon('align'),
+    h('span', {}, 'Drag to move the map, right-drag or shift-drag to rotate it, wheel to zoom.'),
+    readout,
+    cancel,
+    save,
+  );
+  view.onMapTransform = show;
+  button.addEventListener('click', () => {
+    before = view.mapTransform;
+    show(before);
+    view.setAlignMode(true);
+    bar.hidden = false;
+    button.disabled = true;
+    toast('Tip: switch to Aerial and match the roads to the moving road users.', 'info');
+  });
+  return button;
 }
 
 function setupTooltip(view: TwinView, panel: SidePanel): void {
@@ -171,6 +233,7 @@ async function start(): Promise<void> {
     return;
   }
   setSite(shell.managed ? siteId : null);
+  let site: Site | null = null;
   if (shell.managed && siteId) {
     shell.setActions(
       h(
@@ -182,6 +245,7 @@ async function start(): Promise<void> {
       h('a', { class: 'btn small', href: links.settings(siteId) }, icon('settings'), 'Settings'),
     );
     await waitForSite(shell.content, siteId, 'see the live digital twin');
+    site = await getSite(siteId).catch(() => null);
   }
 
   shell.content.append(layout());
@@ -191,14 +255,20 @@ async function start(): Promise<void> {
   }
   const scene = await fetchScene();
   shell.setTitle('Live twin');
-  const view = new TwinView(canvas, scene);
+  const view = new TwinView(canvas, scene, {
+    siteKey: siteId ?? scene.scene_id,
+    theme: currentTheme(),
+  });
+  onThemeChange((theme) => view.setTheme(theme));
   const panel = new SidePanel();
   setupTooltip(view, panel);
-  let hasOrtho = false;
+  let map: MapData | null = null;
   if (scene.map) {
-    const map = await loadMapData(siteUrl(scene.map));
+    map = await loadMapData(siteUrl(scene.map));
     view.setMap(map);
-    hasOrtho = map.ortho !== null;
+    if (site?.map_transform) {
+      view.setMapTransform(site.map_transform);
+    }
     const attribution = document.querySelector<HTMLElement>('#attribution');
     attribution?.replaceChildren(
       ...attributionLines(map).map(({ text, url }) =>
@@ -206,26 +276,32 @@ async function start(): Promise<void> {
       ),
     );
   }
-  setupControls(view, hasOrtho, scene.map !== null);
+  setupControls(view, map, site);
 
-  let connected = false;
+  // The world socket reconnects quietly while playback is paused (no messages arrive then);
+  // whether the site is reachable comes from the status requests.
   subscribeWorld(
     (state) => {
       view.push(state);
       panel.showState(state);
     },
-    (isConnected) => (connected = isConnected),
+    () => undefined,
   );
   subscribeVideo((frame) => panel.showVideo(frame));
 
+  let missed = 0;
   const refreshStatus = async (): Promise<void> => {
     try {
-      panel.showStatus(await fetchStatus(), connected);
+      const status = await fetchStatus();
+      missed = 0;
+      panel.showStatus(status, true);
     } catch {
-      panel.showStatus(
-        { scene_id: scene.scene_id, source: '', frame_count: 0, seekable: false },
-        false,
-      );
+      if (++missed >= MISSED_STATUS_LIMIT) {
+        panel.showStatus(
+          { scene_id: scene.scene_id, source: '', frame_count: 0, seekable: false },
+          false,
+        );
+      }
     }
   };
   await refreshStatus();

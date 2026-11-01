@@ -12,11 +12,17 @@ export interface Attribution {
 export interface MapManifest {
   scene_id: string;
   radius_m: number;
-  layers: { ortho?: { file: string }; osm?: { file: string }; buildings?: { file: string } };
+  layers: {
+    ortho?: { file: string };
+    roadmap?: { file: string };
+    osm?: { file: string };
+    buildings?: { file: string };
+  };
   attribution: Record<string, Attribution>;
 }
 
-export interface OrthoLayer {
+/** A georeferenced image: aerial photo (ortho) or road map. */
+export interface ImageLayer {
   image: string;
   /** World positions of the image corners: top-left, top-right, bottom-right, bottom-left. */
   corners: [Point, Point, Point, Point];
@@ -27,6 +33,8 @@ export interface Polyline {
   highway: string;
   width_m: number;
   points: Point[];
+  /** Roads only: one-way in the direction of the points. */
+  oneway?: boolean;
 }
 
 export interface Crossing {
@@ -53,7 +61,8 @@ export interface Building {
 export interface MapData {
   base: string;
   manifest: MapManifest;
-  ortho: OrthoLayer | null;
+  ortho: ImageLayer | null;
+  roadmap: ImageLayer | null;
   osm: OsmLayer | null;
   buildings: Building[];
 }
@@ -70,11 +79,12 @@ async function getJson<T>(url: string): Promise<T> {
 export async function loadMapData(manifestUrl: string): Promise<MapData> {
   const base = manifestUrl.slice(0, manifestUrl.lastIndexOf('/') + 1);
   const manifest = await getJson<MapManifest>(manifestUrl);
-  const { ortho, osm, buildings } = manifest.layers;
+  const { ortho, roadmap, osm, buildings } = manifest.layers;
   return {
     base,
     manifest,
-    ortho: ortho ? await getJson<OrthoLayer>(base + ortho.file) : null,
+    ortho: ortho ? await getJson<ImageLayer>(base + ortho.file) : null,
+    roadmap: roadmap ? await getJson<ImageLayer>(base + roadmap.file) : null,
     osm: osm ? await getJson<OsmLayer>(base + osm.file) : null,
     buildings: buildings
       ? (await getJson<{ buildings: Building[] }>(base + buildings.file)).buildings

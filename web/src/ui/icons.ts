@@ -55,6 +55,11 @@ const PATHS = {
   image:
     '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
+  upload: '<path d="M12 16V5M7 9.5l5-5 5 5M5 20h14"/>',
+  align:
+    '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M8.5 8.5 6 6M15.5 15.5 18 18"/><circle cx="12" cy="12" r="3"/>',
   wizard:
     '<path d="m4 20 11-11M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 11l.6 1.4L21 13l-1.4.6L19 15l-.6-1.4L17 13l1.4-.6z"/>',
 } as const;
