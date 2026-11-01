@@ -135,26 +135,45 @@ seek.
 ## Site manager and console
 
 `manager/jp_manager.py` (Python, aiohttp; `configs/manager.yaml`) is the always-on service behind
-the web console. A site is a scene folder plus `scenes/<id>/site.yaml` (name, camera source,
-playback, video stream, active or not), edited in the console and kept out of git. The manager runs
-one `jp_server` per active site on a local port with a generated server config, restarts servers
-that exit (a calibration "apply" exits on purpose; crashes back off up to 30 s), keeps their output
-as logs and proxies each site under `/sites/<id>/` (HTTP and WebSockets). Stopping the backend stops
+the web console. A site is one intersection with up to four cameras:
+
+```text
+scenes/<site>/scene.yaml                world frame: east-north-up at the intersection centre
+                                        (geo_anchor), map radius
+scenes/<site>/zones.geojson             zones, shared by all cameras of the site
+scenes/<site>/site.yaml                 console settings: name, active, per camera its source,
+                                        playback and video stream (kept out of git)
+scenes/<site>/cameras/<camera>/         camera.yaml (name, approach: the arm it watches, image
+                                        size) and the camera's calibration
+```
+
+Every camera has its own calibration into the shared world frame, so the road users of all cameras
+meet in one twin of the intersection. Older single-camera scene folders (calibration next to
+`scene.yaml`, e.g. the benchmark scenes) are sites with one camera; a console-made one becomes an
+intersection when a camera is added. The manager runs one `jp_server` per active camera on a local
+port with a generated server config (at most `max_running` at once), restarts servers that exit (a
+calibration "apply" exits on purpose; crashes back off up to 30 s), keeps their output as logs
+(source `<site>/<camera>`) and proxies each camera under `/sites/<id>/cameras/<camera>/` (HTTP and
+WebSockets). Stopping the backend stops
 all servers but keeps the console; the state survives restarts (`.cache/manager/state.json`).
 
 | Endpoint | Description |
 |---|---|
-| `GET /manager/api/sites` | Sites with settings, process state and live status |
-| `POST /manager/api/sites` | Creates a site (scene folder, `site.yaml`, optionally its map layers) |
-| `PATCH`, `DELETE /manager/api/sites/<id>` | Changes a site (restarts it if running); moves it to the trash |
-| `POST /manager/api/sites/<id>/<action>` | `start`, `stop`, `restart`, `prepare-map` |
+| `GET /manager/api/sites` | Sites with their cameras, settings, process state and live status |
+| `POST /manager/api/sites` | Creates an intersection (scene folder, cameras, `site.yaml`, optionally its map layers) |
+| `PATCH`, `DELETE /manager/api/sites/<id>` | Name, location, map area or placement; moves the site to the trash |
+| `POST /manager/api/sites/<id>/<action>` | `start`, `stop`, `restart` (all cameras), `prepare-map` |
+| `POST /manager/api/sites/<id>/cameras` | Adds a camera |
+| `PATCH`, `DELETE /manager/api/sites/<id>/cameras/<camera>` | Changes a camera (restarts it if running); moves it to the trash |
+| `POST /manager/api/sites/<id>/cameras/<camera>/<action>` | `start`, `stop`, `restart` |
 | `GET /manager/api/system` | Version, backend state, CPU, memory, disk, GPUs (`nvidia-smi`) |
 | `POST /manager/api/system/<action>` | `start-backend`, `stop-backend`, `restart-backend`, `restart-manager` |
 | `GET /manager/api/inputs` | Videos and sequences below the data root, recorded replays |
 | `GET /manager/api/probe?input=` | Image size, frame rate and length of a video or stream (`jp_server --probe`) |
 | `POST /manager/api/videos` | Uploads a video (multipart `file`) to `<data root>/uploads` |
 | `GET /manager/api/logs`, `/logs/stream` | Recent log lines of the manager or a site; live as server-sent events |
-| `* /sites/<id>/...` | The site's server (the endpoints above); `/sites/<id>/map/...` also while stopped |
+| `* /sites/<id>/cameras/<camera>/...` | The camera's server (the endpoints above) |
+| `* /sites/<id>/map/...` | Map layers of the site, also while it is stopped |
 
 The console (`web/`) has one page per view sharing a sidebar: overview, live twin, calibration,
 site settings, new site, system and logs, in a night or day theme. It has no authentication:
@@ -165,6 +184,13 @@ publish it on a trusted network only.
 LiDAR of TUMTraf); their location is stored as `map.anchor`, the map is built around it and placed
 in the scene by `map.transform` (yaw and offset, `scene = R(yaw) · map + t`), adjusted in the twin
 with *Align map*. The default yaw of the TUMTraf scenes follows from the label poses.
+
+**The twin of all sites.** The twin page draws every site with a location at its geographic
+position (east and north of the first site), each with its map, zones and camera masts; the picker
+flies between the intersections. Where the views of an intersection's cameras overlap, close tracks
+of different cameras of the same kind that move alike are merged into one road user (gates 3 m for
+vehicles, 1.5 m for VRUs, kept up to 1.6 times that once matched); a merged road user keeps its key
+while any camera still sees it, so hand-overs between cameras neither flicker nor jump.
 
 **Road users in the twin.** New tracks fade in and leaving ones fade out while moving on. They
 enter facing the direction of traffic learned per grid cell from earlier vehicle tracks (kept per

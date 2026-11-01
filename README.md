@@ -133,21 +133,25 @@ python tools/export_yolo26.py --variant yolo26s --imgsz 1280   # -> models/yolo2
 ```
 
 **Start the console.** The site manager serves the web console and runs one twin server per active
-site (`scenes/<name>/`); the first start runs the scene of `configs/server.yaml`:
+camera; a site is one intersection (`scenes/<name>/`) with up to four cameras. The first start runs
+the scene of `configs/server.yaml`:
 
 ```bash
 JP_SERVER_ADDRESS=<LAN address> JP_DATA_ROOT=<video folder> scripts/run_manager.sh
 ```
 
-The console is at `http://<LAN address>:8080/`, bound to that address only. It shows every site
-with its live camera image and counters, the 3D twin of each site (top-down or tilted), and the
+The console is at `http://<LAN address>:8080/`, bound to that address only. It shows every
+intersection with the live images and counters of its cameras, one 3D twin of all sites at their
+real positions (top-down or tilted; overlapping cameras merged), and the
 system page with start, stop and restart of the backend, host and GPU load, and the logs of every
 server.
 
-**Add and calibrate an intersection.** In the console, *New site* asks for the camera source (a
-video uploaded from the browser or already below the data root, an RTSP/HTTP stream, or a
-recording; the image size is read from it) and the geographic anchor, and downloads the map layers.
-Then open the site's *Calibration* (it starts the site and playback if needed): click at least
+**Add and calibrate an intersection.** In the console, *New site* asks for the centre of the
+intersection (latitude, longitude; the map layers are downloaded for 200 m around it) and its one to
+four cameras: for each, the arm it watches and its source (a video uploaded from the browser or
+already below the data root, an RTSP/HTTP stream, or a recording; the image size is read from it).
+Then calibrate each camera in *Calibration* (it starts the camera and playback if needed): click at
+least
 eight points in the camera image and the same points on the aerial image, check the residuals, set
 the camera position if the points cannot constrain it, draw the zones, save and apply. Details:
 [docs/map-data.md](docs/map-data.md). A single scene can still be served without the console:
