@@ -18,7 +18,13 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     gpu_args=(--gpus all)
 fi
 
-mkdir -p "${repo_root}/.cache/manager"
+mkdir -p "${repo_root}/.cache/manager" "${JP_DATA_ROOT}/uploads"
+# Videos uploaded in the console go to the only writable folder of the data root; the key of the
+# Google Map Tiles API (optional) enables Google imagery for the map layers.
+extra_args=(-v "${JP_DATA_ROOT}/uploads:/data/uploads")
+if [[ -n "${GOOGLE_MAPS_API_KEY:-}" ]]; then
+    extra_args+=(-e GOOGLE_MAPS_API_KEY)
+fi
 docker rm -f jp-server "${name}" >/dev/null 2>&1 || true
 docker run -d --name "${name}" --restart unless-stopped \
     --user "$(id -u):$(id -g)" \
@@ -27,6 +33,7 @@ docker run -d --name "${name}" --restart unless-stopped \
     -v "${repo_root}:/workspace" \
     -v "${repo_root}/.cache:/cache" \
     -v "${JP_DATA_ROOT}:/data:ro" -e JP_DATA_ROOT=/data \
+    "${extra_args[@]}" \
     -w /workspace \
     "${image}" python3 -u manager/jp_manager.py "$@" >/dev/null
 echo "console started on http://${JP_SERVER_ADDRESS}:${port}"

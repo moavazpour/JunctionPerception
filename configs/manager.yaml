@@ -12,3 +12,6 @@ site_ports: [18100, 18199]          # local ports of the site servers
 max_running: 4            # sites that may run at the same time (GPU memory, decode load)
 log_lines: 5000           # kept per site
 restart_backoff_s: [1, 30]          # wait before restarting a crashed server, doubling up to max
+upload_dir: uploads       # videos uploaded in the console, below the data root (must be writable)
+upload_max_gb: 20
+probe_timeout_s: 20       # opening a video or stream to read its size (jp_server --probe)

@@ -37,7 +37,8 @@ git push "${remote}:${DEPLOY_PATH}" main
     && scripts/setup_server.sh \
     && scripts/in_docker.sh scripts/build_and_test.sh '${target}' release \
     && JP_SERVER_ADDRESS='${DEPLOY_HOST}' JP_SERVER_PORT='${port}' \
-       JP_DATA_ROOT='${DEPLOY_DATA_ROOT}' scripts/run_manager.sh"
+       JP_DATA_ROOT='${DEPLOY_DATA_ROOT}' GOOGLE_MAPS_API_KEY='${DEPLOY_GOOGLE_MAPS_API_KEY:-}' \
+       scripts/run_manager.sh"
 
 for _ in $(seq 1 30); do
     if curl -fsS "http://${DEPLOY_HOST}:${port}/manager/api/health" >/dev/null 2>&1; then

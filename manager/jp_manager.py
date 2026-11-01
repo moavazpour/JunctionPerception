@@ -16,6 +16,8 @@ servers that exit (a calibration "apply" exits on purpose), keeps their logs and
   DELETE /manager/api/sites/<id>              stop and move the scene folder to the trash
   POST /manager/api/sites/<id>/<action>       start | stop | restart | prepare-map
   GET  /manager/api/inputs                    videos, sequences and replays to choose from
+  GET  /manager/api/probe?input=              image size, frame rate and length of a video or stream
+  POST /manager/api/videos                    upload a video (multipart "file") below the data root
   GET  /manager/api/logs?source=&lines=       recent log lines (source: manager or a site id)
   GET  /manager/api/logs/stream?source=       the same as server-sent events
   *    /sites/<id>/map/...                    map layers (also while the site is stopped)
@@ -140,6 +142,9 @@ class ManagerConfig:
     log_lines: int
     backoff_s: tuple[float, float]
     state_dir: Path
+    upload_dir: Path
+    upload_max_bytes: int
+    probe_timeout_s: float
     data_root: Path
 
     @staticmethod
@@ -163,6 +168,10 @@ class ManagerConfig:
             backoff_s=(float(backoff[0]), float(backoff[1])),
             state_dir=resolve(raw["state_dir"]),
             data_root=Path(os.environ.get("JP_DATA_ROOT", raw.get("data_root", "/data"))),
+            upload_dir=Path(os.environ.get("JP_DATA_ROOT", raw.get("data_root", "/data")))
+            / raw.get("upload_dir", "uploads"),
+            upload_max_bytes=int(float(raw.get("upload_max_gb", 20)) * 1024**3),
+            probe_timeout_s=float(raw.get("probe_timeout_s", 20)),
         )
 
 
@@ -273,12 +282,22 @@ class Site:
         )
 
     @property
+    def georeferenced(self) -> bool:
+        """World frame is local east-north-up at the geo anchor (custom scenes)."""
+        return bool(self.scene.get("geo_anchor"))
+
+    @property
+    def location(self) -> dict[str, Any] | None:
+        """Geographic position of the site: its geo anchor or, for scenes in a sensor frame, the
+        anchor of the map layers (aligned in the console with map.transform)."""
+        return self.scene.get("geo_anchor") or (self.scene.get("map") or {}).get("anchor")
+
+    @property
     def enabled(self) -> bool:
         return bool(self.settings.get("enabled"))
 
     def describe(self) -> dict[str, Any]:
         r = self.runtime
-        anchor = self.scene.get("geo_anchor")
         return {
             "id": self.id,
             "name": self.settings.get("name") or self.id,
@@ -286,8 +305,10 @@ class Site:
             "enabled": self.enabled,
             "kind": self.scene.get("kind", "custom"),
             "image_size_px": self.scene.get("image_size_px"),
-            "geo_anchor": anchor,
+            "geo_anchor": self.location,
+            "georeferenced": self.georeferenced,
             "map_radius_m": (self.scene.get("map") or {}).get("radius_m"),
+            "map_transform": (self.scene.get("map") or {}).get("transform"),
             "calibrated": (self.dir / "ground_homography.yaml").is_file(),
             "has_map": (self.manager.config.map_cache / self.id / "map.json").is_file(),
             "zones": (self.dir / "zones.geojson").is_file(),
@@ -474,7 +495,7 @@ class Site:
         r = self.runtime
         if r.map_job and r.map_job["state"] == "running":
             raise BadRequest("map data is already being prepared")
-        if not self.scene.get("geo_anchor"):
+        if not self.location:
             raise BadRequest("the site needs a geographic anchor (latitude, longitude) first")
         r.map_job = {"state": "running", "started_at": time.time(), "message": "downloading"}
         task = asyncio.create_task(self._map_job())
@@ -828,22 +849,40 @@ def routes(manager: Manager) -> web.RouteTableDef:
         if any(k in body for k in scene_keys):
             current = {
                 "image_size_px": site.scene.get("image_size_px"),
-                "geo_anchor": site.scene.get("geo_anchor"),
+                "geo_anchor": site.location,
                 "map_radius_m": (site.scene.get("map") or {}).get("radius_m"),
                 "source": settings["source"],
             }
             changed = scene_yaml(merge(current, {k: body[k] for k in scene_keys if k in body}), site.id)
             scene = dict(site.scene)
-            for key in ("image_size_px", "geo_anchor", "map"):
-                if key in changed:
-                    scene[key] = changed[key]
+            scene["image_size_px"] = changed["image_size_px"]
+            scene["map"] = {**(scene.get("map") or {}), **changed["map"]}
+            if "geo_anchor" in changed:
+                if site.georeferenced:
+                    scene["geo_anchor"] = changed["geo_anchor"]
+                else:
+                    # Scenes in a sensor frame (benchmark): the location only places the map.
+                    scene["map"]["anchor"] = changed["geo_anchor"]
             if scene != site.scene:
                 write_yaml(site.dir / "scene.yaml", scene)
+        if "map_transform" in body:
+            transform = body["map_transform"]
+            scene = dict(site.scene)
+            scene["map"] = {
+                **(scene.get("map") or {}),
+                "transform": {
+                    "yaw_deg": float(transform["yaw_deg"]),
+                    "x_m": float(transform["x_m"]),
+                    "y_m": float(transform["y_m"]),
+                },
+            }
+            write_yaml(site.dir / "scene.yaml", scene)
         site.settings = settings
         site.save_settings()
         site.reload()
         log.info("updated site %s", site.id)
-        if site.is_active():
+        # Aligning the map changes only what the console draws; everything else restarts the site.
+        if site.is_active() and (allowed or any(k in body for k in scene_keys)):
             await site.restart()
         return ok(site.describe())
 
@@ -881,6 +920,74 @@ def routes(manager: Manager) -> web.RouteTableDef:
             raise BadRequest(f"unknown action {action}")
         log.info("site %s: %s", site.id, action)
         return ok(site.describe())
+
+    @r.get(f"{api}/probe")
+    async def probe(request: web.Request) -> web.Response:
+        """Image size, frame rate and length of a video below the data root or a stream URL."""
+        source_input = request.query.get("input", "").strip()
+        if not source_input:
+            raise BadRequest("input is missing")
+        if "://" not in source_input and ".." in Path(source_input).parts:
+            raise BadRequest("the path must stay below the data root")
+        cfg = manager.config
+        process = await asyncio.create_subprocess_exec(
+            str(cfg.server_binary),
+            "--probe",
+            "--input",
+            source_input,
+            "--data-root",
+            str(cfg.data_root),
+            cwd=REPO_ROOT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            out, err = await asyncio.wait_for(process.communicate(), cfg.probe_timeout_s)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise BadRequest(f"no answer from {source_input} within {cfg.probe_timeout_s:.0f} s")
+        if process.returncode != 0:
+            lines = err.decode("utf-8", "replace").strip().splitlines()
+            match = SPDLOG_LINE.match(lines[-1]) if lines else None
+            raise BadRequest(match.group(2) if match else f"cannot open {source_input}")
+        return ok(json.loads(out.decode().strip().splitlines()[-1]))
+
+    @r.post(f"{api}/videos")
+    async def upload_video(request: web.Request) -> web.Response:
+        """Stores an uploaded video below the data root (multipart field "file")."""
+        reader = await request.multipart()
+        field = await reader.next()
+        if field is None or field.name != "file" or not field.filename:
+            raise BadRequest('expected a multipart field "file"')
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(field.filename).name).strip("._") or "video"
+        if Path(name).suffix.lower() not in VIDEO_EXTENSIONS:
+            raise BadRequest("supported videos: " + ", ".join(sorted(VIDEO_EXTENSIONS)))
+        folder = manager.config.upload_dir
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise BadRequest(f"the upload folder {folder} is not writable: {error}") from error
+        target = folder / name
+        stem, suffix, n = target.stem, target.suffix, 1
+        while target.exists():
+            target = folder / f"{stem}_{n}{suffix}"
+            n += 1
+        partial = target.with_suffix(target.suffix + ".part")
+        size = 0
+        try:
+            with partial.open("wb") as out:
+                while chunk := await field.read_chunk(1024 * 1024):
+                    size += len(chunk)
+                    if size > manager.config.upload_max_bytes:
+                        raise BadRequest("the video is larger than the upload limit")
+                    out.write(chunk)
+            partial.rename(target)
+        finally:
+            partial.unlink(missing_ok=True)
+        rel = target.relative_to(manager.config.data_root).as_posix()
+        log.info("uploaded %s (%.1f MB)", rel, size / 1024**2)
+        return ok({"path": rel, "size": size}, 201)
 
     @r.get(f"{api}/inputs")
     async def inputs(_: web.Request) -> web.Response:

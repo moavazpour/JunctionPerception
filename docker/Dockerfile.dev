@@ -40,7 +40,7 @@ RUN curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${OR
 # Site manager (manager/jp_manager.py) and the map tool (tools/prepare_map_data.py).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3-aiohttp python3-yaml python3-requests python3-pyproj python3-lxml \
+        python3-aiohttp python3-yaml python3-requests python3-pyproj python3-lxml python3-pil \
     && rm -rf /var/lib/apt/lists/*
 
 # Caches live under /cache, which scripts/in_docker.sh mounts from the repository's .cache folder.
