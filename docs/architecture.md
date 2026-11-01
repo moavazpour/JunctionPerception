@@ -151,9 +151,22 @@ all servers but keeps the console; the state survives restarts (`.cache/manager/
 | `GET /manager/api/system` | Version, backend state, CPU, memory, disk, GPUs (`nvidia-smi`) |
 | `POST /manager/api/system/<action>` | `start-backend`, `stop-backend`, `restart-backend`, `restart-manager` |
 | `GET /manager/api/inputs` | Videos and sequences below the data root, recorded replays |
+| `GET /manager/api/probe?input=` | Image size, frame rate and length of a video or stream (`jp_server --probe`) |
+| `POST /manager/api/videos` | Uploads a video (multipart `file`) to `<data root>/uploads` |
 | `GET /manager/api/logs`, `/logs/stream` | Recent log lines of the manager or a site; live as server-sent events |
 | `* /sites/<id>/...` | The site's server (the endpoints above); `/sites/<id>/map/...` also while stopped |
 
 The console (`web/`) has one page per view sharing a sidebar: overview, live twin, calibration,
-site settings, new site, system and logs. It has no authentication: publish it on a trusted
-network only.
+site settings, new site, system and logs, in a night or day theme. It has no authentication:
+publish it on a trusted network only.
+
+**Map placement.** Custom scenes are geo-referenced: their world frame is east-north-up at
+`geo_anchor`, and the map layers are built in it. Benchmark scenes use a sensor frame (the south
+LiDAR of TUMTraf); their location is stored as `map.anchor`, the map is built around it and placed
+in the scene by `map.transform` (yaw and offset, `scene = R(yaw) · map + t`), adjusted in the twin
+with *Align map*. The default yaw of the TUMTraf scenes follows from the label poses.
+
+**Road users in the twin.** New tracks fade in and leaving ones fade out while moving on. They
+enter facing the direction of traffic learned per grid cell from earlier vehicle tracks (kept per
+site in the browser), else the direction of a one-way OpenStreetMap road or the road axis; the drawn
+heading then turns towards the track's own heading at a limited rate, so vehicles never spin.

@@ -144,13 +144,18 @@ with its live camera image and counters, the 3D twin of each site (top-down or t
 system page with start, stop and restart of the backend, host and GPU load, and the logs of every
 server.
 
-**Add and calibrate an intersection.** In the console, *New site* asks for the camera source (video
-file below the data root, RTSP/HTTP stream or a recording), the image size and the geographic
-anchor, and downloads the map layers. Then open the site's *Calibration*: click at least eight
-points in the camera image and the same points on the orthophoto, check the residuals, set the
-camera position if the points cannot constrain it, draw the zones, save and apply. Details:
+**Add and calibrate an intersection.** In the console, *New site* asks for the camera source (a
+video uploaded from the browser or already below the data root, an RTSP/HTTP stream, or a
+recording; the image size is read from it) and the geographic anchor, and downloads the map layers.
+Then open the site's *Calibration* (it starts the site and playback if needed): click at least
+eight points in the camera image and the same points on the aerial image, check the residuals, set
+the camera position if the points cannot constrain it, draw the zones, save and apply. Details:
 [docs/map-data.md](docs/map-data.md). A single scene can still be served without the console:
 `scripts/run_server.sh --scene scenes/<name> --mode live --input <video>`.
+
+**Google imagery (optional).** With a key of the Google Map Tiles API in `GOOGLE_MAPS_API_KEY`
+(`DEPLOY_GOOGLE_MAPS_API_KEY` in `deploy.env`), the map tool takes the aerial image from Google
+satellite tiles and adds a Google road map layer; without it, the Bavarian orthophoto is used.
 
 **Process a video offline**
 
