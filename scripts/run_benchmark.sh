@@ -6,8 +6,9 @@
 #         outputs/<run>/eval/<variant>/{metrics.json,report.md},
 #         outputs/<run>/eval/{summary.md,figures/}.
 # Usage: JP_DATA_ROOT=<dataset root> scripts/run_benchmark.sh <run> [variant ...]
-#        (variants: box_fit ray_offset none; default all three). JP_PYTHON selects the Python
-#        interpreter for the figures (default: python3, needs matplotlib).
+#        (variants: box_fit ray_offset none; default all three). JP_PIPELINE_CONFIG selects the
+#        pipeline config (default configs/pipeline.yaml), e.g. to compare detectors. JP_PYTHON
+#        selects the Python interpreter for the figures (default: python3, needs matplotlib).
 set -euo pipefail
 
 run="${1:?usage: scripts/run_benchmark.sh <run> [variant ...]}"
@@ -35,6 +36,7 @@ for variant in "${variants[@]}"; do
             "${in_docker}" build/release/src/apps/jp_run \
                 --source "/data/a9_dataset_r02_${seq}_s110_camera_basler_${camera}_8mm.mp4" \
                 --scene "scenes/tumtraf_s110_${camera}" --bias-correction "${variant}" \
+                --config "${JP_PIPELINE_CONFIG:-configs/pipeline.yaml}" \
                 --world-jsonl "${out}/world.jsonl" >"${out}/log.txt" 2>&1
             eval_runs+=(--run "${seq}_${camera},${condition},${out}/world.jsonl,/data/a9_dataset_r02_${seq},scenes/tumtraf_s110_${camera}")
         done

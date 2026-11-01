@@ -34,12 +34,12 @@ the same zone and event code before they are published.
 | `io` | Frame sources: video files (presentation timestamps kept), image sequences |
 | `benchmark` | TUMTraf Intersection R02 reader, label registration and merging |
 | `calibration` | Ground plane, image-to-ground homography, camera model, benchmark calibration |
-| `detection` | `Detector` interface, YOLO26 end-to-end ONNX Runtime backend, rider association |
+| `detection` | `Detector` interface, YOLO26 end-to-end ONNX Runtime backend (boxes, or boxes with the four bottom corners of the 3D box), rider association |
 | `tracking` | ByteTrack in image space |
-| `localization` | Ground contact, contact-to-centre correction (box fit), BEV Kalman filter, heading, validated region |
+| `localization` | Ground contact, contact-to-centre correction (box fit) or corner footprint (keypoint models), BEV Kalman filter, heading, size, validated region |
 | `vru` | Zones (GeoJSON), crosswalk occupancy, VRU-vehicle conflicts, turning flag |
 | `evaluation` | Benchmark metrics: matching to labels, detection, localization, motion, tracking, conflicts |
-| `sources` | World sources: live pipeline, oracle (benchmark labels), replay (JSONL) |
+| `sources` | World sources: live pipeline, oracle (benchmark labels), replay (JSONL); detection areas and lines per camera |
 | `twin` | World-state JSON and JSONL, debug overlay and top-down videos |
 | `server` | HTTP API, WebSockets, real-time playback, static frontend |
 | `apps` | `jp_run`, `jp_server`, `jp_calibrate`, `jp_eval` command-line programs |
@@ -78,7 +78,9 @@ Object fields: `id` (track ID), `class` (twin class), `vru`, `rider` (two-wheele
 from +x, `null` until the object has moved), `speed_mps`, `speed_std_mps` (speed uncertainty of
 the tracking filter, `null` where not estimated), `confidence`, `zones` (IDs of the zones
 containing the object), `turning` (vehicle heading changed by more than the configured angle over
-the configured window), `validated` (inside the region validated for safety events; see below).
+the configured window), `validated` (inside the region validated for safety events; see below),
+`length_m`, `width_m` (footprint measured from the box corners of a keypoint model, smoothed over
+the track; `null` or absent otherwise, then the twin uses the class size).
 
 Event fields: `id`, `type` (`VRU_VEHICLE_CONFLICT`, `VRU_ON_CROSSWALK`), `state` (`active` or
 `ended`), `object_ids` (conflicts: vehicle, then VRU), `min_distance_m` and `time_to_closest_s`
@@ -86,6 +88,43 @@ Event fields: `id`, `type` (`VRU_VEHICLE_CONFLICT`, `VRU_ON_CROSSWALK`), `state`
 occurs), `closing_speed_mps` (conflicts: average speed at which that gap shrinks),
 `vehicle_state` (conflicts: `moving`, `stopped` or `starting`), `zone` (crosswalk, or the VRU's
 zone for conflicts; `null` otherwise).
+
+## Keypoint detector
+
+A detector may also return keypoints: `models/jp_pose5_384x640.onnx` (classes car, pedestrian,
+bike, Trucks, Buses; class source `jp_pose5`) gives, per detection, the four bottom corners of the
+object's 3D box (x, y, visibility), in an end-to-end output of shape (1, 300, 6 + 4 × 3) at a
+640 × 384 letterboxed input. When all four corners are visible, the localizer projects them to
+the ground: their centre is the measurement (it needs no footprint model, so its floor is smaller,
+`localization.keypoints.floor_std_m`), the long side gives the heading also of standing road users
+(the front follows the motion, else the held heading) and the sides give length and width. Corner
+sets whose size is implausible for the class fall back to the box model. Select the model with
+`detection.model` and `detection.class_source` in `configs/pipeline.yaml`.
+
+## Detection areas and counting lines
+
+Each camera may have `regions.json` next to its calibration, edited in the console (Calibration,
+"Areas and lines") on the camera image: areas (polygons) and lines (polylines), in image pixels.
+A detection counts only if its ground contact (the centre of its corners, else the bottom centre
+of its box) lies inside one of the areas, if there are any, and within `band_m` of a line that
+has a band, if there is one. Everything else is dropped before tracking: it is neither tracked,
+shown nor counted. This keeps far, small and mutually occluded road users, which the detector
+cannot separate reliably, out of the twin. Saving applies the regions to the running server at
+once (`GET`/`POST /api/regions`).
+
+## Traffic statistics
+
+The site manager follows every running camera's world stream and maps the camera's lines to the
+ground with its calibration. A road user whose ground track crosses a line is recorded once
+(SQLite, `.cache/manager/stats.sqlite`) with time, class, direction (A: from the left of the line
+as drawn to its right, on the ground) and speed; safety events are recorded when they start, and
+the time each camera counted is kept, so rates refer to observed time. The statistics page
+reports per line and period the measures used for design and signal timing (FHWA Traffic
+Monitoring Guide, HCM): volume per interval and type, flow rate in vehicles and passenger car
+units per hour, peak hour and peak hour factor, heavy-vehicle share, directional split, spot
+speeds (time-mean and space-mean speed, percentiles, pace, share over the limit), headways,
+density, turning movements between the lines of a camera, vulnerable road users and safety
+events; the raw crossings export as CSV.
 
 ## Position uncertainty and safety events
 
