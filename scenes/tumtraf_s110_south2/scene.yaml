@@ -12,3 +12,11 @@ source:
 # the south LiDAR frame of the labels (see ground_homography.yaml). The geo anchor is set once
 # the scene is aligned to the map with control points.
 calibration: ground_homography.yaml
+# Map layers: the ground frame is a sensor frame, not geo-referenced. Set map.anchor (position of
+# the south LiDAR on the S110 gantry) in the console's site settings; the map is then rotated into
+# this frame by map.transform and can be fine-aligned in the live twin ("Align map").
+# yaw_deg: x axis of the south LiDAR in the HD-map frame of the labels (s110_base 90°, LiDAR 77.6°)
+# minus the UTM grid convergence at the site (about 2.0°), as a rotation from east-north-up.
+map:
+  radius_m: 250
+  transform: {yaw_deg: -165.6, x_m: 0.0, y_m: 0.0}

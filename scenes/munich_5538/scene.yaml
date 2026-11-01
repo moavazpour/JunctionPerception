@@ -4,7 +4,7 @@ scene_id: munich_5538
 kind: custom
 image_size_px: [1920, 1080]
 source:
-  video: custom/IMG_5538.MOV
+  video: custom/IMG_5538.mp4
 # Origin of the world frame (local east-north-up): the GPS position recorded with the video.
 geo_anchor: {lat_deg: 48.1760, lon_deg: 11.5556, alt_m: 512.0}
 # Area around the anchor covered by the map layers (tools/prepare_map_data.py).

@@ -4,8 +4,11 @@ Sources (see docs/map-data.md for licenses and attribution):
   * Orthophoto DOP20 of the Bavarian survey administration (WMS, CC BY 4.0)
   * LoD2 3D building models of the Bavarian survey administration (CityGML tiles, CC BY 4.0)
   * OpenStreetMap roads, paths and crossings (OpenStreetMap API, ODbL)
+  * Optional: Google satellite and road map imagery (Google Map Tiles API, key in
+    GOOGLE_MAPS_API_KEY), used instead of the orthophoto when a key is set
 
-Reads geo_anchor and map.radius_m from scenes/<id>/scene.yaml and writes to map_cache/<id>/:
+Reads geo_anchor (or map.anchor) and map.radius_m from scenes/<id>/scene.yaml and writes to
+map_cache/<id>/:
   map.json        manifest with layers and attribution
   ortho.jpg/.json orthophoto and the world positions of its corners
   osm.json        roads, paths and crossings as world polylines / points
@@ -15,7 +18,7 @@ Reads geo_anchor and map.radius_m from scenes/<id>/scene.yaml and writes to map_
 World frame: local east-north-up at the anchor (x east, y north, metres), the same PROJ
 pipeline as the C++ code. ETRS89 (source CRS of the Bavarian data) is taken as WGS84.
 
-Requires: requests, pyproj, lxml, pyyaml.
+Requires: requests, pyproj, lxml, pyyaml (and pillow for Google imagery).
 
 Example:
     python tools/prepare_map_data.py --scene scenes/munich_5538
@@ -24,6 +27,7 @@ Example:
 import argparse
 import json
 import math
+import os
 import pathlib
 
 import requests
@@ -243,29 +247,136 @@ def fetch_buildings(frame: WorldFrame, radius: float, out: pathlib.Path,
     return {"file": "buildings.json", "buildings": len(buildings)}
 
 
+# Google Map Tiles API (2D tiles): needs an API key with the Map Tiles API enabled
+# (https://developers.google.com/maps/documentation/tile/2d-tiles-overview). The tiles are
+# downloaded through the official API only; its terms ask for the Google attribution shown with them.
+GOOGLE_TILES = "https://tile.googleapis.com/v1"
+GOOGLE_VIEWPORT = "https://tile.googleapis.com/tile/v1/viewport"
+GOOGLE_TILE_PX = 256
+GOOGLE_MAX_TILES = 900
+GOOGLE_TARGET_METRES_PER_PIXEL = 0.15
+
+
+def mercator_pixel(lat: float, lon: float, zoom: int) -> tuple:
+    """Global Web Mercator pixel of a geographic position at a zoom level."""
+    scale = GOOGLE_TILE_PX * 2**zoom
+    x = (lon + 180.0) / 360.0 * scale
+    s = math.sin(math.radians(lat))
+    y = (0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)) * scale
+    return x, y
+
+
+def mercator_geo(x: float, y: float, zoom: int) -> tuple:
+    """Geographic position (lat, lon) of a global Web Mercator pixel."""
+    scale = GOOGLE_TILE_PX * 2**zoom
+    lon = x / scale * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / scale))))
+    return lat, lon
+
+
+def fetch_google(frame: "WorldFrame", radius: float, out: pathlib.Path, raw: pathlib.Path,
+                 key: str, map_type: str, name: str) -> tuple:
+    """Stitches Google 2D tiles (satellite or roadmap) of the scene area into one image.
+
+    Returns the layer entry and the Google copyright line for the attribution.
+    """
+    from PIL import Image  # only needed for Google imagery
+
+    session = requests.post(f"{GOOGLE_TILES}/createSession", params={"key": key}, timeout=30,
+                            json={"mapType": map_type, "language": "en-US", "region": "DE",
+                                  "scale": "scaleFactor1x"})
+    session.raise_for_status()
+    token = session.json()["session"]
+    south, west, north, east = frame.geo_box(radius)
+    metres_per_px_z0 = 156543.03392 * math.cos(math.radians(frame.lat))
+    zoom = 1
+    while metres_per_px_z0 / 2**zoom > GOOGLE_TARGET_METRES_PER_PIXEL and zoom < 21:
+        zoom += 1
+    while True:
+        x0, y0 = mercator_pixel(north, west, zoom)
+        x1, y1 = mercator_pixel(south, east, zoom)
+        tiles_x = range(int(x0 // GOOGLE_TILE_PX), int(x1 // GOOGLE_TILE_PX) + 1)
+        tiles_y = range(int(y0 // GOOGLE_TILE_PX), int(y1 // GOOGLE_TILE_PX) + 1)
+        if len(tiles_x) * len(tiles_y) <= GOOGLE_MAX_TILES:
+            break
+        zoom -= 1
+    mosaic = Image.new("RGB", (len(tiles_x) * GOOGLE_TILE_PX, len(tiles_y) * GOOGLE_TILE_PX))
+    for i, tx in enumerate(tiles_x):
+        for j, ty in enumerate(tiles_y):
+            tile = download(f"{GOOGLE_TILES}/2dtiles/{zoom}/{tx}/{ty}",
+                            raw / f"google_{map_type}_{zoom}_{tx}_{ty}.png",
+                            params={"session": token, "key": key})
+            mosaic.paste(Image.open(tile).convert("RGB"), (i * GOOGLE_TILE_PX, j * GOOGLE_TILE_PX))
+    left, top = tiles_x[0] * GOOGLE_TILE_PX, tiles_y[0] * GOOGLE_TILE_PX
+    box = (int(x0 - left), int(y0 - top), int(math.ceil(x1 - left)), int(math.ceil(y1 - top)))
+    mosaic.crop(box).save(out / f"{name}.jpg", quality=90)
+    # Corners of the cropped image; the image is axis-aligned in Web Mercator, which is close to
+    # affine over the few hundred metres of a scene.
+    corner_px = [(x0, y0), (x0 + box[2] - box[0], y0), (x0 + box[2] - box[0], y0 + box[3] - box[1]),
+                 (x0, y0 + box[3] - box[1])]
+    corners = [frame.from_geo(*mercator_geo(px, py, zoom)) for px, py in corner_px]
+    meta = {"image": f"{name}.jpg", "corners": corners, "corner_order": "top-left, top-right, "
+            "bottom-right, bottom-left", "zoom": zoom, "attribution": "google"}
+    (out / f"{name}.json").write_text(json.dumps(meta, indent=2))
+    viewport = requests.get(GOOGLE_VIEWPORT, timeout=30,
+                            params={"session": token, "key": key, "zoom": zoom, "north": north,
+                                    "south": south, "east": east, "west": west})
+    copyright_line = viewport.json().get("copyright", "") if viewport.ok else ""
+    return {"file": f"{name}.json", "pixels": box[2] - box[0], "zoom": zoom}, copyright_line
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scene", type=pathlib.Path, required=True, help="scene folder")
     parser.add_argument("--out", type=pathlib.Path, default=pathlib.Path("map_cache"))
+    parser.add_argument("--imagery", choices=["auto", "bavaria", "google"], default="auto",
+                        help="aerial image: Google (needs GOOGLE_MAPS_API_KEY) or the Bavarian "
+                             "orthophoto; auto prefers Google when a key is set")
     args = parser.parse_args()
 
     scene = yaml.safe_load((args.scene / "scene.yaml").read_text())
-    anchor = scene.get("geo_anchor")
+    map_settings = scene.get("map") or {}
+    # Scenes in a sensor frame (benchmark) place their map at map.anchor; the console aligns it to
+    # the scene frame with map.transform.
+    anchor = scene.get("geo_anchor") or map_settings.get("anchor")
     if anchor is None:
-        raise SystemExit(f"{args.scene}/scene.yaml has no geo_anchor")
-    radius = float(scene.get("map", {}).get("radius_m", 200.0))
-    frame = WorldFrame(anchor["lat_deg"], anchor["lon_deg"], anchor["alt_m"])
+        raise SystemExit(f"{args.scene}/scene.yaml has neither geo_anchor nor map.anchor")
+    radius = float(map_settings.get("radius_m", 200.0))
+    frame = WorldFrame(anchor["lat_deg"], anchor["lon_deg"], anchor.get("alt_m", 0.0))
 
     out = args.out / args.scene.name
     raw = out / "raw"
     raw.mkdir(parents=True, exist_ok=True)
-    layers = {
-        "ortho": fetch_ortho(frame, radius, out, raw),
-        "osm": fetch_osm(frame, radius, out, raw),
-        "buildings": fetch_buildings(frame, radius, out, raw),
-    }
+    key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if args.imagery == "google" and not key:
+        raise SystemExit("--imagery google needs the environment variable GOOGLE_MAPS_API_KEY")
+    attribution = dict(ATTRIBUTION)
+    layers = {}
+    if key and args.imagery != "bavaria":
+        print("imagery: Google Map Tiles API")
+        layers["ortho"], satellite_copyright = fetch_google(frame, radius, out, raw, key,
+                                                            "satellite", "ortho")
+        layers["roadmap"], roadmap_copyright = fetch_google(frame, radius, out, raw, key,
+                                                            "roadmap", "roadmap")
+        attribution["google"] = {
+            "text": f"Google · {satellite_copyright or roadmap_copyright or 'Map data ©Google'}",
+            "license": "Google Maps Platform Terms",
+            "license_url": "https://cloud.google.com/maps-platform/terms",
+            "changes": "tiles stitched and placed in the scene frame",
+        }
+    else:
+        print("imagery: Bavarian orthophoto DOP20")
+        layers["ortho"] = fetch_ortho(frame, radius, out, raw)
+    print("roads: OpenStreetMap")
+    layers["osm"] = fetch_osm(frame, radius, out, raw)
+    print("buildings: LoD2")
+    layers["buildings"] = fetch_buildings(frame, radius, out, raw)
+    used = {"osm"} | {meta.get("attribution", "bavaria") for meta in
+                      (json.loads((out / entry["file"]).read_text()) for name, entry in
+                       layers.items() if name in ("ortho", "roadmap"))}
+    used.add("bavaria")  # buildings
     manifest = {"scene_id": args.scene.name, "geo_anchor": anchor, "radius_m": radius,
-                "layers": layers, "attribution": ATTRIBUTION}
+                "layers": layers, "attribution": {k: v for k, v in attribution.items() if k in used}}
     (out / "map.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
     print(json.dumps(layers, indent=2))
 
