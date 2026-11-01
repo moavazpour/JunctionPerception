@@ -1,18 +1,34 @@
 import { sendPlayback, type ServerStatus, type VideoFrame } from '../net/client';
-import type { WorldObject, WorldState } from '../net/schema';
+import type { DrawnObject } from '../twin/twinView';
 import { CLASS_LABELS, classCss } from '../twin/palette';
 import { element, fill, h } from './dom';
-import { describeEvent, EVENT_LABELS, EventLog, formatTimestamp } from './events';
+import {
+  describeEvent,
+  EVENT_LABELS,
+  formatTimestamp,
+  type TaggedEvent,
+  TaggedEventLog,
+} from './events';
 import { icon } from './icons';
 
+/** A camera the panel can show, with the address of its server. */
+export interface PanelCamera {
+  id: string;
+  name: string;
+  base: string;
+  running: boolean;
+}
+
 /**
- * Panels of the twin page: camera image, counters, class legend, event list, playback bar and
- * the live status chip.
+ * Panels of the twin page: camera image (with tabs for the cameras of the site), counters,
+ * class legend, event list, playback bar of the shown camera and the live status chip.
  */
 export class SidePanel {
   private readonly video = element<HTMLImageElement>('#video');
   private readonly videoFrame = element<HTMLElement>('#video-frame');
   private readonly videoEmpty = element<HTMLElement>('#video-empty');
+  private readonly cameraTabs = element<HTMLElement>('#camera-tabs');
+  private readonly cameraTitle = element<HTMLElement>('#camera-title');
   private readonly events = element<HTMLUListElement>('#events');
   private readonly eventCount = element<HTMLElement>('#event-count');
   private readonly stats = element<HTMLElement>('#stats');
@@ -22,44 +38,63 @@ export class SidePanel {
   private readonly slider = element<HTMLInputElement>('#seek');
   private readonly frameLabel = element<HTMLElement>('#frame');
   private readonly offline = element<HTMLElement>('#offline');
-  private readonly log = new EventLog();
+  private readonly log = new TaggedEventLog();
   private videoUrl: string | null = null;
   private playing = true;
   private sliding = false;
-  private lastFrame = -1;
-  private latest: WorldState | null = null;
+  private base = '';
+  private tabsKey = '';
+
+  /** Called when another camera is chosen in the tabs. */
+  onCamera: (id: string) => void = () => undefined;
 
   constructor() {
     this.playButton.addEventListener('click', () => {
-      void sendPlayback({ action: this.playing ? 'pause' : 'play' });
+      void sendPlayback({ action: this.playing ? 'pause' : 'play' }, this.base);
       this.setPlaying(!this.playing);
     });
     this.slider.addEventListener('input', () => (this.sliding = true));
     this.slider.addEventListener('change', () => {
       this.sliding = false;
       this.log.clear();
-      void sendPlayback({ action: 'seek', frame: Number(this.slider.value) });
+      void sendPlayback({ action: 'seek', frame: Number(this.slider.value) }, this.base);
     });
     this.renderEvents();
   }
 
-  object(id: number): WorldObject | undefined {
-    return this.latest?.objects.find((o) => o.id === id);
+  /** Cameras of the focused site and the one whose image and playback are shown. */
+  setCameras(cameras: PanelCamera[], selected: string | null): void {
+    const camera = cameras.find((c) => c.id === selected);
+    this.base = camera?.base ?? '';
+    this.cameraTitle.textContent = camera?.name ?? 'Camera';
+    const key = cameras.map((c) => `${c.id}:${c.running}`).join('|') + `>${selected}`;
+    if (key === this.tabsKey) {
+      return;
+    }
+    this.tabsKey = key;
+    this.cameraTabs.hidden = cameras.length < 2;
+    fill(
+      this.cameraTabs,
+      cameras.map((c, i) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            class: `${c.id === selected ? 'active' : ''}${c.running ? '' : ' off'}`,
+            title: c.running ? c.name : `${c.name} (not running)`,
+            onclick: () => this.onCamera(c.id),
+          },
+          String(i + 1),
+        ),
+      ),
+    );
   }
 
-  showState(state: WorldState): void {
-    if (state.frame < this.lastFrame) {
-      this.log.clear();
-    }
-    this.latest = state;
-    this.lastFrame = state.frame;
-    this.log.update(state);
-    this.renderEvents();
-    this.renderStats(state);
-    if (!this.sliding) {
-      this.slider.value = String(state.frame);
-    }
-    this.frameLabel.textContent = `${formatTimestamp(state.timestamp_ns)} · frame ${state.frame}`;
+  /** Clears the image while another camera's stream starts. */
+  resetVideo(): void {
+    this.video.hidden = true;
+    this.videoEmpty.hidden = false;
+    this.videoFrame.textContent = '';
   }
 
   showVideo(frame: VideoFrame): void {
@@ -73,22 +108,44 @@ export class SidePanel {
     this.videoFrame.textContent = `frame ${frame.frame}`;
   }
 
-  showStatus(status: ServerStatus, connected: boolean): void {
-    this.slider.max = String(Math.max(status.frame_count - 1, 0));
-    this.slider.disabled = !status.seekable;
-    if (status.playing !== undefined) {
+  /** Road users and events as drawn (for the focused site, or all sites). */
+  showWorld(objects: DrawnObject[], events: TaggedEvent[]): void {
+    this.log.update(events);
+    this.renderEvents();
+    this.renderStats(objects, events);
+  }
+
+  /** Playback position of the shown camera. */
+  showFrame(frame: number, timestampNs: number): void {
+    if (!this.sliding) {
+      this.slider.value = String(frame);
+    }
+    this.frameLabel.textContent = `${formatTimestamp(timestampNs)} · frame ${frame}`;
+  }
+
+  /** Status of the shown camera; `live` counts the cameras that run (of `total`). */
+  showStatus(status: ServerStatus | null, live: number, total: number): void {
+    const connected = status !== null;
+    this.slider.max = String(Math.max((status?.frame_count ?? 1) - 1, 0));
+    this.slider.disabled = !status?.seekable;
+    this.playButton.disabled = !connected;
+    if (status?.playing !== undefined) {
       this.setPlaying(status.playing);
     }
-    this.offline.hidden = connected;
-    const source = status.source || 'live';
+    this.offline.hidden = connected || total === 0;
+    const source = status?.source || 'live';
     const label = { live: 'Live', oracle: 'Ground truth', replay: 'Replay' }[source] ?? source;
+    const paused = status?.playing === false;
     fill(
       this.liveChip,
       h(
         'span',
-        { class: `pill ${connected ? (status.playing === false ? 'warn' : 'ok live') : 'danger'}` },
-        connected ? (status.playing === false ? 'Paused' : label) : 'Offline',
+        {
+          class: `pill ${connected ? (paused ? 'warn' : 'ok live') : live > 0 ? 'warn' : 'danger'}`,
+        },
+        connected ? (paused ? 'Paused' : label) : live > 0 ? 'Camera off' : 'Offline',
       ),
+      total > 1 ? h('span', { class: 'chip-metric num' }, `${live}/${total} cameras`) : null,
       connected && status.fps !== undefined
         ? h('span', { class: 'chip-metric num' }, `${status.fps.toFixed(1)} fps`)
         : null,
@@ -104,10 +161,11 @@ export class SidePanel {
     this.playButton.title = playing ? 'Pause' : 'Play';
   }
 
-  private renderStats(state: WorldState): void {
-    const vrus = state.objects.filter((o) => o.vru).length;
-    const active = state.events.filter((e) => e.state === 'active');
-    const conflicts = active.filter((e) => e.type === 'VRU_VEHICLE_CONFLICT').length;
+  private renderStats(objects: DrawnObject[], events: TaggedEvent[]): void {
+    const vrus = objects.filter((o) => o.object.vru).length;
+    const conflicts = events.filter(
+      (e) => e.event.state === 'active' && e.event.type === 'VRU_VEHICLE_CONFLICT',
+    ).length;
     const stat = (label: string, value: number, tone = '') =>
       h(
         'div',
@@ -117,14 +175,14 @@ export class SidePanel {
       );
     fill(
       this.stats,
-      stat('Road users', state.objects.length),
+      stat('Road users', objects.length),
       stat('Vulnerable', vrus, vrus > 0 ? 'vru' : ''),
-      stat('Vehicles', state.objects.length - vrus),
+      stat('Vehicles', objects.length - vrus),
       stat('Conflicts', conflicts, conflicts > 0 ? 'danger' : ''),
     );
     const counts = new Map<string, number>();
-    for (const o of state.objects) {
-      counts.set(o.class, (counts.get(o.class) ?? 0) + 1);
+    for (const { object } of objects) {
+      counts.set(object.class, (counts.get(object.class) ?? 0) + 1);
     }
     const order = Object.keys(CLASS_LABELS);
     const classes = [...counts.entries()].sort(([a], [b]) => order.indexOf(a) - order.indexOf(b));
@@ -146,7 +204,7 @@ export class SidePanel {
 
   private renderEvents(): void {
     const entries = this.log.entries();
-    const active = entries.filter((e) => e.active).length;
+    const active = entries.filter((e) => e.isActive).length;
     this.eventCount.textContent = active > 0 ? `${active} active` : '';
     this.eventCount.hidden = active === 0;
     if (entries.length === 0) {
@@ -164,7 +222,7 @@ export class SidePanel {
     }
     fill(
       this.events,
-      entries.map(({ event, active: isActive }) => {
+      entries.map(({ event, label, isActive }) => {
         const conflict = event.type === 'VRU_VEHICLE_CONFLICT';
         return h(
           'li',
@@ -174,7 +232,11 @@ export class SidePanel {
             'div',
             { class: 'event-body' },
             h('span', { class: 'event-title' }, EVENT_LABELS[event.type]),
-            h('span', { class: 'event-detail' }, describeEvent(event)),
+            h(
+              'span',
+              { class: 'event-detail' },
+              label ? `${label} · ${describeEvent(event)}` : describeEvent(event),
+            ),
           ),
           h(
             'span',

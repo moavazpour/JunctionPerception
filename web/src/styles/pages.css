@@ -159,6 +159,79 @@
   opacity: 0.6;
 }
 
+.site-thumb {
+  display: grid;
+}
+
+.site-thumb.mosaic {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+}
+
+.site-thumb .tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.site-thumb.mosaic .placeholder {
+  font-size: 11px;
+}
+
+.site-thumb.mosaic .placeholder .icon {
+  font-size: 18px;
+}
+
+.site-thumb .tile-label {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgb(8 13 23 / 72%);
+  color: #e6edf7;
+  font-size: 10.5px;
+  backdrop-filter: blur(6px);
+}
+
+.camera-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.camera-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--text-2);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.camera-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.camera-chip .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.camera-chip .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .site-thumb .overlay {
   position: absolute;
   inset: auto 0 0;
@@ -823,4 +896,244 @@
 
 .probe-line.error {
   color: var(--danger);
+}
+
+/* ------------------------------------------------------------ cameras of an intersection */
+
+.page.narrow.wide {
+  max-width: 1180px;
+}
+
+.cameras-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 18px;
+  align-items: start;
+}
+
+.camera-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.camera-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--bg-elev);
+}
+
+.camera-panel.open {
+  border-color: var(--border-strong);
+}
+
+.camera-panel.new {
+  border-style: dashed;
+}
+
+.camera-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.camera-index {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.camera-title {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+div.camera-title {
+  cursor: default;
+}
+
+.camera-title > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.camera-title strong {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.camera-title span {
+  overflow: hidden;
+  max-width: 420px;
+  color: var(--text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-error {
+  flex-basis: 100%;
+}
+
+.camera-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.camera-save {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+}
+
+.camera-head-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.approach-picker {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.compass {
+  display: grid;
+  grid-template-columns: repeat(3, 30px);
+  gap: 3px;
+}
+
+.compass button {
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compass button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.compass button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.approach-label {
+  min-width: 110px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+details.more > summary {
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+details.more[open] > summary {
+  margin-bottom: 12px;
+}
+
+.junction-plan-box {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--bg-elev);
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.junction-plan {
+  width: 168px;
+  height: 168px;
+}
+
+.junction-plan .road {
+  fill: var(--surface-3);
+}
+
+.junction-plan .lane {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.junction-plan .north {
+  fill: var(--text-3);
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.junction-plan .cam circle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.junction-plan .cam text {
+  fill: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.junction-plan .cam.active circle {
+  fill: var(--accent);
+}
+
+.empty.small {
+  padding: 24px;
+}
+
+@media (width <= 900px) {
+  .cameras-layout,
+  .camera-head-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .junction-plan-box {
+    position: static;
+  }
 }

@@ -1,9 +1,11 @@
-/** Client of the site manager (manager/jp_manager.py): sites, processes, logs and the host. */
+/** Client of the site manager (manager/jp_manager.py): sites, cameras, processes, logs, host. */
 import type { MapTransform } from '../twin/twinView';
 import type { ServerStatus } from './client';
 
 export type SourceMode = 'live' | 'oracle' | 'replay';
 export type RunState = 'stopped' | 'starting' | 'running' | 'stopping' | 'backoff' | 'failed';
+/** State of a site: that of its cameras, "partial" while only some of them run. */
+export type SiteRunState = RunState | 'partial';
 
 export interface SiteSource {
   mode: SourceMode;
@@ -24,7 +26,44 @@ export interface MapJob {
   finished_at?: number;
 }
 
-export interface SiteRuntime {
+/** Arm of the intersection a camera watches. */
+export type Approach =
+  | 'north'
+  | 'north-east'
+  | 'east'
+  | 'south-east'
+  | 'south'
+  | 'south-west'
+  | 'west'
+  | 'north-west'
+  | 'centre';
+
+export const APPROACH_LABELS: Record<Approach, string> = {
+  north: 'North arm',
+  'north-east': 'North-east arm',
+  east: 'East arm',
+  'south-east': 'South-east arm',
+  south: 'South arm',
+  'south-west': 'South-west arm',
+  west: 'West arm',
+  'north-west': 'North-west arm',
+  centre: 'Centre (overview)',
+};
+
+/** Compass bearing of an approach (degrees clockwise from north); null for the centre. */
+export const APPROACH_BEARING: Record<Approach, number | null> = {
+  north: 0,
+  'north-east': 45,
+  east: 90,
+  'south-east': 135,
+  south: 180,
+  'south-west': 225,
+  west: 270,
+  'north-west': 315,
+  centre: null,
+};
+
+export interface CameraRuntime {
   state: RunState;
   pid: number | null;
   port: number | null;
@@ -34,51 +73,90 @@ export interface SiteRuntime {
   last_exit: number | null;
   error: string | null;
   status: ServerStatus | null;
-  map_job: MapJob | null;
 }
 
+export interface PlaybackSettings {
+  loop: boolean;
+  speed: number;
+}
+
+export interface VideoSettings {
+  max_fps: number;
+  width_px: number;
+  jpeg_quality: number;
+}
+
+/** One camera of a site, with its own source, calibration and server. */
+export interface Camera {
+  id: string;
+  name: string;
+  approach: Approach;
+  image_size_px: [number, number] | null;
+  enabled: boolean;
+  calibrated: boolean;
+  control_points: boolean;
+  source: SiteSource;
+  playback: PlaybackSettings;
+  video: VideoSettings;
+  runtime: CameraRuntime;
+}
+
+/** A site: one intersection with up to four cameras in a shared world frame. */
 export interface Site {
   id: string;
   name: string;
   description: string;
   enabled: boolean;
   kind: string;
-  image_size_px: [number, number] | null;
-  /** Geographic position: the geo anchor, or for sensor-frame scenes the anchor of the map. */
+  /** "intersection": cameras below cameras/; "single": an older single-camera scene folder. */
+  layout: 'intersection' | 'single';
+  /** Geographic position: the intersection centre, or for sensor-frame scenes the map anchor. */
   geo_anchor: GeoAnchor | null;
   /** World frame is east-north-up at the geo anchor (false: a sensor frame, e.g. benchmark). */
   georeferenced: boolean;
   map_radius_m: number | null;
   /** Placement of the map in a sensor-frame scene, aligned in the twin. */
   map_transform: MapTransform | null;
-  calibrated: boolean;
   has_map: boolean;
   zones: boolean;
-  source: SiteSource;
-  playback: { loop: boolean; speed: number };
-  video: { max_fps: number; width_px: number; jpeg_quality: number };
-  runtime: SiteRuntime;
+  max_cameras: number;
+  cameras: Camera[];
+  runtime: { state: SiteRunState; error: string | null; map_job: MapJob | null };
 }
 
 export interface SitePatch {
   name?: string;
   description?: string;
-  source?: SiteSource;
-  playback?: Site['playback'];
-  video?: Site['video'];
-  image_size_px?: [number, number];
   geo_anchor?: GeoAnchor | null;
   map_radius_m?: number;
   map_transform?: MapTransform;
 }
 
-export interface NewSite extends SitePatch {
+export interface CameraPatch {
+  name?: string;
+  approach?: Approach;
+  image_size_px?: [number, number];
+  source?: SiteSource;
+  playback?: PlaybackSettings;
+  video?: VideoSettings;
+}
+
+export interface NewCamera {
+  name: string;
+  approach: Approach;
+  image_size_px: [number, number];
+  source: SiteSource;
+}
+
+export interface NewSite {
   id: string;
   name: string;
-  source: SiteSource;
-  image_size_px: [number, number];
+  description: string;
+  geo_anchor: GeoAnchor;
+  map_radius_m: number;
   enabled: boolean;
   prepare_map: boolean;
+  cameras: NewCamera[];
 }
 
 export interface GpuInfo {
@@ -98,6 +176,8 @@ export interface SystemInfo {
   sites_total: number;
   sites_enabled: number;
   sites_running: number;
+  cameras_total: number;
+  cameras_running: number;
   max_running: number;
   data_root: string;
   server_binary: string;
@@ -133,6 +213,7 @@ export interface LogLine {
 
 export type SystemAction = 'start-backend' | 'stop-backend' | 'restart-backend' | 'restart-manager';
 export type SiteAction = 'start' | 'stop' | 'restart' | 'prepare-map';
+export type CameraAction = 'start' | 'stop' | 'restart';
 
 const API = '/manager/api';
 
@@ -184,6 +265,53 @@ export const deleteSite = (id: string): Promise<unknown> =>
 export const siteAction = (id: string, action: SiteAction): Promise<Site> =>
   request('POST', `/sites/${encodeURIComponent(id)}/${action}`);
 
+const cameraPath = (site: string, camera: string): string =>
+  `/sites/${encodeURIComponent(site)}/cameras/${encodeURIComponent(camera)}`;
+
+/** Adds a camera; returns the site with it. */
+export const addCamera = (site: string, camera: NewCamera): Promise<Site> =>
+  request('POST', `/sites/${encodeURIComponent(site)}/cameras`, camera);
+
+export const updateCamera = (site: string, camera: string, patch: CameraPatch): Promise<Site> =>
+  request('PATCH', cameraPath(site, camera), patch);
+
+export const deleteCamera = (site: string, camera: string): Promise<Site> =>
+  request('DELETE', cameraPath(site, camera));
+
+export const cameraAction = (site: string, camera: string, action: CameraAction): Promise<Site> =>
+  request('POST', `${cameraPath(site, camera)}/${action}`);
+
+/** Live figures of a site, summed (road users, events) or averaged over its running cameras. */
+export interface SiteFigures {
+  running: number;
+  objects: number;
+  events: number;
+  fps: number | null;
+  latency_ms: number | null;
+}
+
+export function siteFigures(site: Site): SiteFigures {
+  const statuses = site.cameras
+    .filter((c) => c.runtime.state === 'running' && c.runtime.status)
+    .map((c) => c.runtime.status as ServerStatus);
+  const mean = (values: (number | undefined)[]): number | null => {
+    const known = values.filter((v): v is number => v !== undefined);
+    return known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : null;
+  };
+  return {
+    running: site.cameras.filter((c) => c.runtime.state === 'running').length,
+    objects: statuses.reduce((sum, s) => sum + (s.objects ?? 0), 0),
+    events: statuses.reduce((sum, s) => sum + (s.active_events ?? 0), 0),
+    fps: mean(statuses.map((s) => s.fps)),
+    latency_ms: mean(statuses.map((s) => s.latency_ms)),
+  };
+}
+
+/** The camera of a site with this id, else its first camera. */
+export function findCamera(site: Site, id: string | null): Camera | null {
+  return site.cameras.find((c) => c.id === id) ?? site.cameras[0] ?? null;
+}
+
 export const systemInfo = (): Promise<SystemInfo> => request('GET', '/system');
 
 export const systemAction = (action: SystemAction): Promise<unknown> =>
@@ -203,9 +331,27 @@ export function streamLogs(source: string, onLine: (line: LogLine) => void): () 
   return () => events.close();
 }
 
+export type Tone = 'ok' | 'warn' | 'danger' | '';
+
 /** Display state of a site: label and colour class of its status pill. */
-export function siteState(site: Site): { label: string; tone: 'ok' | 'warn' | 'danger' | '' } {
-  switch (site.runtime.state) {
+export function siteState(site: Site): { label: string; tone: Tone } {
+  if (site.runtime.state === 'partial') {
+    const running = site.cameras.filter((c) => c.runtime.state === 'running').length;
+    return { label: `${running} of ${site.cameras.length} cameras`, tone: 'warn' };
+  }
+  if (site.cameras.length === 0) {
+    return { label: 'No cameras', tone: '' };
+  }
+  return runState(site.runtime.state, site.enabled);
+}
+
+/** Display state of a camera. */
+export function cameraState(site: Site, camera: Camera): { label: string; tone: Tone } {
+  return runState(camera.runtime.state, site.enabled && camera.enabled);
+}
+
+function runState(state: RunState, enabled: boolean): { label: string; tone: Tone } {
+  switch (state) {
     case 'running':
       return { label: 'Running', tone: 'ok' };
     case 'starting':
@@ -217,7 +363,7 @@ export function siteState(site: Site): { label: string; tone: 'ok' | 'warn' | 'd
     case 'failed':
       return { label: 'Failed', tone: 'danger' };
     default:
-      return { label: site.enabled ? 'Waiting' : 'Inactive', tone: '' };
+      return { label: enabled ? 'Waiting' : 'Inactive', tone: '' };
   }
 }
 

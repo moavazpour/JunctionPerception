@@ -1,9 +1,10 @@
 import '../styles/pages.css';
 
 import {
+  type Camera,
+  cameraAction,
+  cameraState,
   type Site,
-  siteAction,
-  siteState,
   systemAction,
   type SystemAction,
   type SystemInfo,
@@ -123,7 +124,7 @@ function controlCard(system: SystemInfo, refresh: () => void): HTMLElement {
           h(
             'span',
             {},
-            `${system.sites_running} of ${system.sites_enabled} active sites running · at most ${system.max_running} at once`,
+            `${system.cameras_running} of ${system.cameras_total} cameras running on ${system.sites_running} sites · at most ${system.max_running} at once`,
           ),
         ),
       ),
@@ -223,9 +224,9 @@ function resourcesCard(system: SystemInfo): HTMLElement {
   );
 }
 
-function processRow(site: Site, refresh: () => void): HTMLTableRowElement {
-  const r = site.runtime;
-  const state = siteState(site);
+function processRow(site: Site, camera: Camera, refresh: () => void): HTMLTableRowElement {
+  const r = camera.runtime;
+  const state = cameraState(site, camera);
   const act = (label: string, name: IconName, action: 'start' | 'stop' | 'restart') => {
     const b = h(
       'button',
@@ -235,10 +236,15 @@ function processRow(site: Site, refresh: () => void): HTMLTableRowElement {
     b.addEventListener(
       'click',
       () =>
-        void withBusy(b, () => siteAction(site.id, action), `${label}: ${site.name}`).then(refresh),
+        void withBusy(
+          b,
+          () => cameraAction(site.id, camera.id, action),
+          `${label}: ${site.name} · ${camera.name}`,
+        ).then(refresh),
     );
     return b;
   };
+  const running = site.enabled && camera.enabled;
   return h(
     'tr',
     {},
@@ -246,7 +252,7 @@ function processRow(site: Site, refresh: () => void): HTMLTableRowElement {
       'td',
       { class: 'strong' },
       h('a', { href: links.settings(site.id), style: 'color: inherit' }, site.name),
-      h('div', { class: 'muted mono' }, site.id),
+      h('div', { class: 'muted' }, camera.name),
     ),
     h('td', {}, h('span', { class: `pill ${state.tone}` }, state.label)),
     h('td', { class: 'mono' }, r.pid ? `${r.pid}` : '–'),
@@ -266,11 +272,15 @@ function processRow(site: Site, refresh: () => void): HTMLTableRowElement {
     h(
       'td',
       { style: 'text-align: right; white-space: nowrap' },
-      site.enabled ? act('Stop', 'stop', 'stop') : act('Start', 'play', 'start'),
+      running ? act('Stop', 'stop', 'stop') : act('Start', 'play', 'start'),
       act('Restart', 'restart', 'restart'),
       h(
         'a',
-        { class: 'btn ghost small icon-only', href: links.logs(site.id), title: 'Logs' },
+        {
+          class: 'btn ghost small icon-only',
+          href: links.logs(`${site.id}/${camera.id}`),
+          title: 'Logs',
+        },
         icon('logs'),
       ),
     ),
@@ -300,7 +310,7 @@ async function start(): Promise<void> {
           h(
             'p',
             {},
-            'Control the perception backend, watch the host and the server process of every site.',
+            'Control the perception backend, watch the host and the server process of every camera.',
           ),
         ),
       ),
@@ -315,8 +325,8 @@ async function start(): Promise<void> {
           h(
             'div',
             {},
-            h('h2', {}, 'Site servers'),
-            h('p', {}, 'One jp_server process per running site'),
+            h('h2', {}, 'Camera servers'),
+            h('p', {}, 'One jp_server process per running camera'),
           ),
         ),
         h(
@@ -331,9 +341,17 @@ async function start(): Promise<void> {
               h(
                 'tr',
                 {},
-                ['Site', 'State', 'PID', 'Port', 'Uptime', 'Restarts', 'FPS', 'Latency', ''].map(
-                  (t) => h('th', {}, t),
-                ),
+                [
+                  'Site · camera',
+                  'State',
+                  'PID',
+                  'Port',
+                  'Uptime',
+                  'Restarts',
+                  'FPS',
+                  'Latency',
+                  '',
+                ].map((t) => h('th', {}, t)),
               ),
             ),
             processes,
@@ -368,9 +386,9 @@ async function start(): Promise<void> {
   const renderProcesses = (sites: Site[]): void => {
     fill(
       processes,
-      sites.length > 0
-        ? sites.map((s) => processRow(s, () => void shell.refresh()))
-        : h('tr', {}, h('td', { colspan: 9, class: 'muted' }, 'No sites configured.')),
+      sites.some((s) => s.cameras.length > 0)
+        ? sites.flatMap((s) => s.cameras.map((c) => processRow(s, c, () => void shell.refresh())))
+        : h('tr', {}, h('td', { colspan: 9, class: 'muted' }, 'No cameras configured.')),
     );
   };
   shell.onSites(renderProcesses);

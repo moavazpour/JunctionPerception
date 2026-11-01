@@ -112,6 +112,21 @@ export class OrbitRig {
     });
   }
 
+  /** Eases to another view (keeping the elevation), which recenter() then returns to. */
+  flyTo(view: Omit<OrbitView, 'elevation'>): void {
+    Object.assign(this.home, view);
+    Object.assign(this.goal, view);
+  }
+
+  /** Moves the view by (dx, dy) at once, e.g. because the scene under it moved. */
+  shift(dx: number, dy: number): void {
+    for (const view of [this.current, this.goal, this.home]) {
+      view.targetX += dx;
+      view.targetY += dy;
+    }
+    this.apply();
+  }
+
   /** Eases the view towards its goal; call once per frame. */
   tick(dt: number): void {
     const k = 1 - Math.exp(-EASE_RATE * dt);

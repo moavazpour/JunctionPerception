@@ -3,28 +3,47 @@ import '../styles/twin.css';
 import { loadMapData, type MapData } from '../map/mapData';
 import { attributionLines } from '../map/mapLayers';
 import {
+  cameraBase,
   fetchScene,
   fetchStatus,
+  type ServerStatus,
   setSite,
-  siteUrl,
   subscribeVideo,
   subscribeWorld,
+  type Unsubscribe,
 } from '../net/client';
-import { getSite, type Site, updateSite } from '../net/manager';
+import {
+  type Camera,
+  type GeoAnchor,
+  listSites,
+  type Site,
+  siteAction,
+  updateSite,
+} from '../net/manager';
+import type { WorldState } from '../net/schema';
 import type { ViewMode } from '../twin/orbitRig';
 import { CLASS_LABELS } from '../twin/palette';
-import { type BaseLayer, type MapTransform, TwinView } from '../twin/twinView';
+import {
+  type BaseLayer,
+  type DrawnObject,
+  geoOffset,
+  type MapTransform,
+  type SiteSpec,
+  TwinView,
+} from '../twin/twinView';
 import { fill, h, param, segmented, toggle } from '../ui/dom';
+import type { TaggedEvent } from '../ui/events';
 import { toast, withBusy } from '../ui/feedback';
 import { icon } from '../ui/icons';
-import { links, mountShell } from '../ui/shell';
-import { SidePanel } from '../ui/sidePanel';
-import { waitForSite } from '../ui/siteGate';
+import { links, mountShell, type Shell } from '../ui/shell';
+import { type PanelCamera, SidePanel } from '../ui/sidePanel';
 import { currentTheme, onThemeChange } from '../ui/theme';
 
 const STATUS_INTERVAL_MS = 1000;
-// Status requests that may fail in a row before the site counts as unreachable.
+const PANEL_INTERVAL_MS = 250;
+// Status requests that may fail in a row before the shown camera counts as unreachable.
 const MISSED_STATUS_LIMIT = 3;
+const ALL = '';
 
 function layout(): HTMLElement {
   return h(
@@ -34,7 +53,12 @@ function layout(): HTMLElement {
       'section',
       { class: 'twin-stage' },
       h('canvas', { id: 'twin' }),
-      h('div', { class: 'hud hud-tl' }, h('div', { id: 'live-chip', class: 'glass chip' })),
+      h(
+        'div',
+        { class: 'hud hud-tl' },
+        h('div', { id: 'site-picker', class: 'glass site-picker' }),
+        h('div', { id: 'live-chip', class: 'glass chip' }),
+      ),
       h('div', { id: 'view-controls', class: 'hud hud-tr glass toolbar' }),
       h('div', { id: 'align-bar', class: 'align-bar glass', hidden: true }),
       h('div', { id: 'legend', class: 'hud hud-bl glass legend' }),
@@ -51,8 +75,9 @@ function layout(): HTMLElement {
         'div',
         { id: 'offline', class: 'stage-notice', hidden: true },
         h('span', { class: 'spinner' }),
-        'Connection to the site lost, reconnecting…',
+        'Connection to the camera lost, reconnecting…',
       ),
+      h('div', { id: 'stage-empty', class: 'stage-empty glass', hidden: true }),
     ),
     h(
       'aside',
@@ -64,7 +89,8 @@ function layout(): HTMLElement {
           'header',
           {},
           icon('video'),
-          h('h3', {}, 'Camera'),
+          h('h3', { id: 'camera-title' }, 'Camera'),
+          h('nav', { id: 'camera-tabs', class: 'camera-tabs', hidden: true }),
           h('span', { id: 'video-frame', class: 'frame-tag num' }),
         ),
         h(
@@ -96,7 +122,451 @@ function layout(): HTMLElement {
   );
 }
 
-function setupControls(view: TwinView, map: MapData | null, site: Site | null): void {
+/** Live data of the twin page: which sites and cameras are drawn, focused and streamed. */
+class TwinPage {
+  private readonly panel = new SidePanel();
+  private readonly world = new Map<string, Unsubscribe>();
+  private readonly loading = new Set<string>();
+  private readonly placed = new Set<string>();
+  private sites: Site[] = [];
+  private origin: GeoAnchor | null = null;
+  private focus: string;
+  private camera: string | null;
+  private video: { key: string; close: Unsubscribe } | null = null;
+  private status: ServerStatus | null = null;
+  private missed = 0;
+  private framed = false;
+  private readonly attributions = new Map<string, { text: string; url: string }[]>();
+
+  constructor(
+    private readonly view: TwinView,
+    private readonly shell: Shell,
+    focus: string | null,
+    camera: string | null,
+  ) {
+    this.focus = focus ?? ALL;
+    this.camera = camera;
+    this.panel.onCamera = (id) => this.selectCamera(id);
+    view.onHover = (object, x, y) => this.tooltip(object, x, y);
+    setInterval(() => this.renderPanel(), PANEL_INTERVAL_MS);
+    setInterval(() => void this.refreshStatus(), STATUS_INTERVAL_MS);
+  }
+
+  /** Takes a new site list: places new sites, follows cameras that start or stop. */
+  sync(sites: Site[]): void {
+    this.sites = sites;
+    if (!this.origin) {
+      const focused = sites.find((s) => s.id === this.focus);
+      this.origin = focused?.geo_anchor ?? sites.find((s) => s.geo_anchor)?.geo_anchor ?? null;
+    }
+    for (const site of sites) {
+      this.place(site);
+      for (const camera of site.cameras) {
+        this.follow(site, camera);
+      }
+    }
+    this.renderPicker();
+    this.renderCameras();
+    this.renderControls();
+    this.renderEmpty();
+  }
+
+  private spec(site: Site): SiteSpec | null {
+    const offset = site.geo_anchor && this.origin ? geoOffset(this.origin, site.geo_anchor) : null;
+    // Sites without a location can only be shown alone, at the origin.
+    if (!offset && site.id !== this.focus) {
+      return null;
+    }
+    return {
+      id: site.id,
+      name: site.name,
+      offset: offset ?? { x: 0, y: 0 },
+      transform: site.georeferenced ? null : (site.map_transform ?? { yaw_deg: 0, x_m: 0, y_m: 0 }),
+    };
+  }
+
+  private place(site: Site): void {
+    if (this.placed.has(site.id)) {
+      return;
+    }
+    const spec = this.spec(site);
+    if (!spec) {
+      return;
+    }
+    this.placed.add(site.id);
+    this.view.addSite(spec);
+    if (spec.transform) {
+      this.view.setMapTransform(site.id, spec.transform);
+    }
+    if (site.has_map) {
+      void loadMapData(`/sites/${encodeURIComponent(site.id)}/map/map.json`)
+        .then((map: MapData) => {
+          this.view.setMap(site.id, map);
+          this.attributions.set(site.id, attributionLines(map));
+          this.renderAttribution();
+        })
+        .catch((error: unknown) =>
+          toast(`Map of ${site.name}: ${(error as Error).message}`, 'error'),
+        );
+    }
+    if (site.id === this.focus && site.cameras.every((c) => c.runtime.state !== 'running')) {
+      // Nothing to wait for: look at the site's origin.
+      this.frame();
+    }
+  }
+
+  /** World stream of every running camera of a placed site. */
+  private follow(site: Site, camera: Camera): void {
+    const key = `${site.id}/${camera.id}`;
+    const running = camera.runtime.state === 'running';
+    if (!running) {
+      this.world.get(key)?.();
+      this.world.delete(key);
+      return;
+    }
+    if (!this.placed.has(site.id) || this.world.has(key) || this.loading.has(key)) {
+      return;
+    }
+    this.loading.add(key);
+    const base = cameraBase(site.id, camera.id);
+    void fetchScene(base)
+      .then((description) => {
+        this.view.addCamera(site.id, camera.id, description);
+        this.world.set(
+          key,
+          subscribeWorld(
+            (state) => this.view.push(site.id, camera.id, state),
+            () => undefined,
+            base,
+          ),
+        );
+        if (site.id === this.focus || this.focus === ALL) {
+          this.frame();
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => this.loading.delete(key));
+  }
+
+  /** Initial view, once the focused site's cameras are known. */
+  private frame(): void {
+    if (this.framed && this.focus !== ALL) {
+      return;
+    }
+    if (this.focus === ALL) {
+      this.view.overview();
+    } else {
+      this.view.focus(this.focus);
+    }
+    this.framed = true;
+  }
+
+  private focusedSite(): Site | undefined {
+    return this.sites.find((s) => s.id === this.focus);
+  }
+
+  /** Cameras the panel offers: those of the focused site, or of all sites. */
+  private panelCameras(): (PanelCamera & { site: Site })[] {
+    const sites = this.focus === ALL ? this.sites : this.sites.filter((s) => s.id === this.focus);
+    return sites.flatMap((site) =>
+      site.cameras.map((c) => ({
+        id: `${site.id}/${c.id}`,
+        name: this.focus === ALL ? `${site.name} · ${c.name}` : c.name,
+        base: cameraBase(site.id, c.id),
+        running: c.runtime.state === 'running',
+        site,
+      })),
+    );
+  }
+
+  private selectCamera(key: string): void {
+    this.camera = key;
+    this.status = null;
+    this.missed = 0;
+    this.renderCameras();
+    void this.refreshStatus();
+  }
+
+  private renderCameras(): void {
+    const cameras = this.panelCameras();
+    const wanted =
+      this.camera && this.focus !== ALL && !this.camera.includes('/')
+        ? `${this.focus}/${this.camera}`
+        : this.camera;
+    const selected =
+      cameras.find((c) => c.id === wanted) ?? cameras.find((c) => c.running) ?? cameras[0] ?? null;
+    this.camera = selected?.id ?? null;
+    this.panel.setCameras(cameras, this.camera);
+    // The image of the selected camera only: video streams cost encoding on the server.
+    const key = selected?.running ? selected.id : null;
+    if (this.video?.key !== key) {
+      this.video?.close();
+      this.video = null;
+      this.panel.resetVideo();
+      if (selected && key) {
+        this.video = {
+          key,
+          close: subscribeVideo(
+            (frame) => this.panel.showVideo(frame),
+            () => undefined,
+            selected.base,
+          ),
+        };
+      }
+    }
+  }
+
+  private async refreshStatus(): Promise<void> {
+    const camera = this.panelCameras().find((c) => c.id === this.camera);
+    if (!camera?.running) {
+      this.status = null;
+    } else {
+      try {
+        this.status = await fetchStatus(camera.base);
+        this.missed = 0;
+      } catch {
+        if (++this.missed >= MISSED_STATUS_LIMIT) {
+          this.status = null;
+        }
+      }
+    }
+    const cameras = this.panelCameras();
+    this.panel.showStatus(this.status, cameras.filter((c) => c.running).length, cameras.length);
+  }
+
+  private renderPanel(): void {
+    const siteId = this.focus === ALL ? undefined : this.focus;
+    const names = new Map(
+      this.sites.flatMap((s) =>
+        s.cameras.map((c): [string, string] => [
+          `${s.id}/${c.id}`,
+          siteId ? c.name : `${s.name} · ${c.name}`,
+        ]),
+      ),
+    );
+    const states = this.view.states(siteId);
+    const several = states.length > 1;
+    const events: TaggedEvent[] = states.flatMap(({ site, camera, state }) =>
+      state.events.map((event) => ({
+        key: `${site}/${camera}:${event.id}`,
+        label: several ? (names.get(`${site}/${camera}`) ?? camera) : '',
+        event,
+      })),
+    );
+    this.panel.showWorld(this.view.objects(siteId), events);
+    const shown = states.find(({ site, camera }) => `${site}/${camera}` === this.camera);
+    if (shown) {
+      this.showFrame(shown.state);
+    }
+  }
+
+  private showFrame(state: WorldState): void {
+    this.panel.showFrame(state.frame, state.timestamp_ns);
+  }
+
+  private renderPicker(): void {
+    const picker = document.querySelector<HTMLElement>('#site-picker');
+    if (!picker) {
+      return;
+    }
+    const options = [
+      [ALL, 'All intersections'],
+      ...this.sites
+        .filter((s) => this.placed.has(s.id) || s.id === this.focus)
+        .map((s) => [s.id, s.name]),
+    ];
+    const key = options.map((o) => o.join('=')).join('|') + `>${this.focus}`;
+    if (picker.dataset['key'] === key) {
+      return;
+    }
+    picker.dataset['key'] = key;
+    const select = h('select', { class: 'input', 'aria-label': 'Intersection' });
+    for (const [value, label] of options) {
+      select.append(h('option', { value, selected: value === this.focus }, label));
+    }
+    select.addEventListener('change', () => this.setFocus(select.value));
+    const hidden = this.sites.filter((s) => !this.placed.has(s.id) && s.id !== this.focus);
+    fill(
+      picker,
+      icon('globe'),
+      select,
+      hidden.length > 0
+        ? h(
+            'span',
+            { class: 'muted', title: hidden.map((s) => s.name).join(', ') },
+            `${hidden.length} without location`,
+          )
+        : null,
+    );
+  }
+
+  private setFocus(siteId: string): void {
+    this.focus = siteId;
+    this.camera = null;
+    this.framed = false;
+    history.replaceState(null, '', siteId ? links.twin(siteId) : links.twin());
+    const site = this.focusedSite();
+    this.shell.setTitle(site ? site.name : 'Digital twin');
+    this.setActions();
+    if (site && !this.placed.has(site.id)) {
+      // A site without location is shown alone: reload the page around it.
+      location.reload();
+      return;
+    }
+    this.frame();
+    this.renderPicker();
+    this.renderCameras();
+    this.renderControls();
+    this.renderEmpty();
+    void this.refreshStatus();
+  }
+
+  setActions(): void {
+    const site = this.focusedSite();
+    this.shell.setActions(
+      ...(site
+        ? [
+            h(
+              'a',
+              { class: 'btn small', href: links.calibration(site.id) },
+              icon('calibration'),
+              'Calibration',
+            ),
+            h(
+              'a',
+              { class: 'btn small', href: links.settings(site.id) },
+              icon('settings'),
+              'Settings',
+            ),
+          ]
+        : [h('a', { class: 'btn small', href: links.newSite }, icon('plus'), 'New site')]),
+    );
+  }
+
+  /** Notice on the stage while the focused site has no running camera. */
+  private renderEmpty(): void {
+    const notice = document.querySelector<HTMLElement>('#stage-empty');
+    if (!notice) {
+      return;
+    }
+    const sites = this.focus === ALL ? this.sites : this.sites.filter((s) => s.id === this.focus);
+    const running = sites.some((s) => s.cameras.some((c) => c.runtime.state === 'running'));
+    const starting = sites.some((s) =>
+      s.cameras.some((c) => ['starting', 'backoff'].includes(c.runtime.state)),
+    );
+    notice.hidden = running;
+    if (running) {
+      return;
+    }
+    const site = this.focusedSite();
+    const key = `${this.focus}:${starting}:${site?.enabled}`;
+    if (notice.dataset['key'] === key) {
+      return;
+    }
+    notice.dataset['key'] = key;
+    const start = h(
+      'button',
+      { type: 'button', class: 'btn small primary' },
+      icon('power'),
+      'Activate',
+    );
+    start.addEventListener('click', () => {
+      if (site) {
+        void withBusy(start, () => siteAction(site.id, 'start'), `${site.name} is starting`);
+      }
+    });
+    fill(
+      notice,
+      starting ? h('span', { class: 'spinner' }) : icon('power'),
+      h(
+        'span',
+        {},
+        starting
+          ? 'Cameras are starting: the detector loads and the sources open…'
+          : site
+            ? `No camera of ${site.name} is running. The map is shown; road users appear once a camera runs.`
+            : 'No camera is running.',
+      ),
+      site && !starting && !site.enabled ? start : null,
+      site ? h('a', { class: 'btn small ghost', href: links.settings(site.id) }, 'Settings') : null,
+    );
+  }
+
+  private renderAttribution(): void {
+    const element = document.querySelector<HTMLElement>('#attribution');
+    const seen = new Map<string, { text: string; url: string }>();
+    for (const lines of this.attributions.values()) {
+      for (const line of lines) {
+        seen.set(line.text, line);
+      }
+    }
+    element?.replaceChildren(
+      ...[...seen.values()].map(({ text, url }) =>
+        h('a', { href: url, target: '_blank', rel: 'noopener' }, text),
+      ),
+    );
+  }
+
+  private controlsKey = '';
+
+  private renderControls(): void {
+    const site = this.focusedSite();
+    const anyOrtho = this.sites.some((s) => s.has_map);
+    // Sensor-frame scenes (benchmark) place their map by hand.
+    const canAlign = Boolean(
+      site && !site.georeferenced && site.has_map && this.placed.has(site.id),
+    );
+    const key = `${anyOrtho}:${canAlign}:${site?.id}`;
+    if (key === this.controlsKey) {
+      return;
+    }
+    this.controlsKey = key;
+    setupControls(this.view, anyOrtho, canAlign && site ? site : null);
+  }
+
+  private tooltip(drawn: DrawnObject | null, x: number, y: number): void {
+    const tooltip = document.querySelector<HTMLElement>('#tooltip');
+    if (!tooltip) {
+      return;
+    }
+    if (!drawn) {
+      tooltip.hidden = true;
+      return;
+    }
+    const { object } = drawn;
+    const site = this.sites.find((s) => s.id === drawn.site);
+    const cameraNames = drawn.cameras.map(
+      (id) => site?.cameras.find((c) => c.id === id)?.name ?? id,
+    );
+    const speed = object.speed_mps * 3.6;
+    const std =
+      object.speed_std_mps !== null ? ` ± ${(object.speed_std_mps * 3.6).toFixed(1)}` : '';
+    fill(
+      tooltip,
+      h(
+        'strong',
+        {},
+        `${CLASS_LABELS[object.class] ?? object.class}${object.rider ? ' (rider)' : ''}`,
+        h('span', { class: 'muted' }, ` #${object.id}`),
+      ),
+      h('span', {}, `${speed.toFixed(1)}${std} km/h`),
+      h('span', {}, `confidence ${(object.confidence * 100).toFixed(0)} %`),
+      object.zones.length > 0 ? h('span', {}, `in ${object.zones.join(', ')}`) : null,
+      site && (this.focus === ALL || site.cameras.length > 1)
+        ? h(
+            'span',
+            { class: 'muted' },
+            `${this.focus === ALL ? `${site.name} · ` : ''}seen by ${cameraNames.join(' + ')}`,
+          )
+        : null,
+      object.validated ? null : h('span', { class: 'muted' }, 'outside the validated region'),
+    );
+    tooltip.style.transform = `translate(${x + 16}px, ${y + 12}px)`;
+    tooltip.hidden = false;
+  }
+}
+
+function setupControls(view: TwinView, hasMap: boolean, alignSite: Site | null): void {
   const controls = document.querySelector<HTMLElement>('#view-controls');
   if (!controls) {
     return;
@@ -109,23 +579,22 @@ function setupControls(view: TwinView, map: MapData | null, site: Site | null): 
     '3d',
     (value) => view.setViewMode(value),
   );
-  const layers: { value: BaseLayer; label: string; icon: Node; disabled?: boolean }[] = [
-    { value: 'map', label: 'Map', icon: icon('map') },
-    { value: 'ortho', label: 'Aerial', icon: icon('image'), disabled: !map?.ortho },
-  ];
-  if (map?.roadmap) {
-    layers.push({ value: 'roadmap', label: 'Road map', icon: icon('route') });
-  }
-  const layer = segmented<BaseLayer>(layers, 'map', (value) => view.showLayer(value));
-  // Sensor-frame scenes (benchmark) place their map by hand.
-  const canAlign = map !== null && site !== null && !site.georeferenced;
+  const layer = segmented<BaseLayer>(
+    [
+      { value: 'map', label: 'Map', icon: icon('map') },
+      { value: 'ortho', label: 'Aerial', icon: icon('image') },
+      { value: 'roadmap', label: 'Road map', icon: icon('route') },
+    ],
+    'map',
+    (value) => view.showLayer(value),
+  );
   fill(
     controls,
     mode.root,
-    map ? layer.root : null,
-    map ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
+    hasMap ? layer.root : null,
+    hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
-    canAlign && site ? alignButton(view, site) : null,
+    alignSite ? alignButton(view, alignSite) : null,
     h(
       'button',
       {
@@ -150,9 +619,9 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
   const show = (t: MapTransform): void => {
     readout.textContent = `${t.yaw_deg.toFixed(1)}° · ${t.x_m.toFixed(1)} m, ${t.y_m.toFixed(1)} m`;
   };
-  let before = view.mapTransform;
+  let before = view.mapTransform(site.id);
   const finish = (): void => {
-    view.setAlignMode(false);
+    view.setAlignMode(null);
     bar.hidden = true;
     button.disabled = false;
   };
@@ -160,7 +629,7 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
   save.addEventListener('click', () => {
     void withBusy(
       save,
-      () => updateSite(site.id, { map_transform: view.mapTransform }),
+      () => updateSite(site.id, { map_transform: view.mapTransform(site.id) }),
       'Map placement saved',
     ).then((saved) => {
       if (saved) {
@@ -170,7 +639,7 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
   });
   const cancel = h('button', { type: 'button', class: 'btn small ghost' }, 'Cancel');
   cancel.addEventListener('click', () => {
-    view.setMapTransform(before);
+    view.setMapTransform(site.id, before);
     finish();
   });
   fill(
@@ -183,9 +652,9 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
   );
   view.onMapTransform = show;
   button.addEventListener('click', () => {
-    before = view.mapTransform;
+    before = view.mapTransform(site.id);
     show(before);
-    view.setAlignMode(true);
+    view.setAlignMode(site.id);
     bar.hidden = false;
     button.disabled = true;
     toast('Tip: switch to Aerial and match the roads to the moving road users.', 'info');
@@ -193,119 +662,92 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
   return button;
 }
 
-function setupTooltip(view: TwinView, panel: SidePanel): void {
-  const tooltip = document.querySelector<HTMLElement>('#tooltip');
-  if (!tooltip) {
-    return;
+/** A single jp_server without the manager: its one scene and camera. */
+async function startSingle(view: TwinView): Promise<void> {
+  const scene = await fetchScene();
+  const id = scene.scene_id;
+  view.addSite({ id, name: id, offset: { x: 0, y: 0 }, transform: null });
+  view.addCamera(id, 'main', scene);
+  if (scene.map) {
+    const map = await loadMapData(scene.map);
+    view.setMap(id, map);
+    document
+      .querySelector<HTMLElement>('#attribution')
+      ?.replaceChildren(
+        ...attributionLines(map).map(({ text, url }) =>
+          h('a', { href: url, target: '_blank', rel: 'noopener' }, text),
+        ),
+      );
   }
-  view.onHover = (id, x, y) => {
-    const object = id === null ? undefined : panel.object(id);
-    if (!object) {
-      tooltip.hidden = true;
-      return;
-    }
-    const speed = object.speed_mps * 3.6;
-    const std =
-      object.speed_std_mps !== null ? ` ± ${(object.speed_std_mps * 3.6).toFixed(1)}` : '';
-    fill(
-      tooltip,
-      h(
-        'strong',
-        {},
-        `${CLASS_LABELS[object.class] ?? object.class}${object.rider ? ' (rider)' : ''}`,
-        h('span', { class: 'muted' }, ` #${object.id}`),
-      ),
-      h('span', {}, `${speed.toFixed(1)}${std} km/h`),
-      h('span', {}, `confidence ${(object.confidence * 100).toFixed(0)} %`),
-      object.zones.length > 0 ? h('span', {}, `in ${object.zones.join(', ')}`) : null,
-      object.validated ? null : h('span', { class: 'muted' }, 'outside the validated region'),
+  view.focus(id);
+  setupControls(view, scene.map !== null, null);
+  const panel = new SidePanel();
+  panel.setCameras([{ id: 'main', name: 'Camera', base: '', running: true }], 'main');
+  subscribeWorld(
+    (state) => {
+      view.push(id, 'main', state);
+      panel.showFrame(state.frame, state.timestamp_ns);
+    },
+    () => undefined,
+  );
+  subscribeVideo((frame) => panel.showVideo(frame));
+  setInterval(() => {
+    panel.showWorld(
+      view.objects(id),
+      view
+        .states(id)
+        .flatMap(({ state }) =>
+          state.events.map((event) => ({ key: String(event.id), label: '', event })),
+        ),
     );
-    tooltip.style.transform = `translate(${x + 16}px, ${y + 12}px)`;
-    tooltip.hidden = false;
+  }, PANEL_INTERVAL_MS);
+  let missed = 0;
+  const refresh = async (): Promise<void> => {
+    try {
+      panel.showStatus(await fetchStatus(), 1, 1);
+      missed = 0;
+    } catch {
+      if (++missed >= MISSED_STATUS_LIMIT) {
+        panel.showStatus(null, 0, 1);
+      }
+    }
   };
+  await refresh();
+  setInterval(() => void refresh(), STATUS_INTERVAL_MS);
 }
 
 async function start(): Promise<void> {
   const siteId = param('site');
-  const shell = await mountShell({ page: 'twin', siteId, title: 'Live twin', fullBleed: true });
-  if (shell.managed && !siteId) {
-    location.replace('/');
-    return;
-  }
-  setSite(shell.managed ? siteId : null);
-  let site: Site | null = null;
-  if (shell.managed && siteId) {
-    shell.setActions(
-      h(
-        'a',
-        { class: 'btn small', href: links.calibration(siteId) },
-        icon('calibration'),
-        'Calibration',
-      ),
-      h('a', { class: 'btn small', href: links.settings(siteId) }, icon('settings'), 'Settings'),
-    );
-    await waitForSite(shell.content, siteId, 'see the live digital twin');
-    site = await getSite(siteId).catch(() => null);
-  }
-
+  const shell = await mountShell({
+    page: 'twin',
+    siteId,
+    title: siteId ? 'Live twin' : 'Digital twin',
+    fullBleed: true,
+  });
+  setSite(null);
   shell.content.append(layout());
   const canvas = document.querySelector<HTMLCanvasElement>('#twin');
   if (!canvas) {
     throw new Error('canvas #twin not found');
   }
-  const scene = await fetchScene();
-  shell.setTitle('Live twin');
-  const view = new TwinView(canvas, scene, {
-    siteKey: siteId ?? scene.scene_id,
-    theme: currentTheme(),
-  });
-  onThemeChange((theme) => view.setTheme(theme));
-  const panel = new SidePanel();
-  setupTooltip(view, panel);
-  let map: MapData | null = null;
-  if (scene.map) {
-    map = await loadMapData(siteUrl(scene.map));
-    view.setMap(map);
-    if (site?.map_transform) {
-      view.setMapTransform(site.map_transform);
-    }
-    const attribution = document.querySelector<HTMLElement>('#attribution');
-    attribution?.replaceChildren(
-      ...attributionLines(map).map(({ text, url }) =>
-        h('a', { href: url, target: '_blank', rel: 'noopener' }, text),
-      ),
-    );
+  if (!shell.managed) {
+    const scene = await fetchScene();
+    const view = new TwinView(canvas, scene.classes, { theme: currentTheme() });
+    onThemeChange((theme) => view.setTheme(theme));
+    await startSingle(view);
+    return;
   }
-  setupControls(view, map, site);
-
-  // The world socket reconnects quietly while playback is paused (no messages arrive then);
-  // whether the site is reachable comes from the status requests.
-  subscribeWorld(
-    (state) => {
-      view.push(state);
-      panel.showState(state);
-    },
-    () => undefined,
-  );
-  subscribeVideo((frame) => panel.showVideo(frame));
-
-  let missed = 0;
-  const refreshStatus = async (): Promise<void> => {
-    try {
-      const status = await fetchStatus();
-      missed = 0;
-      panel.showStatus(status, true);
-    } catch {
-      if (++missed >= MISSED_STATUS_LIMIT) {
-        panel.showStatus(
-          { scene_id: scene.scene_id, source: '', frame_count: 0, seekable: false },
-          false,
-        );
-      }
-    }
-  };
-  await refreshStatus();
-  setInterval(() => void refreshStatus(), STATUS_INTERVAL_MS);
+  const view = new TwinView(canvas, [], { theme: currentTheme() });
+  onThemeChange((theme) => view.setTheme(theme));
+  const page = new TwinPage(view, shell, siteId, param('camera'));
+  const sites = await listSites().catch(() => shell.sites());
+  const focused = sites.find((s) => s.id === siteId);
+  if (focused) {
+    shell.setTitle(focused.name);
+  }
+  page.sync(sites);
+  page.setActions();
+  shell.onSites((fresh) => page.sync(fresh));
 }
 
 void start();

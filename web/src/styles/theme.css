@@ -483,7 +483,8 @@ textarea.input {
   background: var(--bg-elev);
 }
 
-.segmented button {
+.segmented button,
+.segmented a {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -499,11 +500,13 @@ textarea.input {
   cursor: pointer;
 }
 
-.segmented button:hover {
+.segmented button:hover,
+.segmented a:hover {
   color: var(--text);
 }
 
-.segmented button.active {
+.segmented button.active,
+.segmented a.active {
   background: var(--surface-3);
   color: var(--text);
   box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
@@ -944,4 +947,22 @@ input[type='range'] {
 
 .theme-toggle .icon {
   font-size: 17px;
+}
+
+.segmented a {
+  text-decoration: none;
+}
+
+.segmented .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Marks an item that still needs work (e.g. a camera without calibration). */
+.segmented .todo,
+.todo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
 }

@@ -60,8 +60,9 @@ export function saveCalibration(
   });
 }
 
-export function saveZones(zones: ZoneCollection): Promise<ZoneCollection> {
-  return post<ZoneCollection>(siteUrl('/api/zones'), zones);
+/** Saves the zones on the selected camera's server (or the one at `base`). */
+export function saveZones(zones: ZoneCollection, base?: string): Promise<ZoneCollection> {
+  return post<ZoneCollection>(siteUrl('/api/zones', base), zones);
 }
 
 export async function requestRestart(): Promise<void> {

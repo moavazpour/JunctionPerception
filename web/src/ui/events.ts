@@ -50,6 +50,41 @@ export class EventLog {
   }
 }
 
+/** An event of one camera of a site, labelled for lists that show several cameras. */
+export interface TaggedEvent {
+  key: string;
+  label: string;
+  event: WorldEvent;
+}
+
+/** Active events of several cameras and the most recently ended ones (keyed per camera). */
+export class TaggedEventLog {
+  private active: TaggedEvent[] = [];
+  private ended: TaggedEvent[] = [];
+
+  update(events: TaggedEvent[]): void {
+    this.active = events.filter((e) => e.event.state === 'active');
+    for (const tagged of events.filter((e) => e.event.state === 'ended')) {
+      this.ended = [tagged, ...this.ended.filter((e) => e.key !== tagged.key)].slice(
+        0,
+        HISTORY_LENGTH,
+      );
+    }
+  }
+
+  clear(): void {
+    this.active = [];
+    this.ended = [];
+  }
+
+  entries(): (TaggedEvent & { isActive: boolean })[] {
+    return [
+      ...this.active.map((e) => ({ ...e, isActive: true })),
+      ...this.ended.map((e) => ({ ...e, isActive: false })),
+    ];
+  }
+}
+
 // Timestamps above this are absolute (Unix time), below it relative to the start of a recording.
 const ABSOLUTE_TIMESTAMP_NS = 1e15;
 

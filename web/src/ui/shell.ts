@@ -40,14 +40,26 @@ const REFRESH_MS = 3000;
 
 export const links = {
   overview: '/',
-  twin: (id: string) => `/twin.html?site=${encodeURIComponent(id)}`,
-  calibration: (id: string) => `/calibrate.html?site=${encodeURIComponent(id)}`,
+  /** The twin of all sites, opened at one of them. */
+  twin: (id?: string) => (id ? `/twin.html?site=${encodeURIComponent(id)}` : '/twin.html'),
+  calibration: (id: string, camera?: string) =>
+    `/calibrate.html?site=${encodeURIComponent(id)}` +
+    (camera ? `&camera=${encodeURIComponent(camera)}` : ''),
   settings: (id: string) => `/site.html?site=${encodeURIComponent(id)}`,
   newSite: '/new-site.html',
   system: '/system.html',
   logs: (source?: string) =>
     source ? `/logs.html?source=${encodeURIComponent(source)}` : '/logs.html',
 };
+
+/** Road users seen by the running cameras of a site, or null if none runs. */
+export function siteObjects(site: Site): number | null {
+  const running = site.cameras.filter((c) => c.runtime.state === 'running');
+  if (running.length === 0) {
+    return null;
+  }
+  return running.reduce((sum, c) => sum + (c.runtime.status?.objects ?? 0), 0);
+}
 
 function navItem(href: string, name: IconName, label: string, active: boolean, extra?: Child) {
   return h(
@@ -145,8 +157,16 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
         },
         h('span', { class: `dot ${state.tone}` }),
         h('span', { class: 'name' }, site.name),
-        site.runtime.status?.objects !== undefined && site.runtime.state === 'running'
-          ? h('span', { class: 'count num' }, String(site.runtime.status.objects))
+        site.cameras.length > 1
+          ? h(
+              'span',
+              { class: 'cams num', title: 'Cameras' },
+              icon('video'),
+              String(site.cameras.length),
+            )
+          : null,
+        siteObjects(site) !== null
+          ? h('span', { class: 'count num' }, String(siteObjects(site)))
           : null,
       );
       if (!open) {
@@ -176,6 +196,7 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
       nav,
       h('div', { class: 'nav-label' }, 'Monitor'),
       navItem('/', 'overview', 'Overview', p === 'overview'),
+      navItem(links.twin(), 'globe', 'Digital twin', p === 'twin' && !options.siteId),
       navItem(links.logs(), 'logs', 'Logs', p === 'logs'),
       h(
         'div',
@@ -219,7 +240,7 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
             h(
               'span',
               {},
-              `${system.sites_running}/${system.sites_enabled} sites · ${system.version}`,
+              `${system.cameras_running}/${system.cameras_total} cameras · ${system.version}`,
             ),
           ),
           icon('chevron'),

@@ -287,7 +287,7 @@ export function sourceEditor(
     problem: () => {
       const value = values[kind];
       if (!value) {
-        return 'Choose the camera source of the site.';
+        return 'Choose the source of the camera.';
       }
       if (kind === 'stream' && !/^(rtsp|rtsps|http|https):\/\/.+/.test(value)) {
         return 'A stream URL starts with rtsp://, rtsps://, http:// or https://.';

@@ -15,10 +15,10 @@ interface Trail {
 /** Fading paths behind moving road users, in the colour of their class. */
 export class TrailLayer {
   readonly group = new THREE.Group();
-  private readonly trails = new Map<number, Trail>();
+  private readonly trails = new Map<string | number, Trail>();
 
   /** Adds the current positions; objects that left the scene lose their trail. */
-  update(positions: Map<number, { x: number; y: number; className: string }>): void {
+  update(positions: Map<string | number, { x: number; y: number; className: string }>): void {
     for (const [id, p] of positions) {
       let trail = this.trails.get(id);
       if (!trail) {

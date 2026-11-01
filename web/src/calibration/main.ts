@@ -14,6 +14,7 @@ import {
   saveZones,
 } from '../net/calibrationApi';
 import {
+  cameraBase,
   fetchScene,
   fetchStatus,
   type SceneDescription,
@@ -22,12 +23,12 @@ import {
   siteUrl,
   subscribeVideo,
 } from '../net/client';
-import { getSite, siteAction } from '../net/manager';
+import { APPROACH_LABELS, cameraAction, findCamera, getSite } from '../net/manager';
 import { h, param } from '../ui/dom';
 import { toast } from '../ui/feedback';
 import { icon } from '../ui/icons';
 import { links, mountShell } from '../ui/shell';
-import { waitForSite } from '../ui/siteGate';
+import { waitForCamera } from '../ui/siteGate';
 import { PanZoomCanvas, type View2D } from './panZoom';
 
 type Mode = 'points' | 'zones' | 'camera';
@@ -54,6 +55,8 @@ const COLORS = {
   label: 'rgba(8, 13, 23, 0.8)',
 };
 const RESTART_RELOAD_MS = 6000;
+// Servers of the site's other running cameras (they share the zones).
+let siblingCameras: string[] = [];
 const MARKER_RADIUS = 6;
 
 function element<T extends HTMLElement>(selector: string): T {
@@ -402,14 +405,20 @@ class CalibrationApp {
   private async save(): Promise<void> {
     const saved: string[] = [];
     try {
-      await saveZones({
-        type: 'FeatureCollection',
+      const zones = {
+        type: 'FeatureCollection' as const,
         coordinate_frame: 'scene_ground',
         features: this.zones.map((z) => ({
           properties: { id: z.id, type: z.type },
-          geometry: { type: 'Polygon', coordinates: [[...z.polygon, z.polygon[0] as Point]] },
+          geometry: {
+            type: 'Polygon' as const,
+            coordinates: [[...z.polygon, z.polygon[0] as Point]],
+          },
         })),
-      });
+      };
+      await saveZones(zones);
+      // Zones belong to the intersection: the other running cameras take them over at once.
+      await Promise.allSettled(siblingCameras.map((base) => saveZones(zones, base)));
       saved.push(`${this.zones.length} zones`);
       if (this.fit) {
         const fit = await saveCalibration(this.points, this.cameraOverride, this.cameraHeight);
@@ -700,21 +709,56 @@ async function start(): Promise<void> {
     location.replace('/');
     return;
   }
-  setSite(shell.managed ? siteId : null);
+  setSite(null);
+  let cameraSwitch: HTMLElement | null = null;
   if (shell.managed && siteId) {
     shell.setActions(
       h('a', { class: 'btn small', href: links.twin(siteId) }, icon('twin'), 'Live twin'),
       h('a', { class: 'btn small', href: links.settings(siteId) }, icon('settings'), 'Settings'),
     );
-    const site = await getSite(siteId).catch(() => null);
-    if (site && !site.enabled) {
-      await siteAction(siteId, 'start')
-        .then(() => toast(`${site.name} is starting for the calibration.`, 'info'))
+    const requested = param('camera');
+    const before = await getSite(siteId).catch(() => null);
+    const wanted = before ? findCamera(before, requested) : null;
+    if (before && wanted && (!before.enabled || !wanted.enabled)) {
+      await cameraAction(siteId, wanted.id, 'start')
+        .then(() => toast(`${wanted.name} is starting for the calibration.`, 'info'))
         .catch((error: unknown) => toast((error as Error).message, 'error'));
     }
-    await waitForSite(shell.content, siteId, 'calibrate it against the camera image');
+    const { site, camera } = await waitForCamera(
+      shell.content,
+      siteId,
+      requested,
+      'calibrate it against the camera image',
+    );
+    setSite(siteId, camera.id);
+    shell.setTitle(`Calibration · ${camera.name}`);
+    siblingCameras = site.cameras
+      .filter((c) => c.id !== camera.id && c.runtime.state === 'running')
+      .map((c) => cameraBase(siteId, c.id));
+    if (site.cameras.length > 1) {
+      cameraSwitch = h(
+        'nav',
+        { class: 'segmented camera-switch', title: 'Camera to calibrate' },
+        site.cameras.map((c) =>
+          h(
+            'a',
+            {
+              class: c.id === camera.id ? 'active' : '',
+              href: links.calibration(siteId, c.id),
+              title: APPROACH_LABELS[c.approach],
+            },
+            icon('video'),
+            c.name,
+            c.calibrated ? null : h('i', { class: 'todo', title: 'Not calibrated yet' }),
+          ),
+        ),
+      );
+    }
   }
   shell.content.append(layout());
+  if (cameraSwitch) {
+    element('.calib-toolbar').prepend(cameraSwitch);
+  }
   const scene = await fetchScene();
   element('#scene-id').textContent = ` · ${scene.image_size_px[0]} × ${scene.image_size_px[1]} px`;
   if (!scene.map || !scene.geo_anchor) {

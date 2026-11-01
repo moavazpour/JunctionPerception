@@ -21,6 +21,8 @@ export interface ZoneCollection {
 
 export interface SceneDescription {
   scene_id: string;
+  /** Camera folder of an intersection; empty for single-camera scenes. */
+  camera_id?: string;
   kind: string;
   image_size_px: [number, number];
   calibrated: boolean;
@@ -35,6 +37,7 @@ export interface SceneDescription {
 
 export interface ServerStatus {
   scene_id: string;
+  camera_id?: string;
   source: string;
   frame_count: number;
   seekable: boolean;
@@ -69,37 +72,53 @@ export function parseVideoMessage(data: ArrayBuffer): VideoFrame {
   return { frame, jpeg: new Blob([data.slice(8)], { type: 'image/jpeg' }) };
 }
 
-// Behind the site manager every site is served under /sites/<id>/; a single jp_server serves at /.
+// Behind the site manager every camera is served under /sites/<id>/cameras/<camera>/; a single
+// jp_server serves at /.
 let siteBase = '';
 
-/** Selects the site whose server the API calls and streams go to (null: the serving host). */
-export function setSite(siteId: string | null): void {
-  siteBase = siteId ? `/sites/${encodeURIComponent(siteId)}` : '';
+/** Path prefix of a camera's server behind the manager. */
+export function cameraBase(siteId: string, cameraId: string): string {
+  return `/sites/${encodeURIComponent(siteId)}/cameras/${encodeURIComponent(cameraId)}`;
 }
 
-/** URL of a path on the selected site's server, e.g. siteUrl('/api/frame'). */
-export function siteUrl(path: string): string {
-  return siteBase + path;
+/**
+ * Selects the camera whose server the API calls and streams go to (null: the serving host);
+ * without a camera, the site's first one.
+ */
+export function setSite(siteId: string | null, cameraId: string | null = null): void {
+  if (!siteId) {
+    siteBase = '';
+  } else {
+    siteBase = cameraId ? cameraBase(siteId, cameraId) : `/sites/${encodeURIComponent(siteId)}`;
+  }
 }
 
-export async function fetchScene(): Promise<SceneDescription> {
-  const response = await fetch(siteUrl('/api/scene'));
+/** URL of a path on the selected camera's server (or the one at `base`). */
+export function siteUrl(path: string, base: string = siteBase): string {
+  return base + path;
+}
+
+export async function fetchScene(base: string = siteBase): Promise<SceneDescription> {
+  const response = await fetch(siteUrl('/api/scene', base));
   if (!response.ok) {
     throw new Error(`GET /api/scene failed: ${response.status}`);
   }
   return (await response.json()) as SceneDescription;
 }
 
-export async function fetchStatus(): Promise<ServerStatus> {
-  const response = await fetch(siteUrl('/api/status'));
+export async function fetchStatus(base: string = siteBase): Promise<ServerStatus> {
+  const response = await fetch(siteUrl('/api/status', base));
   if (!response.ok) {
     throw new Error(`GET /api/status failed: ${response.status}`);
   }
   return (await response.json()) as ServerStatus;
 }
 
-export async function sendPlayback(command: PlaybackCommand): Promise<void> {
-  await fetch(siteUrl('/api/playback'), { method: 'POST', body: JSON.stringify(command) });
+export async function sendPlayback(
+  command: PlaybackCommand,
+  base: string = siteBase,
+): Promise<void> {
+  await fetch(siteUrl('/api/playback', base), { method: 'POST', body: JSON.stringify(command) });
 }
 
 const RECONNECT_DELAY_MS = 1000;
@@ -112,17 +131,17 @@ export type Unsubscribe = () => void;
 
 /** WebSocket that reconnects after the connection drops or goes silent, until closed. */
 function openSocket(
-  path: string,
+  url: string,
   binary: boolean,
   onMessage: (data: string | ArrayBuffer) => void,
   onConnection: (connected: boolean) => void,
 ): Unsubscribe {
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${siteUrl(path)}`;
+  const address = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${url}`;
   let closed = false;
   let current: WebSocket | null = null;
   let retry = 0;
   const connect = (): void => {
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(address);
     current = socket;
     if (binary) {
       socket.binaryType = 'arraybuffer';
@@ -160,9 +179,10 @@ function openSocket(
 export function subscribeWorld(
   onState: (state: WorldState) => void,
   onConnection: (connected: boolean) => void,
+  base: string = siteBase,
 ): Unsubscribe {
   return openSocket(
-    '/ws/world',
+    siteUrl('/ws/world', base),
     false,
     (data) => {
       if (typeof data !== 'string') {
@@ -181,9 +201,10 @@ export function subscribeWorld(
 export function subscribeVideo(
   onFrame: (frame: VideoFrame) => void,
   onConnection: (connected: boolean) => void = () => undefined,
+  base: string = siteBase,
 ): Unsubscribe {
   return openSocket(
-    '/ws/video',
+    siteUrl('/ws/video', base),
     true,
     (data) => {
       if (data instanceof ArrayBuffer) {

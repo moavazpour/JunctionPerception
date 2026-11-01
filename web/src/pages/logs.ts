@@ -57,19 +57,30 @@ async function start(): Promise<void> {
     // Rebuilt only when the sites change, so an open list is not reset.
     const key = shell
       .sites()
-      .map((s) => `${s.id}:${s.name}`)
+      .map((s) => `${s.id}:${s.name}:${s.cameras.map((c) => `${c.id}=${c.name}`).join(',')}`)
       .join('|');
     if (key === sourceKey) {
       return;
     }
     sourceKey = key;
+    // A site covers its own lines (map preparation) and those of all its cameras.
     const options: [string, string][] = [
       ['*', 'All sources'],
       ['manager', 'Console service (manager)'],
-      ...shell.sites().map((s): [string, string] => [s.id, `Site · ${s.name}`]),
+      ...shell
+        .sites()
+        .flatMap((s): [string, string][] => [
+          [s.id, `Site · ${s.name}${s.cameras.length > 1 ? ' (all cameras)' : ''}`],
+          ...(s.cameras.length > 1
+            ? s.cameras.map((c): [string, string] => [
+                `${s.id}/${c.id}`,
+                `    ${s.name} · ${c.name}`,
+              ])
+            : []),
+        ]),
     ];
     if (!options.some(([v]) => v === source)) {
-      options.push([source, `Site · ${source}`]);
+      options.push([source, `Source · ${source}`]);
     }
     fill(
       sourceSelect,
