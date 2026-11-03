@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 
+#include "jp/server/site_clock.hpp"
 #include "jp/twin/world_state_json.hpp"
 #include "server_impl.hpp"
 
@@ -25,6 +26,14 @@ using json = nlohmann::json;
 
 constexpr auto kIdleWait = std::chrono::milliseconds(20);
 constexpr auto kMaxLag = std::chrono::seconds(1);
+// Playing by a site clock: farther behind it than kSkipLagNs, frames are passed unprocessed until
+// within kCatchUpNs; ahead of it by more than kSyncToleranceNs (a seek back, the loop wrapping
+// round), the recording continues at the clock's position.
+constexpr std::int64_t kSkipLagNs = 300'000'000;
+constexpr std::int64_t kCatchUpNs = 100'000'000;
+constexpr std::int64_t kSyncToleranceNs = 500'000'000;
+constexpr std::int64_t kMaxWaitNs = 2'000'000'000;
+constexpr double kDefaultFps = 10.0;
 constexpr double kRateSmoothing = 0.1;
 constexpr int kRawJpegQuality = 92;
 
@@ -130,6 +139,9 @@ void TwinServer::Impl::register_playback_routes() {
     const auto body = json::parse(r.body, nullptr, false);
     if (body.is_discarded() || !body.contains("action")) {
       return crow::response(400, R"(expected {"action": "play" | "pause" | "seek"})");
+    }
+    if (synced()) {
+      return crow::response(409, "playback follows the site clock: use the site's playback");
     }
     const auto action = body["action"].get<std::string>();
     const std::scoped_lock lock(control_mutex);
@@ -257,7 +269,137 @@ bool TwinServer::Impl::apply_controls() {
   return is_playing;
 }
 
+bool TwinServer::Impl::synced() const {
+  return !options.clock.empty() && source->frame_count().has_value();
+}
+
+void TwinServer::Impl::count_frame(Clock::time_point& last_frame, double& fps) {
+  const auto now = Clock::now();
+  if (last_frame.time_since_epoch().count() != 0) {
+    const double instant = 1.0 / std::chrono::duration<double>(now - last_frame).count();
+    fps = fps == 0.0 ? instant : ((1.0 - kRateSmoothing) * fps) + (kRateSmoothing * instant);
+  }
+  last_frame = now;
+}
+
+bool TwinServer::Impl::sync_catch_up(std::int64_t target) {
+  while (!sync.have_last || sync.last_ns < target - kCatchUpNs) {
+    const auto timestamp = source->skip();
+    if (!timestamp) {
+      sync.at_end = true;
+      return false;
+    }
+    sync.have_last = true;
+    sync.last_ns = *timestamp;
+  }
+  return true;
+}
+
+std::optional<TwinServer::Impl::Prepared> TwinServer::Impl::sync_read() {
+  const auto started = Clock::now();
+  const bool want_video =
+      video_clients.size() > 0 &&
+      started - last_video >= std::chrono::duration<double>(1.0 / options.video_max_fps);
+  auto frame = source->next(want_video);
+  if (!frame) {
+    sync.at_end = true;
+    return std::nullopt;
+  }
+  sync.have_last = true;
+  sync.last_ns = frame->timestamp_ns;
+  return prepare(std::move(*frame), started);
+}
+
+void TwinServer::Impl::sync_paused(std::int64_t target) {
+  // The frame at the clock's position is shown once (after a seek, a start or the pause of a
+  // camera that was behind), so all cameras stand at the same moment.
+  const bool shown = sync.have_last && target - sync.last_ns <= kCatchUpNs;
+  if (shown || sync.at_end || !sync_catch_up(target)) {
+    std::this_thread::sleep_for(kIdleWait);
+    return;
+  }
+  if (const auto prepared = sync_read()) {
+    send(*prepared);
+  }
+}
+
+bool TwinServer::Impl::sync_playing(const SiteClock& clock, std::int64_t period,
+                                    std::int64_t target) {
+  if (sync.at_end) {
+    // Until the clock wraps round; the site's loop length may not be known yet.
+    if (sync.own_period_ns == 0 && sync.have_last) {
+      sync.own_period_ns = sync.last_ns + static_cast<std::int64_t>(1e9 / sync.rate);
+    }
+    std::this_thread::sleep_for(kIdleWait);
+    return false;
+  }
+  const bool behind = !sync.have_last || target - sync.last_ns > kSkipLagNs;
+  if (behind && !sync_catch_up(target)) {
+    return false;
+  }
+  const auto prepared = sync_read();
+  if (!prepared) {
+    return false;
+  }
+  // Shown when the clock reaches the frame.
+  const std::int64_t ahead = prepared->timestamp_ns - clock.position(wall_now_ns(), period);
+  if (ahead > 0 && ahead < kMaxWaitNs) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(
+        static_cast<std::int64_t>(static_cast<double>(ahead) / clock.speed)));
+  }
+  send(*prepared);
+  return true;
+}
+
+void TwinServer::Impl::play_synced(const std::future<void>& server) {
+  SiteClockFile file(options.clock);
+  // Until the manager's clock is read: playing from the start, now.
+  SiteClock clock;
+  clock.epoch_ns = wall_now_ns();
+  clock.speed = options.speed;
+  sync = {};
+  sync.rate = source->fps().value_or(kDefaultFps);
+  Clock::time_point last_frame;
+  double fps = 0.0;
+  while (server.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+    // Zones and detection regions; seeks and pauses come with the clock.
+    static_cast<void>(apply_controls());
+    if (auto fresh = file.poll()) {
+      clock = *fresh;
+    }
+    const std::int64_t period = options.loop ? std::max(clock.period_ns, sync.own_period_ns) : 0;
+    const std::int64_t target = clock.position(wall_now_ns(), period);
+    {
+      const std::scoped_lock lock(status_mutex);
+      status["playing"] = clock.playing;
+      status["fps"] = fps;
+      status["clients"] = world_clients.size();
+      status["clock_lag_ms"] =
+          sync.have_last ? nlohmann::json(static_cast<double>(target - sync.last_ns) / 1e6)
+                         : nlohmann::json(nullptr);
+    }
+    // Ahead of the clock (a seek back, the loop wrapping round): continue at its position.
+    if (sync.have_last && target + kSyncToleranceNs < sync.last_ns) {
+      source->seek(std::max<std::int64_t>(
+          0, static_cast<std::int64_t>(static_cast<double>(target) * 1e-9 * sync.rate) - 1));
+      events.reset();
+      sync.have_last = false;
+      sync.at_end = false;
+    }
+    if (!clock.playing) {
+      sync_paused(target);
+    } else if (sync_playing(clock, period, target)) {
+      count_frame(last_frame, fps);
+    }
+  }
+}
+
 void TwinServer::Impl::play_loop(const std::future<void>& server) {
+  if (synced()) {
+    spdlog::info("playback follows the site clock {}", options.clock.string());
+    play_synced(server);
+    return;
+  }
   Clock::time_point last_frame;
   double fps = 0.0;
   while (server.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
@@ -291,12 +433,7 @@ void TwinServer::Impl::play_loop(const std::future<void>& server) {
     const Prepared prepared = prepare(std::move(*frame), started);
     wait_until_due(timestamp_ns);
     send(prepared);
-    const auto now = Clock::now();
-    if (last_frame.time_since_epoch().count() != 0) {
-      const double instant = 1.0 / std::chrono::duration<double>(now - last_frame).count();
-      fps = fps == 0.0 ? instant : ((1.0 - kRateSmoothing) * fps) + (kRateSmoothing * instant);
-    }
-    last_frame = now;
+    count_frame(last_frame, fps);
   }
 }
 
@@ -307,10 +444,19 @@ TwinServer::TwinServer(ServerOptions options, ServedScene scene, core::ClassCata
   const std::scoped_lock lock(impl_->status_mutex);
   // Camera streams have no frame count and cannot seek.
   const auto frame_count = impl_->source->frame_count();
-  impl_->status = {
-      {"scene_id", impl_->scene.config.scene_id}, {"camera_id", impl_->scene.config.camera_id},
-      {"source", impl_->source->kind()},          {"frame_count", frame_count.value_or(-1)},
-      {"seekable", frame_count.has_value()},      {"calibrated", impl_->scene.ground.has_value()}};
+  impl_->status = {{"scene_id", impl_->scene.config.scene_id},
+                   {"camera_id", impl_->scene.config.camera_id},
+                   {"source", impl_->source->kind()},
+                   {"frame_count", frame_count.value_or(-1)},
+                   {"seekable", frame_count.has_value()},
+                   {"calibrated", impl_->scene.ground.has_value()},
+                   {"synced", impl_->synced()}};
+  // Recordings: their frame rate and length, for the site clock (seeks, loop length).
+  if (const auto rate = impl_->source->fps(); rate && frame_count) {
+    impl_->status["video_fps"] = *rate;
+    impl_->status["duration_ns"] =
+        static_cast<std::int64_t>(static_cast<double>(*frame_count) / *rate * 1e9);
+  }
 }
 
 TwinServer::~TwinServer() = default;
@@ -347,6 +493,9 @@ ServerConfig load_server_config(const std::filesystem::path& path) {
     const YAML::Node playback = root["playback"];
     config.server.loop = playback["loop"].as<bool>();
     config.server.speed = playback["speed"].as<double>();
+    if (const YAML::Node clock = playback["clock"]) {
+      config.server.clock = clock.as<std::string>();
+    }
     const YAML::Node startup = root["startup"];
     config.startup.scene = startup["scene"].as<std::string>();
     config.startup.mode = startup["mode"].as<std::string>();

@@ -73,8 +73,18 @@ class LiveSource final : public WorldSource {
     return true;
   }
 
+  std::optional<std::int64_t> skip() override {
+    // Decoded only: the detector, tracker and signal filters do not see the frame.
+    const auto frame = frames_->next();
+    return frame ? std::optional(frame->timestamp_ns) : std::nullopt;
+  }
+
   [[nodiscard]] std::optional<std::int64_t> frame_count() const override {
     return frames_->frame_count();
+  }
+  [[nodiscard]] std::optional<double> fps() const override {
+    const double rate = frames_->fps();
+    return rate > 0.0 ? std::optional(rate) : std::nullopt;
   }
   [[nodiscard]] std::string kind() const override { return "live"; }
   void set_regions(const DetectionRegions& regions) override {

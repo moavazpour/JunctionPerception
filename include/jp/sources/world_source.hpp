@@ -45,6 +45,14 @@ class WorldSource {
   /// Continues at `frame` (clamped to the source); false if the source cannot seek.
   virtual bool seek(std::int64_t frame) = 0;
   [[nodiscard]] virtual std::optional<std::int64_t> frame_count() const = 0;
+  /// Passes one frame without processing it (to catch up with a shared clock): its timestamp,
+  /// or nothing at the end of the source.
+  virtual std::optional<std::int64_t> skip() {
+    const auto frame = next(false);
+    return frame ? std::optional(frame->timestamp_ns) : std::nullopt;
+  }
+  /// Frame rate of a recording, to find the frame at a time; empty if unknown.
+  [[nodiscard]] virtual std::optional<double> fps() const { return std::nullopt; }
   /// "live", "oracle" or "replay".
   [[nodiscard]] virtual std::string kind() const = 0;
   /// Areas and lines where detections are accepted; only camera sources detect anything.

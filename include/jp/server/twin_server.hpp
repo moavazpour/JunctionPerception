@@ -23,6 +23,9 @@ struct ServerOptions {
   int jpeg_quality = 70;
   bool loop = true;    ///< Restart file sources at the end.
   double speed = 1.0;  ///< Playback speed relative to the recording's timestamps.
+  /// Site clock file (written by the site manager) that recordings play by; empty: the server
+  /// paces its recording by itself. See SiteClock.
+  std::filesystem::path clock;
 };
 
 /// Startup selection of the scene and the world source.

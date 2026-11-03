@@ -6,6 +6,7 @@
 
 #include "jp/calibration/ground_calibration.hpp"
 #include "jp/core/class_catalog.hpp"
+#include "jp/server/site_clock.hpp"
 #include "jp/server/twin_server.hpp"
 #include "jp/sources/world_source.hpp"
 #include "jp/twin/world_state_json.hpp"
@@ -19,6 +20,42 @@ TEST(ServerConfig, RepositoryConfigIsValid) {
   EXPECT_FALSE(config.startup.scene.empty());
   EXPECT_TRUE(config.startup.mode == "live" || config.startup.mode == "oracle" ||
               config.startup.mode == "replay");
+}
+
+TEST(SiteClock, PlaysPausesAndLoops) {
+  const auto clock = jp::server::parse_site_clock(
+      R"({"epoch_ns": 1000000000, "media_ns": 2000000000, "speed": 2.0, "playing": true,
+          "period_ns": 10000000000})");
+  ASSERT_TRUE(clock.has_value());
+  // 1 s after the epoch at double speed: 2 s + 2 s into the recording.
+  EXPECT_EQ(clock->position(2'000'000'000, 0), 4'000'000'000);
+  // 5 s after: 12 s, wrapped into the 10 s loop.
+  EXPECT_EQ(clock->position(6'000'000'000, clock->period_ns), 2'000'000'000);
+  auto paused = *clock;
+  paused.playing = false;
+  EXPECT_EQ(paused.position(6'000'000'000, paused.period_ns), 2'000'000'000);
+  EXPECT_FALSE(jp::server::parse_site_clock(R"({"epoch_ns": 1})").has_value());
+  EXPECT_FALSE(jp::server::parse_site_clock("not json").has_value());
+  EXPECT_FALSE(
+      jp::server::parse_site_clock(R"({"epoch_ns": 0, "media_ns": 0, "speed": 0})").has_value());
+}
+
+TEST(ServerConfig, ReadsTheSiteClockPath) {
+  const auto path = std::filesystem::temp_directory_path() / "jp_server_clock_test.yaml";
+  {
+    std::ifstream base(JP_SOURCE_DIR "/configs/server.yaml");
+    std::ostringstream text;
+    text << base.rdbuf();
+    std::string yaml = text.str();
+    yaml.replace(yaml.find("playback:"), std::string("playback:").size(),
+                 "playback:\n  clock: /tmp/site/clock.json");
+    std::ofstream(path) << yaml;
+  }
+  EXPECT_EQ(jp::server::load_server_config(path).server.clock,
+            std::filesystem::path("/tmp/site/clock.json"));
+  EXPECT_TRUE(
+      jp::server::load_server_config(JP_SOURCE_DIR "/configs/server.yaml").server.clock.empty());
+  std::filesystem::remove(path);
 }
 
 TEST(ServerConfig, SceneDescriptionCarriesCalibrationZonesAndClasses) {

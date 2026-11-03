@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "jp/server/site_clock.hpp"
 #include "jp/server/twin_server.hpp"
 
 namespace jp::server {
@@ -88,6 +89,27 @@ struct TwinServer::Impl {
   void register_scene_routes();
   void register_region_routes();  // detection areas and counting lines (scene_routes.cpp)
   void play_loop(const std::future<void>& server);
+  /// Whether the recording plays by the site clock (options.clock) instead of its own pace.
+  [[nodiscard]] bool synced() const;
+  void play_synced(const std::future<void>& server);
+
+  // Playback by the site clock: the last frame read (processed or passed) and the recording.
+  struct SyncState {
+    bool have_last = false;  ///< A frame was read since the start or the last reposition.
+    std::int64_t last_ns = 0;
+    bool at_end = false;
+    std::int64_t own_period_ns = 0;  ///< Length of the recording, once its end was reached.
+    double rate = 10.0;              ///< Frame rate of the recording.
+  };
+  SyncState sync;
+  /// Passes frames unprocessed until close to `target`; false at the end of the recording.
+  bool sync_catch_up(std::int64_t target);
+  [[nodiscard]] std::optional<Prepared> sync_read();
+  void sync_paused(std::int64_t target);
+  /// One frame while the clock plays; true if one was sent.
+  bool sync_playing(const SiteClock& clock, std::int64_t period, std::int64_t target);
+  /// Updates the smoothed frame rate after a frame was sent.
+  static void count_frame(Clock::time_point& last_frame, double& fps);
   // Applies pending seeks and zone changes; returns whether playback is running.
   bool apply_controls();
   [[nodiscard]] Prepared prepare(sources::SourceFrame frame, Clock::time_point started);

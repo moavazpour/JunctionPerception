@@ -1,6 +1,6 @@
 find_package(Crow CONFIG REQUIRED)
 
-add_library(jp_server_lib twin_server.cpp scene_routes.cpp)
+add_library(jp_server_lib twin_server.cpp scene_routes.cpp site_clock.cpp)
 add_library(jp::server ALIAS jp_server_lib)
 
 target_link_libraries(jp_server_lib
