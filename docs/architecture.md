@@ -218,11 +218,19 @@ calibration "apply" exits on purpose; crashes back off up to 30 s), keeps their 
 WebSockets). Stopping the backend stops
 all servers but keeps the console; the state survives restarts (`.cache/manager/state.json`).
 
+The recordings of a site with two or more cameras play by one clock
+(`.cache/manager/sites/<site>/clock.json`: wall time and recording position, speed, playing,
+loop length = the longest recording): each server shows the frame the clock is at, passes frames
+unprocessed (decoded, not detected) when it falls behind and continues at the clock's position
+after a seek or the loop. Cameras of different speed, and a camera that restarts, stay in step;
+play, pause and seek of the twin act on the whole site. Sites with streams play live as before.
+
 | Endpoint | Description |
 |---|---|
 | `GET /manager/api/sites` | Sites with their cameras, settings, process state and live status |
 | `POST /manager/api/sites` | Creates an intersection (scene folder, cameras, `site.yaml`, optionally its map layers) |
 | `PATCH`, `DELETE /manager/api/sites/<id>` | Name, location, map area or placement; moves the site to the trash |
+| `POST /manager/api/sites/<id>/playback` | `play`, `pause` or `seek` (`frame` of `camera`) for all cameras of the site |
 | `POST /manager/api/sites/<id>/<action>` | `start`, `stop`, `restart` (all cameras), `prepare-map` |
 | `POST /manager/api/sites/<id>/cameras` | Adds a camera |
 | `PATCH`, `DELETE /manager/api/sites/<id>/cameras/<camera>` | Changes a camera (restarts it if running); moves it to the trash |

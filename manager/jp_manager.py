@@ -20,6 +20,7 @@ purpose), keeps their logs and reports the host.
   GET  /manager/api/sites/<id>                one site
   PATCH /manager/api/sites/<id>               name, location, map area or map placement
   DELETE /manager/api/sites/<id>              stop and move the scene folder to the trash
+  POST /manager/api/sites/<id>/playback       play | pause | seek all cameras of the site
   POST /manager/api/sites/<id>/<action>       start | stop | restart | prepare-map
   POST /manager/api/sites/<id>/cameras        add a camera
   PATCH /manager/api/sites/<id>/cameras/<c>   change a camera (restarts it if it runs)
@@ -439,6 +440,10 @@ class Camera:
         config["server"]["port"] = self.runtime.port
         config["video"] = merge(config.get("video", {}), self.settings["video"])
         config["playback"] = merge(config.get("playback", {}), self.settings["playback"])
+        if self.site.synced():
+            # The recordings of the site play by one clock (seek, pause and loop together).
+            config["playback"]["clock"] = str(self.site.clock_path.resolve())
+            config["playback"]["speed"] = self.site.clock_speed()
         source = self.settings["source"]
         config["startup"] = {
             "scene": str(self.dir),
@@ -473,6 +478,8 @@ class Camera:
             return
         r.error = None
         r.backoff_s = 0.0
+        if self.site.synced() and self.site.clock is None:
+            self.site.reset_clock()
         r.supervisor = asyncio.create_task(self.supervise())
 
     async def stop(self) -> None:
@@ -581,6 +588,20 @@ class Camera:
             level, message = (match.group(1), match.group(2)) if match else ("info", text)
             self.log("warning" if level == "warn" else level, message)
 
+    async def send_playback(self, command: dict[str, Any]) -> None:
+        """Play, pause or seek of a camera that plays by itself (no site clock)."""
+        r = self.runtime
+        if r.state != "running" or r.port is None or self.manager.session is None:
+            return
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with self.manager.session.post(
+                f"http://127.0.0.1:{r.port}/api/playback", json=command, timeout=timeout
+            ):
+                pass
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            self.log("warning", f"playback command {command.get('action')} not delivered")
+
     async def poll_status(self, session: aiohttp.ClientSession) -> None:
         r = self.runtime
         if r.state not in ("starting", "running") or r.port is None:
@@ -607,6 +628,8 @@ class Site:
         self.cameras: dict[str, Camera] = {}
         self.map_job: dict[str, Any] | None = None
         self.tasks: set[asyncio.Task[Any]] = set()
+        # Playback clock of the cameras (see synced()); written to clock_path for their servers.
+        self.clock: dict[str, Any] | None = None
         self.reload()
 
     @property
@@ -749,6 +772,8 @@ class Site:
         return camera
 
     def start(self) -> None:
+        if self.synced() and not self.is_active():
+            self.reset_clock()
         for camera in self.cameras.values():
             if camera.enabled:
                 camera.start()
@@ -758,6 +783,99 @@ class Site:
 
     async def restart(self) -> None:
         await asyncio.gather(*(c.restart() for c in self.cameras.values() if c.enabled))
+        if self.synced():
+            self.reset_clock()
+
+    # ------------------------------------------------------------------- playback clock
+
+    @property
+    def clock_path(self) -> Path:
+        return self.manager.config.state_dir / "sites" / self.id / "clock.json"
+
+    def synced(self) -> bool:
+        """Whether the cameras play their recordings by one clock: two or more enabled cameras,
+        all with recordings (streams play live and cannot seek). A camera that restarts or falls
+        behind then rejoins the others at the clock's position."""
+        cameras = [c for c in self.cameras.values() if c.enabled]
+        return len(cameras) > 1 and all(
+            "://" not in str(c.settings["source"].get("input", "")) for c in cameras
+        )
+
+    def clock_speed(self) -> float:
+        speeds = [float(c.settings["playback"].get("speed", 1.0)) for c in self.cameras.values()]
+        return speeds[0] if speeds else 1.0
+
+    def reset_clock(self) -> None:
+        """Playing from the start of the recordings, now."""
+        period = self.clock["period_ns"] if self.clock else 0
+        self.clock = {
+            "epoch_ns": time.time_ns(),
+            "media_ns": 0,
+            "speed": self.clock_speed(),
+            "playing": True,
+            "period_ns": period,
+        }
+        self.write_clock()
+
+    def write_clock(self) -> None:
+        assert self.clock is not None
+        path = self.clock_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Replaced atomically: the camera servers never read half a file.
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.clock), encoding="utf-8")
+        os.replace(temporary, path)
+
+    def clock_position(self, now_ns: int) -> int:
+        """Recording time the clock is at (same rule as the servers' SiteClock::position)."""
+        assert self.clock is not None
+        c = self.clock
+        at = c["media_ns"] + (round((now_ns - c["epoch_ns"]) * c["speed"]) if c["playing"] else 0)
+        return at % c["period_ns"] if c["period_ns"] > 0 else at
+
+    def update_period(self) -> None:
+        """Loop length: the longest recording of the running cameras (they report it)."""
+        if self.clock is None or not self.synced():
+            return
+        durations = [
+            int(c.runtime.status["duration_ns"])
+            for c in self.cameras.values()
+            if c.runtime.status and c.runtime.status.get("duration_ns")
+        ]
+        if durations and max(durations) != self.clock["period_ns"]:
+            self.clock["period_ns"] = max(durations)
+            self.write_clock()
+
+    async def playback(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Play, pause or seek all cameras of the site together."""
+        action = command.get("action")
+        if action not in ("play", "pause", "seek"):
+            raise BadRequest('expected {"action": "play" | "pause" | "seek"}')
+        frame = command.get("frame")
+        if action == "seek" and (not isinstance(frame, int) or frame < 0):
+            raise BadRequest("seek needs a frame (0 or more)")
+        if not self.synced():
+            # Each camera plays by itself: the command goes to every running one.
+            await asyncio.gather(*(c.send_playback(command) for c in self.cameras.values()))
+            return {"synced": False}
+        if self.clock is None:
+            self.reset_clock()
+        assert self.clock is not None
+        now = time.time_ns()
+        position = self.clock_position(now)
+        if action == "seek":
+            # The frame of the camera the console shows, at its frame rate.
+            shown = self.cameras.get(str(command.get("camera", "")))
+            statuses = [shown.runtime.status] if shown and shown.runtime.status else []
+            statuses += [c.runtime.status for c in self.cameras.values() if c.runtime.status]
+            fps = float(next((s["video_fps"] for s in statuses if s.get("video_fps")), 10.0))
+            position = round(int(frame) / fps * 1e9)
+        else:
+            self.clock["playing"] = action == "play"
+        self.clock["epoch_ns"] = now
+        self.clock["media_ns"] = position
+        self.write_clock()
+        return {"synced": True, "clock": self.clock}
 
     def is_active(self) -> bool:
         return any(c.is_active() for c in self.cameras.values())
@@ -966,6 +1084,8 @@ class Manager:
         assert self.session is not None
         while True:
             await asyncio.gather(*(c.poll_status(self.session) for c in self.cameras()))
+            for site in self.sites.values():
+                site.update_period()
             self.follow_cameras()
             await asyncio.sleep(STATUS_INTERVAL_S)
 
@@ -1362,6 +1482,12 @@ def routes(manager: Manager) -> web.RouteTableDef:
             raise BadRequest(f"unknown action {action}")
         log.info("camera %s: %s", camera.key, action)
         return ok(site.describe())
+
+    @r.post(f"{api}/sites/{{id}}/playback")
+    async def site_playback(request: web.Request) -> web.Response:
+        """Play, pause or seek ({"frame", "camera"}) of all cameras of the site together."""
+        site = manager.site(request.match_info["id"])
+        return ok(await site.playback(await body_of(request)))
 
     @r.post(f"{api}/sites/{{id}}/{{action}}")
     async def site_action(request: web.Request) -> web.Response:
