@@ -74,19 +74,68 @@ function element<T extends HTMLElement>(selector: string): T {
   return found;
 }
 
-/** Image pixels -> world through the fitted homography, and back. */
+/**
+ * Image pixels -> world through the fitted homography, and back. Ground beyond the
+ * camera's horizon has no image; the homography would mirror it onto the far side.
+ */
 class Projection {
   constructor(
     readonly imageToGround: number[][],
     private readonly groundToImage: number[][] | null,
+    /** Sign of the ground-to-image w on the side the camera sees. */
+    private readonly side: number,
+    /** Smallest signed w kept, a margin short of the horizon. */
+    private readonly minDepth: number,
   ) {}
 
-  static from(fit: FitResult | null): Projection | null {
-    return fit ? new Projection(fit.image_to_ground, invert3(fit.image_to_ground)) : null;
+  /** `groundPixel` is any image pixel known to show the ground, e.g. a control point. */
+  static from(fit: FitResult | null, groundPixel: Point): Projection | null {
+    if (!fit) {
+      return null;
+    }
+    // H_gi = H_ig^-1, so w_gi at the ground point of pixel q is 1 / w_ig(q).
+    const [g = 0, k = 0, l = 1] = fit.image_to_ground[2] ?? [];
+    const w = g * groundPixel[0] + k * groundPixel[1] + l;
+    const reference = Math.abs(w) > 1e-12 ? 1 / Math.abs(w) : 1;
+    return new Projection(
+      fit.image_to_ground,
+      invert3(fit.image_to_ground),
+      Math.sign(w) || 1,
+      0.01 * reference,
+    );
+  }
+
+  /** Signed distance from the horizon, positive where the camera sees the ground. */
+  private depth(x: number, y: number): number {
+    const [g = 0, k = 0, l = 1] = this.groundToImage?.[2] ?? [];
+    return this.side * (g * x + k * y + l) - this.minDepth;
   }
 
   toImage(x: number, y: number): [number, number] | null {
-    return this.groundToImage ? applyHomography(this.groundToImage, x, y) : null;
+    if (!this.groundToImage || this.depth(x, y) <= 0) {
+      return null;
+    }
+    return applyHomography(this.groundToImage, x, y);
+  }
+
+  /** The part of a ground polygon in front of the horizon, in image pixels. */
+  polygonToImage(polygon: Point[]): [number, number][] {
+    const clipped: Point[] = [];
+    polygon.forEach((a, i) => {
+      const b = polygon[(i + 1) % polygon.length] as Point;
+      const da = this.depth(a[0], a[1]);
+      const db = this.depth(b[0], b[1]);
+      if (da > 0) {
+        clipped.push(a);
+      }
+      if (da > 0 !== db > 0) {
+        const t = da / (da - db);
+        clipped.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+      }
+    });
+    return clipped
+      .map(([x, y]) => (this.groundToImage ? applyHomography(this.groundToImage, x, y) : null))
+      .filter((p): p is [number, number] => p !== null);
   }
 }
 
@@ -495,7 +544,8 @@ class CalibrationApp {
     }
     try {
       this.fit = await fitControlPoints(this.points);
-      this.projection = Projection.from(this.fit);
+      const anchor = this.points.find((p) => !p.check);
+      this.projection = Projection.from(this.fit, anchor ? [anchor.u, anchor.v] : [0, 0]);
       this.message('');
     } catch (error) {
       this.fit = null;
@@ -736,11 +786,12 @@ class CalibrationApp {
     const projection = this.projection;
     if (projection) {
       for (const zone of this.zones) {
-        const corners = zone.polygon
-          .map(([x, y]) => projection.toImage(x, y))
-          .filter((p): p is [number, number] => p !== null)
+        const corners = projection
+          .polygonToImage(zone.polygon)
           .map(([u, v]) => view.toScreen(u, v));
-        this.polygon(c, corners, COLORS.zone);
+        if (corners.length >= 3) {
+          this.polygon(c, corners, COLORS.zone);
+        }
       }
     }
     for (const point of this.points) {
