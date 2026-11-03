@@ -782,9 +782,17 @@ class CalibrationApp {
       const [x, y] = view.toScreen(0, 0);
       c.drawImage(this.image, x, y, this.image.width * view.scale, this.image.height * view.scale);
     }
-    // Zones and map points projected into the image with the current fit.
+    // Zones and map points projected into the image with the current fit; the zones belong to
+    // the whole site, so only the part inside this camera's frame is drawn.
     const projection = this.projection;
     if (projection) {
+      c.save();
+      if (this.image.complete && this.image.naturalWidth > 0) {
+        const [x, y] = view.toScreen(0, 0);
+        c.beginPath();
+        c.rect(x, y, this.image.width * view.scale, this.image.height * view.scale);
+        c.clip();
+      }
       for (const zone of this.zones) {
         const corners = projection
           .polygonToImage(zone.polygon)
@@ -793,6 +801,7 @@ class CalibrationApp {
           this.polygon(c, corners, COLORS.zone);
         }
       }
+      c.restore();
     }
     for (const point of this.points) {
       const [sx, sy] = view.toScreen(point.u, point.v);
