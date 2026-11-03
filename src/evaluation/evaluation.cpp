@@ -72,7 +72,7 @@ Polygon intersection(Polygon subject, const Polygon& clip) {
         subject.push_back(p);
       }
       if ((sp >= 0.0) != (sq >= 0.0)) {
-        subject.push_back(p + (q - p) * (sp / (sp - sq)));
+        subject.emplace_back(p + (q - p) * (sp / (sp - sq)));
       }
     }
   }
