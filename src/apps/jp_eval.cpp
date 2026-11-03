@@ -132,8 +132,13 @@ jp::evaluation::Sequence load_run(const RunSpec& run, const jp::core::ClassCatal
     frame.timestamp_ns = state->timestamp_ns;
     frame.truth = truth[index];
     for (const auto& o : state->objects) {
+      // The size the twin shows: measured by a keypoint model, else the class size.
+      const auto& cls = catalog.info(o.object_class);
+      const bool measured = o.length_m && o.width_m;
+      const Eigen::Vector2d size = measured ? Eigen::Vector2d(*o.length_m, *o.width_m)
+                                            : Eigen::Vector2d(cls.length_m, cls.width_m);
       frame.predicted.push_back(
-          {o.id, o.object_class, o.vru, {o.x, o.y}, o.heading_rad, o.speed_mps});
+          {o.id, o.object_class, o.vru, {o.x, o.y}, o.heading_rad, o.speed_mps, size, measured});
     }
     for (const auto& e : state->events) {
       if (e.type == jp::vru::kVruVehicleConflict && e.object_ids.size() == 2 &&
@@ -154,6 +159,22 @@ double ratio(std::size_t part, std::size_t whole) {
 
 json stats_json(const jp::evaluation::ErrorStats& s) {
   return {{"count", s.count}, {"mean", s.mean}, {"median", s.median}, {"p90", s.p90}};
+}
+
+json footprint_json(const jp::evaluation::FootprintMetrics& f) {
+  return {{"vehicles", f.vehicles},
+          {"with_heading", f.with_heading},
+          {"stationary", f.stationary},
+          {"stationary_with_heading", f.stationary_with_heading},
+          {"front_correct", f.front_correct},
+          {"measured_size", f.measured_size},
+          {"axis_deg", stats_json(f.axis_deg)},
+          {"stationary_axis_deg", stats_json(f.stationary_axis_deg)},
+          {"length_m", stats_json(f.length_m)},
+          {"width_m", stats_json(f.width_m)},
+          {"length_bias_m", stats_json(f.length_bias_m)},
+          {"width_bias_m", stats_json(f.width_bias_m)},
+          {"iou", stats_json(f.iou)}};
 }
 
 json metrics_json(const Metrics& m) {
@@ -178,14 +199,20 @@ json metrics_json(const Metrics& m) {
                       {"recall", ratio(r.matched, r.truth)},
                       {"position_m", stats_json(r.position_m)}});
   }
+  json footprint_classes = json::object();
+  for (const auto& [name, f] : m.footprint_by_class) {
+    footprint_classes[name] = footprint_json(f);
+  }
   const auto& c = m.conflicts;
   return {{"frames", m.frames},
           {"truth", m.truth},
           {"matched", m.matched},
           {"false_positives", m.false_positives},
+          {"unlabelled", m.unlabelled},
           {"precision", m.precision()},
           {"recall", m.recall()},
           {"position_m", stats_json(m.position_m)},
+          {"range_bias_m", stats_json(m.range_bias_m)},
           {"heading_deg", stats_json(m.heading_deg)},
           {"moving_without_heading", m.moving_without_heading},
           {"speed_mps", stats_json(m.speed_mps)},
@@ -205,6 +232,8 @@ json metrics_json(const Metrics& m) {
             {"confirmed", c.confirmed},
             {"closest_truth_gap_m",
              c.closest_truth_gap_m ? json(*c.closest_truth_gap_m) : json(nullptr)}}},
+          {"footprint", footprint_json(m.footprint)},
+          {"footprint_by_class", footprint_classes},
           {"by_class", classes},
           {"by_range", ranges},
           {"confusion", m.confusion}};
@@ -219,6 +248,23 @@ std::string summary_row(const std::string& name, const Metrics& m) {
       m.speed_mps.p90, m.tracking.mota, m.tracking.idf1, m.tracking.id_switches);
 }
 
+// Share of a count as "part (percent)".
+std::string share(std::size_t part, std::size_t whole) {
+  return std::format("{} ({:.0f} %)", part, 100.0 * ratio(part, whole));
+}
+
+std::string footprint_row(const std::string& name, const jp::evaluation::FootprintMetrics& f) {
+  return std::format(
+      "| {} | {} | {} | {} | {:.1f} / {:.1f} / {:.1f} | {:.1f} / {:.1f} / {:.1f} | {} | {} | "
+      "{:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} |\n",
+      name, f.vehicles, share(f.with_heading, f.vehicles),
+      share(f.stationary_with_heading, f.stationary), f.axis_deg.mean, f.axis_deg.median,
+      f.axis_deg.p90, f.stationary_axis_deg.mean, f.stationary_axis_deg.median,
+      f.stationary_axis_deg.p90, share(f.front_correct, f.with_heading),
+      share(f.measured_size, f.vehicles), f.length_m.mean, f.length_m.median, f.length_m.p90,
+      f.width_m.mean, f.width_m.median, f.width_m.p90, f.iou.mean, f.iou.median, f.iou.p90);
+}
+
 std::string report(const std::string& title, const jp::evaluation::Options& options,
                    const std::vector<std::pair<std::string, Metrics>>& groups,
                    const Metrics& overall) {
@@ -228,6 +274,12 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
       "projects into the camera image. Heading error: labelled vehicles moving at {:.1f} m/s or "
       "more. Errors: mean / median / P90.\n\n",
       options.vehicle_gate_m, options.vru_gate_m, options.moving_speed_mps);
+  if (options.ignore_unlabelled) {
+    md += std::format(
+        "Unlabelled road users ignored: {} predictions matched to no label and farther than "
+        "{:.1f} m from every label are neither true nor false positives.\n\n",
+        overall.unlabelled, options.displaced_gate_m);
+  }
   md +=
       "| Group | Frames | Labels | Precision | Recall | Position error (m) | Heading error (deg) "
       "| Speed error (m/s) | MOTA | IDF1 | ID switches |\n";
@@ -246,6 +298,35 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
                       m.displaced, m.displaced_m.mean, m.displaced_m.median, m.displaced_m.p90,
                       ratio(m.matched + m.displaced, m.matched + m.false_positives),
                       ratio(m.matched + m.displaced, m.truth));
+  }
+  md +=
+      "\n## Footprint of labelled vehicles\n\nMatched labelled vehicles. Heading against the "
+      "label box yaw modulo 180 degrees (axis, 0-90); front correct: within 90 degrees of the "
+      "label's front. Standing: label slower than the moving speed. Size: the footprint the twin "
+      "shows (measured by the detector, else the class size). IoU: bird's-eye-view footprints of "
+      "predictions with a heading.\n\n| Group | Vehicles | With heading | Standing with heading | "
+      "Axis error (deg) | Standing axis error (deg) | Front correct | Measured size | Length "
+      "error (m) | Width error (m) | BEV IoU |\n|---|---|---|---|---|---|---|---|---|---|---|\n";
+  for (const auto& [name, m] : groups) {
+    md += footprint_row(name, m.footprint);
+  }
+  md +=
+      "\n### Bias\n\nSigned errors, mean / median: distance from the camera of matched objects, "
+      "length and width of matched vehicles (predicted minus label).\n\n| Group | Range bias (m) "
+      "| Length bias (m) | Width bias (m) |\n|---|---|---|---|\n";
+  for (const auto& [name, m] : groups) {
+    md += std::format("| {} | {:+.2f} / {:+.2f} | {:+.2f} / {:+.2f} | {:+.2f} / {:+.2f} |\n", name,
+                      m.range_bias_m.mean, m.range_bias_m.median, m.footprint.length_bias_m.mean,
+                      m.footprint.length_bias_m.median, m.footprint.width_bias_m.mean,
+                      m.footprint.width_bias_m.median);
+  }
+  md +=
+      "\n### By label class (all runs)\n\n| Class | Vehicles | With heading | Standing with "
+      "heading | Axis error (deg) | Standing axis error (deg) | Front correct | Measured size | "
+      "Length error (m) | Width error (m) | BEV IoU |\n|---|---|---|---|---|---|---|---|---|---|"
+      "---|\n";
+  for (const auto& [name, f] : overall.footprint_by_class) {
+    md += footprint_row(name, f);
   }
   md +=
       "\n## Classes (all runs)\n\n| Class | Labels | Recall | Predictions | Precision | "
@@ -311,11 +392,15 @@ int main(int argc, char** argv) {
   app.add_option("--labels", labels,
                  "Ground truth: south (south LiDAR labels) or merged (south and north)")
       ->capture_default_str();
+  bool ignore_unlabelled = false;
+  app.add_flag("--ignore-unlabelled", ignore_unlabelled,
+               "Predictions farther than the displaced gate from every label are not counted");
   CLI11_PARSE(app, argc, argv);
 
   try {
     const auto catalog = jp::core::ClassCatalog::load(classes);
-    const auto options = load_options(config);
+    auto options = load_options(config);
+    options.ignore_unlabelled = ignore_unlabelled;
     const auto label_set = jp::benchmark::parse_ground_truth_labels(labels);
     if (!label_set) {
       throw std::runtime_error("--labels must be south or merged, not " + labels);
@@ -359,6 +444,7 @@ int main(int argc, char** argv) {
                            {{"vehicle_gate_m", options.vehicle_gate_m},
                             {"vru_gate_m", options.vru_gate_m},
                             {"moving_speed_mps", options.moving_speed_mps},
+                            {"ignore_unlabelled", options.ignore_unlabelled},
                             {"conflict_gap_m", options.conflict_gap_m}}},
                           {"overall", metrics_json(overall)},
                           {"by_condition", by_condition},

@@ -9,6 +9,7 @@
 #        (variants: box_fit ray_offset none; default all three). JP_PIPELINE_CONFIG selects the
 #        pipeline config (default configs/pipeline.yaml), e.g. to compare detectors. JP_PYTHON
 #        selects the Python interpreter for the figures (default: python3, needs matplotlib).
+#        JP_EVAL_ARGS adds jp_eval options, e.g. "--labels merged --ignore-unlabelled".
 set -euo pipefail
 
 run="${1:?usage: scripts/run_benchmark.sh <run> [variant ...]}"
@@ -41,7 +42,8 @@ for variant in "${variants[@]}"; do
             eval_runs+=(--run "${seq}_${camera},${condition},${out}/world.jsonl,/data/a9_dataset_r02_${seq},scenes/tumtraf_s110_${camera}")
         done
     done
-    "${in_docker}" build/release/src/apps/jp_eval "${eval_runs[@]}" \
+    # shellcheck disable=SC2086 # JP_EVAL_ARGS is a list of options
+    "${in_docker}" build/release/src/apps/jp_eval "${eval_runs[@]}" ${JP_EVAL_ARGS:-} \
         --out "outputs/${run}/eval/${variant}" --title "${variant}"
 done
 "${JP_PYTHON:-python3}" tools/plot_evaluation.py "outputs/${run}/eval" --variants "${variants[@]}"

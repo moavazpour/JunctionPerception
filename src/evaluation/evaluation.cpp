@@ -33,6 +33,58 @@ double angle_error_deg(double a, double b) {
   return std::abs(std::remainder(a - b, 2.0 * std::numbers::pi)) * 180.0 / std::numbers::pi;
 }
 
+using Polygon = std::vector<Eigen::Vector2d>;
+
+// Footprint rectangle, corners counter-clockwise.
+Polygon rectangle(const Eigen::Vector2d& centre, double yaw, double length, double width) {
+  const Eigen::Vector2d front(std::cos(yaw), std::sin(yaw));
+  const Eigen::Vector2d left(-front.y(), front.x());
+  const Eigen::Vector2d f = 0.5 * length * front;
+  const Eigen::Vector2d l = 0.5 * width * left;
+  return {centre + f + l, centre - f + l, centre - f - l, centre + f - l};
+}
+
+double cross(const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+  return a.x() * b.y() - a.y() * b.x();
+}
+
+double area(const Polygon& polygon) {
+  double twice = 0.0;
+  for (std::size_t i = 0; i < polygon.size(); ++i) {
+    twice += cross(polygon[i], polygon[(i + 1) % polygon.size()]);
+  }
+  return 0.5 * std::abs(twice);
+}
+
+// Intersection of two convex counter-clockwise polygons (Sutherland-Hodgman).
+Polygon intersection(Polygon subject, const Polygon& clip) {
+  for (std::size_t i = 0; i < clip.size() && !subject.empty(); ++i) {
+    const Eigen::Vector2d a = clip[i];
+    const Eigen::Vector2d edge = clip[(i + 1) % clip.size()] - a;
+    const Polygon input = std::move(subject);
+    subject.clear();
+    for (std::size_t j = 0; j < input.size(); ++j) {
+      const Eigen::Vector2d& p = input[j];
+      const Eigen::Vector2d& q = input[(j + 1) % input.size()];
+      const double sp = cross(edge, p - a);
+      const double sq = cross(edge, q - a);
+      if (sp >= 0.0) {
+        subject.push_back(p);
+      }
+      if ((sp >= 0.0) != (sq >= 0.0)) {
+        subject.push_back(p + (q - p) * (sp / (sp - sq)));
+      }
+    }
+  }
+  return subject;
+}
+
+double footprint_iou(const Polygon& a, const Polygon& b) {
+  const double overlap = area(intersection(a, b));
+  const double united = area(a) + area(b) - overlap;
+  return united > 0.0 ? overlap / united : 0.0;
+}
+
 // Gap between a labelled vehicle's footprint and a labelled VRU (disc).
 double truth_gap(const TruthObject& vehicle, const TruthObject& vru) {
   return vru::rectangle_disc_gap(vehicle.position, vehicle.yaw_rad,
@@ -136,9 +188,40 @@ std::vector<std::size_t> match_frame(const Frame& frame, const Options& options)
                [&](const TruthObject& t) { return gate_of(t, options); });
 }
 
+// Footprint errors of matched labelled vehicles.
+struct FootprintAccumulator {
+  FootprintMetrics counts;
+  std::vector<double> axis;
+  std::vector<double> stationary_axis;
+  std::vector<double> length;  // signed: predicted minus label
+  std::vector<double> width;
+  std::vector<double> iou;
+
+  [[nodiscard]] FootprintMetrics finish() const {
+    const auto absolute = [](std::vector<double> values) {
+      for (double& v : values) {
+        v = std::abs(v);
+      }
+      return error_stats(values);
+    };
+    FootprintMetrics m = counts;
+    m.axis_deg = error_stats(axis);
+    m.stationary_axis_deg = error_stats(stationary_axis);
+    m.length_m = absolute(length);
+    m.width_m = absolute(width);
+    m.length_bias_m = error_stats(length);
+    m.width_bias_m = error_stats(width);
+    m.iou = error_stats(iou);
+    return m;
+  }
+};
+
 // Errors collected over all frames, turned into Metrics at the end.
 struct Accumulator {
+  FootprintAccumulator footprint;
+  std::map<std::string, FootprintAccumulator> class_footprint;
   std::vector<double> position;
+  std::vector<double> range_bias;
   std::vector<double> heading;
   std::vector<double> displaced;
   std::vector<double> speed;
@@ -174,6 +257,9 @@ class SequenceEvaluator {
     const auto matches = match_frame(frame, *options_);
     std::vector<bool> dont_care(frame.predicted.size(), false);
     std::vector<bool> matched_visible(frame.predicted.size(), false);
+    if (options_->ignore_unlabelled) {
+      ignore_unlabelled(frame, matches, dont_care);
+    }
     auto& prediction_to_track = prediction_to_track_.emplace_back();
     for (std::size_t t = 0; t < frame.truth.size(); ++t) {
       const TruthObject& truth = frame.truth[t];
@@ -204,6 +290,61 @@ class SequenceEvaluator {
     }
     count_displaced(frame, matches, dont_care, matched_visible);
     count_identity_pairs(frame, dont_care);
+  }
+
+  // Unmatched predictions with no label within the displaced gate become "don't care".
+  void ignore_unlabelled(const Frame& frame, const std::vector<std::size_t>& matches,
+                         std::vector<bool>& dont_care) {
+    std::vector<bool> matched(frame.predicted.size(), false);
+    for (const std::size_t p : matches) {
+      if (p != kNone) {
+        matched[p] = true;
+      }
+    }
+    for (std::size_t p = 0; p < frame.predicted.size(); ++p) {
+      const bool near_label =
+          std::any_of(frame.truth.begin(), frame.truth.end(), [&](const TruthObject& t) {
+            return (t.position - frame.predicted[p].position).norm() <= options_->displaced_gate_m;
+          });
+      if (!matched[p] && !near_label) {
+        dont_care[p] = true;
+        ++metrics_->unlabelled;
+      }
+    }
+  }
+
+  // Heading, size and footprint of a matched labelled vehicle; velocity of the label if known.
+  void count_footprint(const TruthObject& truth, const PredictedObject& prediction,
+                       const std::optional<Eigen::Vector2d>& velocity) {
+    const bool stationary = velocity && velocity->norm() < options_->moving_speed_mps;
+    for (FootprintAccumulator* acc : {&acc_->footprint, &acc_->class_footprint[truth.twin_class]}) {
+      auto& c = acc->counts;
+      ++c.vehicles;
+      c.stationary += stationary ? 1 : 0;
+      if (prediction.size_m.x() > 0.0) {
+        c.measured_size += prediction.measured_size ? 1 : 0;
+        acc->length.push_back(prediction.size_m.x() - truth.length_m);
+        acc->width.push_back(prediction.size_m.y() - truth.width_m);
+      }
+      if (!prediction.heading_rad) {
+        continue;
+      }
+      ++c.with_heading;
+      const double error = angle_error_deg(*prediction.heading_rad, truth.yaw_rad);
+      const double axis = std::min(error, 180.0 - error);
+      c.front_correct += error < 90.0 ? 1 : 0;
+      acc->axis.push_back(axis);
+      if (stationary) {
+        ++c.stationary_with_heading;
+        acc->stationary_axis.push_back(axis);
+      }
+      if (prediction.size_m.x() > 0.0) {
+        acc->iou.push_back(
+            footprint_iou(rectangle(truth.position, truth.yaw_rad, truth.length_m, truth.width_m),
+                          rectangle(prediction.position, *prediction.heading_rad,
+                                    prediction.size_m.x(), prediction.size_m.y())));
+      }
+    }
   }
 
   // Labels and predictions left unmatched by the class gates but within the wider localization
@@ -251,6 +392,7 @@ class SequenceEvaluator {
     ++metrics_->confusion[truth.twin_class][prediction->twin_class];
     const double error = (truth.position - prediction->position).norm();
     acc_->position.push_back(error);
+    acc_->range_bias.push_back((prediction->position - sequence_->camera_position).norm() - range);
     acc_->class_position[truth.twin_class].push_back(error);
     if (bin) {
       ++metrics_->by_range[*bin].matched;
@@ -263,6 +405,9 @@ class SequenceEvaluator {
     }
     last_match_[truth.track_id] = prediction->id;
     const auto velocity = tracks_.velocity(f, truth.track_id, options_->velocity_window_s);
+    if (!truth.vru) {
+      count_footprint(truth, *prediction, velocity);
+    }
     if (!velocity) {
       return;
     }
@@ -478,9 +623,14 @@ Metrics evaluate(const std::vector<const Sequence*>& sequences, const Options& o
     SequenceEvaluator(*sequence, options, metrics, acc).run();
   }
   metrics.position_m = error_stats(acc.position);
+  metrics.range_bias_m = error_stats(acc.range_bias);
   metrics.heading_deg = error_stats(acc.heading);
   metrics.displaced_m = error_stats(acc.displaced);
   metrics.speed_mps = error_stats(acc.speed);
+  metrics.footprint = acc.footprint.finish();
+  for (const auto& [name, footprint] : acc.class_footprint) {
+    metrics.footprint_by_class[name] = footprint.finish();
+  }
   for (auto& [name, cls] : metrics.by_class) {
     cls.position_m = error_stats(acc.class_position[name]);
   }

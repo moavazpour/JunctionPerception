@@ -31,6 +31,9 @@ struct PredictedObject {
   Eigen::Vector2d position = Eigen::Vector2d::Zero();
   std::optional<double> heading_rad;
   double speed_mps = 0.0;
+  /// Footprint length and width as the twin shows it (zero: unknown, no footprint metrics).
+  Eigen::Vector2d size_m = Eigen::Vector2d::Zero();
+  bool measured_size = false;  ///< Size measured by the detector (else the class size).
 };
 
 /// A VRU-vehicle conflict reported by the system, at the frame it started.
@@ -70,6 +73,9 @@ struct Options {
   double conflict_gap_m = 1.0;
   double conflict_horizon_s = 3.0;
   double conflict_min_closing_speed_mps = 0.3;
+  /// Predictions matched to no label and farther than `displaced_gate_m` from every label (also
+  /// labels outside the image) are road users the labels miss: neither true nor false positives.
+  bool ignore_unlabelled = false;
 };
 
 /// Count, mean, median and 90th percentile of a set of errors.
@@ -113,13 +119,32 @@ struct ConflictMetrics {
   std::optional<double> closest_truth_gap_m;
 };
 
+/// Orientation, size and footprint of matched labelled vehicles, against the label box.
+struct FootprintMetrics {
+  std::size_t vehicles = 0;      ///< Matched labelled vehicles.
+  std::size_t with_heading = 0;  ///< ... with a predicted heading.
+  std::size_t stationary = 0;    ///< ... standing (label slower than the moving speed).
+  std::size_t stationary_with_heading = 0;
+  std::size_t front_correct = 0;  ///< Heading within 90 degrees of the label's front.
+  std::size_t measured_size = 0;  ///< Size measured by the detector.
+  ErrorStats axis_deg;            ///< Heading against the label yaw, modulo 180 (0-90).
+  ErrorStats stationary_axis_deg;
+  ErrorStats length_m;  ///< Absolute error of the size the twin shows (measured or class size).
+  ErrorStats width_m;
+  ErrorStats length_bias_m;  ///< Signed: predicted minus label.
+  ErrorStats width_bias_m;
+  ErrorStats iou;  ///< Bird's-eye-view IoU of the footprints (predictions with a heading).
+};
+
 struct Metrics {
   std::size_t frames = 0;
   std::size_t truth = 0;
   std::size_t matched = 0;
   std::size_t false_positives = 0;
+  std::size_t unlabelled = 0;  ///< Predictions ignored as unlabelled road users.
   ErrorStats position_m;
-  ErrorStats heading_deg;  ///< Moving labelled vehicles with a predicted heading.
+  ErrorStats range_bias_m;  ///< Signed: predicted minus label distance from the camera.
+  ErrorStats heading_deg;   ///< Moving labelled vehicles with a predicted heading.
   ErrorStats speed_mps;
   std::size_t moving_without_heading = 0;
   std::size_t displaced = 0;  ///< Pairs of a missed label and a false positive within 5 m.
@@ -127,6 +152,8 @@ struct Metrics {
   std::map<std::string, ClassMetrics> by_class;
   std::map<std::string, std::map<std::string, std::size_t>> confusion;  ///< label -> predicted
   std::vector<RangeMetrics> by_range;
+  FootprintMetrics footprint;
+  std::map<std::string, FootprintMetrics> footprint_by_class;  ///< By label class.
   TrackingMetrics tracking;
   ConflictMetrics conflicts;
 

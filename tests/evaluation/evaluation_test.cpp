@@ -129,6 +129,52 @@ TEST(Evaluation, ConflictsAreCheckedAgainstLabelledCloseApproaches) {
   EXPECT_LT(*m.conflicts.closest_truth_gap_m, 0.0);
 }
 
+TEST(Evaluation, UnlabelledRoadUsersCanBeIgnored) {
+  // A prediction 3 m from a missed label (displaced) still counts; one 20 m from every label,
+  // even one outside the image, is an unlabelled road user.
+  const auto s = one_frame(
+      {truth(1, false, 0, 0), truth(2, false, 40, 0, false)},
+      {predicted(7, false, 3, 0), predicted(8, false, 20, 0), predicted(9, false, 43, 0)});
+  jp::evaluation::Options options;
+  options.ignore_unlabelled = true;
+  const auto m = jp::evaluation::evaluate({&s}, options);
+  EXPECT_EQ(m.unlabelled, 1U);
+  EXPECT_EQ(m.false_positives, 2U);
+  EXPECT_EQ(m.displaced, 1U);
+}
+
+TEST(Evaluation, FootprintHeadingSizeAndIou) {
+  Sequence s;
+  // A standing car (label 4.5 x 1.8 along +x) predicted with the right size facing backwards,
+  // 0.5 m off along its length; a second one without a heading.
+  for (int f = 0; f < 21; ++f) {
+    auto p = predicted(7, false, 0.5, 0);
+    p.heading_rad = std::numbers::pi;
+    p.size_m = {4.5, 1.8};
+    p.measured_size = true;
+    auto q = predicted(8, false, 0, 10);
+    q.size_m = {4.0, 1.8};
+    s.frames.push_back(
+        {f, f * kFrameNs, {truth(1, false, 0, 0), truth(2, false, 0, 10)}, {p, q}, {}});
+  }
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  const auto& fp = m.footprint;
+  EXPECT_EQ(fp.vehicles, 42U);
+  EXPECT_EQ(fp.with_heading, 21U);
+  EXPECT_EQ(fp.stationary, 42U);
+  EXPECT_EQ(fp.stationary_with_heading, 21U);
+  EXPECT_EQ(fp.front_correct, 0U);
+  EXPECT_EQ(fp.measured_size, 21U);
+  EXPECT_NEAR(fp.axis_deg.median, 0.0, 1e-9);
+  EXPECT_NEAR(fp.length_m.p90, 0.5, 1e-9);
+  EXPECT_NEAR(fp.length_bias_m.mean, -0.25, 1e-9);
+  // The first car is placed 0.5 m farther from the camera (at the origin).
+  EXPECT_NEAR(m.range_bias_m.mean, 0.25, 1e-9);
+  // Overlap 4.0 x 1.8 of two 4.5 x 1.8 rectangles.
+  EXPECT_NEAR(fp.iou.median, 4.0 / 5.0, 1e-9);
+  EXPECT_EQ(m.footprint_by_class.at("car").vehicles, 42U);
+}
+
 TEST(Evaluation, ErrorsByDistanceFromTheCamera) {
   const auto s =
       one_frame({truth(1, false, 10, 0), truth(2, false, 70, 0)}, {predicted(7, false, 10.2, 0)});
