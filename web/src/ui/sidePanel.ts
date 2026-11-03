@@ -1,4 +1,9 @@
-import { sendPlayback, type ServerStatus, type VideoFrame } from '../net/client';
+import {
+  type PlaybackCommand,
+  sendPlayback,
+  type ServerStatus,
+  type VideoFrame,
+} from '../net/client';
 import type { DrawnObject } from '../twin/twinView';
 import { CLASS_LABELS, classCss } from '../twin/palette';
 import { element, fill, h } from './dom';
@@ -49,6 +54,9 @@ export class SidePanel {
 
   /** Called when another camera is chosen in the tabs. */
   onCamera: (id: string) => void = () => undefined;
+  /** Play, pause and seek (frame of the shown camera): by default for that camera only. */
+  onPlayback: (command: PlaybackCommand) => Promise<unknown> = (command) =>
+    sendPlayback(command, this.base);
 
   constructor() {
     // Enlarged, the camera image fills the window over the page (button, double click, Esc).
@@ -68,14 +76,14 @@ export class SidePanel {
       }
     });
     this.playButton.addEventListener('click', () => {
-      void sendPlayback({ action: this.playing ? 'pause' : 'play' }, this.base);
+      void this.onPlayback({ action: this.playing ? 'pause' : 'play' });
       this.setPlaying(!this.playing);
     });
     this.slider.addEventListener('input', () => (this.sliding = true));
     this.slider.addEventListener('change', () => {
       this.sliding = false;
       this.log.clear();
-      void sendPlayback({ action: 'seek', frame: Number(this.slider.value) }, this.base);
+      void this.onPlayback({ action: 'seek', frame: Number(this.slider.value) });
     });
     this.renderEvents();
   }

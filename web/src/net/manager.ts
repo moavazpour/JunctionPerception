@@ -1,6 +1,6 @@
 /** Client of the site manager (manager/jp_manager.py): sites, cameras, processes, logs, host. */
 import type { MapTransform } from '../twin/twinView';
-import type { ServerStatus } from './client';
+import type { PlaybackCommand, ServerStatus } from './client';
 
 export type SourceMode = 'live' | 'oracle' | 'replay';
 export type RunState = 'stopped' | 'starting' | 'running' | 'stopping' | 'backoff' | 'failed';
@@ -270,6 +270,17 @@ export const deleteSite = (id: string): Promise<unknown> =>
 
 export const siteAction = (id: string, action: SiteAction): Promise<Site> =>
   request('POST', `/sites/${encodeURIComponent(id)}/${action}`);
+
+/**
+ * Play, pause or seek of all cameras of a site together; a seek names the camera whose frame
+ * index it gives.
+ */
+export const sitePlayback = (
+  id: string,
+  command: PlaybackCommand,
+  camera?: string,
+): Promise<{ synced: boolean }> =>
+  request('POST', `/sites/${encodeURIComponent(id)}/playback`, { ...command, camera });
 
 const cameraPath = (site: string, camera: string): string =>
   `/sites/${encodeURIComponent(site)}/cameras/${encodeURIComponent(camera)}`;

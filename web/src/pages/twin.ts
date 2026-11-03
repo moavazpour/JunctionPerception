@@ -19,6 +19,7 @@ import {
   listSites,
   type Site,
   siteAction,
+  sitePlayback,
   updateSite,
 } from '../net/manager';
 import type { WorldState } from '../net/schema';
@@ -174,6 +175,15 @@ class TwinPage {
     this.focus = focus ?? ALL;
     this.camera = camera;
     this.panel.onCamera = (id) => this.selectCamera(id);
+    // The cameras of a site play together: play, pause and seek go to the site.
+    this.panel.onPlayback = async (command) => {
+      const [siteId, cameraId] = (this.camera ?? '').split('/');
+      if (siteId && cameraId) {
+        await sitePlayback(siteId, command, cameraId).catch((error: unknown) =>
+          toast((error as Error).message, 'error'),
+        );
+      }
+    };
     view.onHover = (object, x, y) => this.tooltip(object, x, y);
     view.onSignalPlaced = (site, camera, id, position, heading) =>
       this.placeSignal(site, camera, id, position, heading);

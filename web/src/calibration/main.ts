@@ -26,7 +26,7 @@ import {
   siteUrl,
   subscribeVideo,
 } from '../net/client';
-import { APPROACH_LABELS, cameraAction, findCamera, getSite } from '../net/manager';
+import { APPROACH_LABELS, cameraAction, findCamera, getSite, sitePlayback } from '../net/manager';
 import { h, param } from '../ui/dom';
 import { toast } from '../ui/feedback';
 import { icon } from '../ui/icons';
@@ -950,7 +950,7 @@ function layout(): HTMLElement {
  * The calibration needs a current camera frame: keep the site's camera images flowing (the
  * server encodes frames only for viewers) and resume paused playback.
  */
-async function ensureFrames(onFirstFrame: () => void): Promise<void> {
+async function ensureFrames(onFirstFrame: () => void, siteId: string | null): Promise<void> {
   let first = true;
   subscribeVideo(() => {
     if (first) {
@@ -961,7 +961,8 @@ async function ensureFrames(onFirstFrame: () => void): Promise<void> {
   try {
     const status = await fetchStatus();
     if (status.playing === false) {
-      await sendPlayback({ action: 'play' });
+      // Behind the manager the site's cameras play together.
+      await (siteId ? sitePlayback(siteId, { action: 'play' }) : sendPlayback({ action: 'play' }));
       toast('Playback resumed to get a camera frame.', 'info');
     }
   } catch {
@@ -1058,7 +1059,7 @@ async function start(): Promise<void> {
   }
   const app = new CalibrationApp(scene, map);
   await app.start();
-  await ensureFrames(() => app.loadFrame());
+  await ensureFrames(() => app.loadFrame(), shell.managed ? siteId : null);
 }
 
 void start();
