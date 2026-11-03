@@ -31,6 +31,9 @@ localization::LocalizerOptions localizer_options(const core::LocalizationSetting
   o.innovation_gate = settings.innovation_gate;
   o.reanchor_after = settings.reanchor_after;
   o.heading_min_speed_mps = settings.heading_min_speed_mps;
+  o.heading_speed_sigma = settings.heading_speed_sigma;
+  o.heading_smoothing = settings.heading_smoothing;
+  o.heading_max_turn_rate_dps = settings.heading_max_turn_rate_dps;
   o.forget_after_s = settings.forget_after_s;
   o.use_keypoints = settings.keypoints_enabled;
   o.keypoints.min_score = static_cast<float>(settings.keypoint_min_score);

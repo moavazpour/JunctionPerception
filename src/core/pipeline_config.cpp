@@ -82,6 +82,11 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
     l.reanchor_after = localization["reanchor_after"].as<int>();
     l.heading_min_speed_mps = localization["heading_min_speed_mps"].as<double>();
     l.forget_after_s = localization["forget_after_s"].as<double>();
+    if (const YAML::Node motion = localization["motion_heading"]) {
+      l.heading_speed_sigma = motion["speed_sigma"].as<double>();
+      l.heading_smoothing = motion["smoothing"].as<double>();
+      l.heading_max_turn_rate_dps = motion["max_turn_rate_dps"].as<double>();
+    }
     if (const YAML::Node keypoints = localization["keypoints"]) {
       l.keypoints_enabled = keypoints["enabled"].as<bool>();
       l.keypoint_min_score = keypoints["min_score"].as<double>();

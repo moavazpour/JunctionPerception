@@ -1,5 +1,6 @@
 #include "jp/localization/track_localizer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <utility>
@@ -84,8 +85,8 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     const double speed = velocity.norm();
     if (footprint) {
       apply_footprint(state, *footprint, speed, velocity);
-    } else if (speed >= options_.heading_min_speed_mps) {
-      state.heading_rad = std::atan2(velocity.y(), velocity.x());
+    } else {
+      apply_motion(state, velocity, state.filter.speed_std(), info.vru, timestamp_ns);
     }
 
     LocalizedObject object;
@@ -151,6 +152,29 @@ void TrackLocalizer::apply_footprint(State& state, const GroundFootprint& footpr
   // Smoothed on the circle: turn the held heading part of the way towards the measurement.
   const double delta = std::remainder(heading - *state.heading_rad, 2.0 * std::numbers::pi);
   state.heading_rad = std::remainder(*state.heading_rad + (k * delta), 2.0 * std::numbers::pi);
+}
+
+void TrackLocalizer::apply_motion(State& state, const Eigen::Vector2d& velocity, double speed_std,
+                                  bool vru, std::int64_t timestamp_ns) const {
+  const double speed = velocity.norm();
+  if (speed < options_.heading_min_speed_mps || speed < options_.heading_speed_sigma * speed_std) {
+    return;
+  }
+  const double motion = std::atan2(velocity.y(), velocity.x());
+  const std::int64_t last_ns = std::exchange(state.heading_ns, timestamp_ns);
+  if (!state.heading_rad) {
+    state.heading_rad = motion;
+    return;
+  }
+  // Smoothed on the circle, then limited to what a vehicle can turn since the last update.
+  double delta = options_.heading_smoothing *
+                 std::remainder(motion - *state.heading_rad, 2.0 * std::numbers::pi);
+  if (!vru && options_.heading_max_turn_rate_dps > 0.0) {
+    const double dt = static_cast<double>(timestamp_ns - last_ns) / kNanosecondsPerSecond;
+    const double limit = options_.heading_max_turn_rate_dps * std::numbers::pi / 180.0 * dt;
+    delta = std::clamp(delta, -limit, limit);
+  }
+  state.heading_rad = std::remainder(*state.heading_rad + delta, 2.0 * std::numbers::pi);
 }
 
 Eigen::Matrix2d TrackLocalizer::measurement_cov(const Eigen::Vector2d& pixel,

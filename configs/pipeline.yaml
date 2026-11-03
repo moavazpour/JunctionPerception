@@ -44,7 +44,13 @@ localization:
   initial_speed_std_mps: 10.0      # velocity std of a new or re-anchored track
   innovation_gate: 18.4            # chi-square (2 dof, 99.99 %) above which a measurement is not fused
   reanchor_after: 3                # rejected frames in a row before the track is re-anchored
-  heading_min_speed_mps: 0.5       # below this speed the last heading is held
+  heading_min_speed_mps: 1.0       # below this speed the last heading is held
+  # Heading from motion (detections without corner keypoints): the box jitter of a standing
+  # vehicle gives it a small, uncertain speed that must not turn it.
+  motion_heading:
+    speed_sigma: 2.0               # the speed must exceed this many standard deviations
+    smoothing: 0.6                 # weight of a new motion direction in the heading
+    max_turn_rate_dps: 90          # largest turn of a vehicle (VRUs turn freely)
   forget_after_s: 5.0
   # Keypoint models (four bottom corners of the 3D box): the projected corners give the
   # footprint centre, the heading (rear corners 2, 3 to front corners 0, 1, also of standing

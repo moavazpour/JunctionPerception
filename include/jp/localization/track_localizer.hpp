@@ -46,6 +46,13 @@ struct LocalizerOptions {
   double innovation_gate = 18.4;
   int reanchor_after = 3;
   double heading_min_speed_mps = 0.5;  ///< Below this speed the last heading is held.
+  /// Heading from motion (detections without corners): the speed must also exceed this many
+  /// standard deviations of its estimate, so the jitter of a standing object turns nothing.
+  double heading_speed_sigma = 2.0;
+  /// Weight of a new motion direction in the smoothed heading (1: no smoothing).
+  double heading_smoothing = 0.6;
+  /// Largest turn of a vehicle's motion heading (deg/s; 0: unlimited). VRUs turn freely.
+  double heading_max_turn_rate_dps = 90.0;
   /// Keypoint models: the footprint from the four bottom corners replaces the contact model, its
   /// front and rear corners give the heading (also of standing objects) and its sides the size.
   bool use_keypoints = true;
@@ -117,7 +124,13 @@ class TrackLocalizer {
     std::optional<Eigen::Vector2d> size;  ///< Smoothed length and width from the corners.
     int rejected = 0;                     ///< Consecutive measurements outside the innovation gate.
     int reversed = 0;                     ///< Consecutive corner headings against the held one.
+    std::int64_t heading_ns = 0;          ///< Time of the last motion heading update.
   };
+
+  /// Heading of a state from its motion: gated on the speed's certainty, smoothed and turned at
+  /// a limited rate.
+  void apply_motion(State& state, const Eigen::Vector2d& velocity, double speed_std, bool vru,
+                    std::int64_t timestamp_ns) const;
 
   /// Covariance of a ground position measured at `pixel`.
   [[nodiscard]] Eigen::Matrix2d measurement_cov(const Eigen::Vector2d& pixel,

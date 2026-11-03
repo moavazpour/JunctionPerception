@@ -47,6 +47,10 @@ struct LocalizationSettings {
   double innovation_gate = 18.4;
   int reanchor_after = 3;
   double heading_min_speed_mps = 0.5;
+  /// Heading from motion (see configs/pipeline.yaml, localization.motion_heading).
+  double heading_speed_sigma = 2.0;
+  double heading_smoothing = 0.6;
+  double heading_max_turn_rate_dps = 90.0;
   double forget_after_s = 5.0;
   /// Keypoint models: footprint from the four bottom corners (see configs/pipeline.yaml).
   bool keypoints_enabled = true;

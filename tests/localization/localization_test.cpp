@@ -106,6 +106,86 @@ sources: {}
   EXPECT_NEAR(*objects.front().heading_rad, std::numbers::pi / 2, 0.2);
 }
 
+TEST(TrackLocalizer, JitterOfAStandingCarDoesNotTurnIt) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  // Largest heading error while the car stands.
+  const auto worst_error = [&](const jp::localization::LocalizerOptions& options) {
+    jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                               options);
+    jp::tracking::TrackedObject track;
+    track.id = 5;
+    track.twin_class = "car";
+    double worst = 0.0;
+    for (int i = 0; i < 120; ++i) {
+      // Drives along +y at 5 m/s for 2 s, then stands for 10 s with its box jumping 0.5 m
+      // sideways every few frames (the box bottom of a far vehicle).
+      const float y = 100.0F + (5.0F * static_cast<float>(std::min(i, 20)));
+      const float x = (i > 20 && (i / 3) % 2 == 0) ? 85.0F : 80.0F;
+      track.detection.box = cv::Rect2f(x, y - 20, 40, 20);
+      const auto object = localizer.update({track}, i * kFrameNs).front();
+      if (i > 20 && object.heading_rad) {
+        worst =
+            std::max(worst, std::abs(std::remainder(*object.heading_rad - (std::numbers::pi / 2),
+                                                    2.0 * std::numbers::pi)));
+      }
+    }
+    return worst;
+  };
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  options.heading_min_speed_mps = 1.0;
+  EXPECT_LT(worst_error(options), 0.2);
+  // The raw motion direction above 0.5 m/s, as before the speed gate: the jitter turns the car.
+  options.heading_min_speed_mps = 0.5;
+  options.heading_speed_sigma = 0.0;
+  options.heading_smoothing = 1.0;
+  options.heading_max_turn_rate_dps = 0.0;
+  EXPECT_GT(worst_error(options), 0.3);
+}
+
+TEST(TrackLocalizer, VehicleHeadingTurnsAtALimitedRate) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  options.heading_smoothing = 1.0;
+  options.heading_max_turn_rate_dps = 60.0;
+  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                             options);
+  jp::tracking::TrackedObject track;
+  track.id = 9;
+  track.twin_class = "car";
+  constexpr int kTurn = 30;
+  double heading = 0.0;
+  for (int i = 0; i < 60; ++i) {
+    // 8 m/s along +x for 3 s, then a sharp 90 degree turn to +y.
+    const float x = 100.0F + (8.0F * static_cast<float>(std::min(i, kTurn)));
+    const float y = 100.0F + (8.0F * static_cast<float>(std::max(i - kTurn, 0)));
+    track.detection.box = cv::Rect2f(x - 20, y - 20, 40, 20);
+    const auto object = localizer.update({track}, i * kFrameNs).front();
+    if (!object.heading_rad) {
+      continue;
+    }
+    heading = *object.heading_rad;
+    if (i >= kTurn) {
+      // At most 60 deg/s since the turn: 6 degrees per 0.1 s frame.
+      EXPECT_LE(std::abs(heading), (6.0 * (i - kTurn) * std::numbers::pi / 180.0) + 1e-9)
+          << "frame " << i;
+    }
+  }
+  // It ends up following the new direction.
+  EXPECT_NEAR(heading, std::numbers::pi / 2, 0.1);
+}
+
 TEST(TrackLocalizer, MeasurementNoiseGrowsAlongTheRay) {
   const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
 classes:
