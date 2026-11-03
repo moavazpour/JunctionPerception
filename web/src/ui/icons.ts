@@ -68,6 +68,8 @@ const PATHS = {
     '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M8.5 8.5 6 6M15.5 15.5 18 18"/><circle cx="12" cy="12" r="3"/>',
   wizard:
     '<path d="m4 20 11-11M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 11l.6 1.4L21 13l-1.4.6L19 15l-.6-1.4L17 13l1.4-.6z"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

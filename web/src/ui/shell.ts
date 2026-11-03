@@ -4,6 +4,7 @@ import '../styles/shell.css';
 import { listSites, managerAvailable, type Site, siteState, systemInfo } from '../net/manager';
 import { type Child, fill, h } from './dom';
 import { brandMark, icon, type IconName } from './icons';
+import { makeResizable, store } from './resizer';
 import { currentTheme, setTheme } from './theme';
 
 export type Page =
@@ -38,6 +39,16 @@ export interface Shell {
 }
 
 const REFRESH_MS = 3000;
+const SIDEBAR_WIDTH_KEY = 'jp-sidebar-width';
+const SIDEBAR_COLLAPSED_KEY = 'jp-sidebar-collapsed';
+
+function sidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export const links = {
   overview: '/',
@@ -97,6 +108,14 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
     renderThemeButton();
   });
   renderThemeButton();
+  const sidebarButton = h('button', {
+    type: 'button',
+    class: 'btn ghost small icon-only sidebar-toggle',
+  });
+  const resizer = h('div', {
+    class: 'sidebar-resizer',
+    title: 'Drag to resize, double click for the default width',
+  });
 
   const app = h(
     'div',
@@ -104,6 +123,7 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
     h(
       'aside',
       { class: 'sidebar' },
+      resizer,
       h(
         'a',
         { class: 'brand', href: '/' },
@@ -121,11 +141,29 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
     h(
       'div',
       { class: 'main' },
-      h('header', { class: 'topbar' }, crumbs, actions, themeButton),
+      h('header', { class: 'topbar' }, sidebarButton, crumbs, actions, themeButton),
       content,
     ),
   );
   document.body.replaceChildren(app);
+
+  // Sidebar: collapsed to its icons with the top bar button, or resized at its right edge.
+  const setCollapsed = (collapsed: boolean): void => {
+    app.classList.toggle('collapsed', collapsed);
+    fill(sidebarButton, icon('sidebar'));
+    sidebarButton.title = collapsed ? 'Show the sidebar' : 'Collapse the sidebar';
+    store(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
+  };
+  sidebarButton.addEventListener('click', () => setCollapsed(!app.classList.contains('collapsed')));
+  setCollapsed(sidebarCollapsed());
+  makeResizable(resizer, {
+    key: SIDEBAR_WIDTH_KEY,
+    initial: 248,
+    min: 180,
+    max: () => Math.min(420, window.innerWidth * 0.4),
+    direction: 1,
+    apply: (width) => app.style.setProperty('--sidebar-width', `${width}px`),
+  });
 
   let sites: Site[] = [];
   const listeners: ((sites: Site[]) => void)[] = [];

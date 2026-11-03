@@ -1,9 +1,15 @@
 /* Live twin page: 3D stage with floating controls and the side panel. */
 
 .twin-layout {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) var(--panel-width, 380px);
   height: 100%;
+}
+
+/* Drag handle on the left edge of the side panel (styles in shell.css). */
+.twin-layout > .panel-resizer {
+  right: calc(var(--panel-width, 380px) - 4px);
 }
 
 .twin-stage {
@@ -466,6 +472,10 @@
   .twin-layout {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 62%) minmax(0, 38%);
+  }
+
+  .twin-layout > .panel-resizer {
+    display: none;
   }
 
   .twin-panel {

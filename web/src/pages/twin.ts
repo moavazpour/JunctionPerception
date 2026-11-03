@@ -32,10 +32,11 @@ import {
   type SiteSpec,
   TwinView,
 } from '../twin/twinView';
-import { fill, h, param, segmented, toggle } from '../ui/dom';
+import { element, fill, h, param, segmented, toggle } from '../ui/dom';
 import type { TaggedEvent } from '../ui/events';
 import { toast, withBusy } from '../ui/feedback';
 import { icon } from '../ui/icons';
+import { makeResizable } from '../ui/resizer';
 import { links, mountShell, type Shell } from '../ui/shell';
 import { type PanelCamera, SidePanel } from '../ui/sidePanel';
 import { currentTheme, onThemeChange } from '../ui/theme';
@@ -81,6 +82,11 @@ function layout(): HTMLElement {
       ),
       h('div', { id: 'stage-empty', class: 'stage-empty glass', hidden: true }),
     ),
+    h('div', {
+      id: 'panel-resizer',
+      class: 'panel-resizer',
+      title: 'Drag to make the camera image larger or smaller, double click for the default',
+    }),
     h(
       'aside',
       { class: 'twin-panel' },
@@ -929,7 +935,17 @@ async function start(): Promise<void> {
     fullBleed: true,
   });
   setSite(null);
-  shell.content.append(layout());
+  const twinLayout = layout();
+  shell.content.append(twinLayout);
+  // The side panel, and with it the camera image, is resized at its left edge.
+  makeResizable(element<HTMLElement>('#panel-resizer'), {
+    key: 'jp-twin-panel-width',
+    initial: 380,
+    min: 300,
+    max: () => twinLayout.clientWidth * 0.75,
+    direction: -1,
+    apply: (width) => twinLayout.style.setProperty('--panel-width', `${width}px`),
+  });
   const canvas = document.querySelector<HTMLCanvasElement>('#twin');
   if (!canvas) {
     throw new Error('canvas #twin not found');
