@@ -9,7 +9,7 @@ import {
   recolorMap,
 } from '../map/mapLayers';
 import type { WorldObject, WorldState } from '../net/schema';
-import { alignAxis, FlowField, roadAxis } from './flowField';
+import { alignAxis, FlowField, laneDirection, type RoadAxis, roadAxis } from './flowField';
 import { type CameraTrack, CameraFusion } from './fusion';
 import { angleDelta, WorldInterpolator } from './interpolation';
 import {
@@ -1024,7 +1024,7 @@ export class TwinView {
   }
 
   /** Road axis of the site's map at a point of the site frame. */
-  private road(site: SiteLayer, x: number, y: number): { angle: number; oneway: boolean } | null {
+  private road(site: SiteLayer, x: number, y: number): RoadAxis | null {
     if (!site.map?.osm) {
       return null;
     }
@@ -1035,12 +1035,14 @@ export class TwinView {
     const mx = Math.cos(-yaw) * dx - Math.sin(-yaw) * dy;
     const my = Math.sin(-yaw) * dx + Math.cos(-yaw) * dy;
     const axis = roadAxis(site.map.osm, mx, my);
-    return axis ? { angle: axis.angle + yaw, oneway: axis.oneway } : null;
+    // Rotation keeps the side of the centre line.
+    return axis ? { ...axis, angle: axis.angle + yaw } : null;
   }
 
   /**
    * Heading a new road user enters with: the learned traffic direction where it appears, else
-   * the direction of a one-way road (or the road axis turned to its own motion), else its own.
+   * the road: turned to its own motion when it moves, else the direction of its lane. Only
+   * without either it takes its own heading or the fallback.
    */
   private entryHeading(
     site: SiteLayer,
@@ -1057,7 +1059,12 @@ export class TwinView {
       }
       const road = this.road(site, x, y);
       if (road) {
-        return road.oneway ? road.angle : alignAxis(road.angle, own ?? fallback);
+        if (own !== null) {
+          return road.oneway ? road.angle : alignAxis(road.angle, own);
+        }
+        const lane = laneDirection(road);
+        // A standing vehicle that already has a heading keeps the way of the road it agrees with.
+        return lane ?? alignAxis(road.angle, object.heading_rad ?? fallback);
       }
     }
     return own ?? fallback;

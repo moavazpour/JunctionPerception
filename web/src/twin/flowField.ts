@@ -125,19 +125,28 @@ export class FlowField {
   }
 }
 
+/** Axis of a road near a point. */
+export interface RoadAxis {
+  /** Direction of the road's centre line (of travel on a one-way road). */
+  angle: number;
+  oneway: boolean;
+  /** Signed distance of the point from the centre line: positive on its left. */
+  offset: number;
+}
+
+// Farther than this from the centre line of a two-way road, a vehicle is in a lane of one
+// direction (right-hand traffic); closer, the side is not clear.
+const LANE_SIDE_M = 0.75;
+
 /**
- * Axis of the OpenStreetMap road nearest to (x, y), within a few metres: its direction and
- * whether it is one-way (then the direction is that of travel).
+ * Axis of the OpenStreetMap road nearest to (x, y), within a few metres: its direction, whether
+ * it is one-way (then the direction is that of travel) and the side of the point.
  */
-export function roadAxis(
-  osm: OsmLayer | null,
-  x: number,
-  y: number,
-): { angle: number; oneway: boolean } | null {
+export function roadAxis(osm: OsmLayer | null, x: number, y: number): RoadAxis | null {
   if (!osm) {
     return null;
   }
-  let best: { angle: number; oneway: boolean } | null = null;
+  let best: RoadAxis | null = null;
   let bestDistance = ROAD_SEARCH_M;
   for (const road of osm.roads) {
     for (let i = 1; i < road.points.length; i++) {
@@ -153,11 +162,27 @@ export function roadAxis(
       const distance = Math.hypot(a[0] + t * dx - x, a[1] + t * dy - y);
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = { angle: Math.atan2(dy, dx), oneway: road.oneway === true };
+        const side = Math.sign(dx * (y - a[1]) - dy * (x - a[0]));
+        best = { angle: Math.atan2(dy, dx), oneway: road.oneway === true, offset: side * distance };
       }
     }
   }
   return best;
+}
+
+/**
+ * Direction of travel of the lane a standing vehicle is in: that of a one-way road, else (right-
+ * hand traffic) along the centre line on its right side and against it on its left; null where
+ * the side is not clear.
+ */
+export function laneDirection(road: RoadAxis): number | null {
+  if (road.oneway) {
+    return road.angle;
+  }
+  if (Math.abs(road.offset) < LANE_SIDE_M) {
+    return null;
+  }
+  return road.offset < 0 ? road.angle : road.angle + Math.PI;
 }
 
 /** The direction of an axis (angle or angle + π) closest to a reference direction. */

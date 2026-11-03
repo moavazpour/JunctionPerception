@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import type { OsmLayer } from '../src/map/mapData';
 import { parseVideoMessage } from '../src/net/client';
 import type { WorldEvent, WorldObject, WorldState } from '../src/net/schema';
+import { laneDirection, roadAxis } from '../src/twin/flowField';
 import { distanceForHeight, orbitPose } from '../src/twin/orbitRig';
 import { angleDelta, lerpAngle, WorldInterpolator } from '../src/twin/interpolation';
 import { eventParticipants } from '../src/twin/twinView';
@@ -55,6 +57,55 @@ describe('angles', () => {
   it('interpolates along the shorter way round', () => {
     expect(angleDelta(3, -3)).toBeCloseTo(2 * Math.PI - 6);
     expect(lerpAngle(Math.PI - 0.1, -Math.PI + 0.1, 0.5)).toBeCloseTo(Math.PI);
+  });
+});
+
+describe('lane direction', () => {
+  // A two-way road along +x and a one-way road along +y.
+  const osm: OsmLayer = {
+    roads: [
+      {
+        id: 1,
+        highway: 'primary',
+        width_m: 12,
+        points: [
+          [-50, 0],
+          [50, 0],
+        ],
+      },
+      {
+        id: 2,
+        highway: 'residential',
+        width_m: 6,
+        points: [
+          [100, -50],
+          [100, 50],
+        ],
+        oneway: true,
+      },
+    ],
+    paths: [],
+    crossings: [],
+  };
+
+  const lane = (x: number, y: number): number | null => {
+    const road = roadAxis(osm, x, y);
+    if (!road) {
+      throw new Error(`no road at ${x}, ${y}`);
+    }
+    return laneDirection(road);
+  };
+
+  it('follows right-hand traffic on a two-way road', () => {
+    expect(roadAxis(osm, 0, -3)?.offset).toBeCloseTo(-3);
+    expect(lane(0, -3)).toBeCloseTo(0);
+    expect(lane(0, 3)).toBeCloseTo(Math.PI);
+  });
+
+  it('is unclear on the centre line and follows a one-way road', () => {
+    expect(lane(0, 0.3)).toBeNull();
+    expect(lane(103, 0)).toBeCloseTo(Math.PI / 2);
+    expect(roadAxis(osm, 0, 30)).toBeNull();
   });
 });
 
