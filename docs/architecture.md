@@ -207,8 +207,8 @@ lists. Camera setting `time_offset_ms` shifts a camera's timestamps on the site 
 | Suite | What it guards |
 |---|---|
 | `ctest` (C++, 104 tests) | perception, calibration, localization, tracking, observation schema (fixture byte-for-byte), zones, evaluation, server config |
-| `manager/tests/test_world_model.py` | single/multi camera, delays and offsets, stale cameras, association and ambiguity, ID stability through ID switches and occlusion, coasting, unknown headings, unfused modes, seek/runs, determinism, both fixtures |
-| `web/tests` (vitest) | site-state contract, BEV positions = backend positions, map alignment math, architecture rules |
+| `manager/tests/test_world_model.py` (21 tests) | single/multi camera, delays and offsets, stale cameras, association and ambiguity, ID stability through ID switches and occlusion, coasting, unknown headings, unfused modes, seek/runs, determinism, both fixtures |
+| `web/tests` (vitest, 26 tests) | site-state contract, BEV positions = backend positions, map alignment math, architecture rules |
 | `tools/eval_fusion.py` | site model vs TUMTraf labels (see docs/evaluation.md) |
 
 Run everything: `scripts/in_docker.sh scripts/build_and_test.sh all release`.
