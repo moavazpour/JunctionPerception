@@ -1,7 +1,12 @@
 import './calibration.css';
 
-import { crossingSuggestions, loadMapData, type MapData, type Point } from '../map/mapData';
-import { attributionLines } from '../map/mapLayers';
+import {
+  attributionLines,
+  crossingSuggestions,
+  loadMapData,
+  type MapData,
+  type Point,
+} from '../map/mapData';
 import {
   applyHomography,
   type ControlPoint,
@@ -288,9 +293,9 @@ class CalibrationApp {
       points:
         'Click a point in the camera image, then the same point on the map (road markings, kerb corners). Use at least 8 points spread over the scene; every fourth point is a check point. Wheel: zoom, drag: pan.',
       zones:
-        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Crosswalk zones trigger VRU events; lanes and intersections are drawn in the twin.',
+        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Zones (lanes, crosswalks, intersection) are drawn in the twin.',
       regions:
-        'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. Lines count crossings for the statistics (arrow: direction A); with a band, only road users that close to the line are detected. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
+        'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. Lines with a band keep only road users that close to the line. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:
         'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };

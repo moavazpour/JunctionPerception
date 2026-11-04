@@ -6,8 +6,6 @@ const page = (file: string): string => fileURLToPath(new URL(`./${file}`, import
 
 export default defineConfig({
   build: {
-    // Three.js alone is about 500 kB (127 kB gzipped).
-    chunkSizeWarningLimit: 600,
     rollupOptions: {
       // One page per console view; they share the shell and the theme.
       input: {
@@ -18,11 +16,6 @@ export default defineConfig({
         newSite: page('new-site.html'),
         system: page('system.html'),
         logs: page('logs.html'),
-        stats: page('stats.html'),
-      },
-      output: {
-        // Three.js in its own chunk: it changes rarely and stays cached.
-        manualChunks: { three: ['three'] },
       },
     },
   },

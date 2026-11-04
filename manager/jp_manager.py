@@ -771,6 +771,7 @@ class Site:
                 "state": self.state(),
                 "error": "; ".join(errors) or None,
                 "map_job": self.map_job,
+                "world": self.manager.world_summary(self.id),
             },
         }
 
@@ -1100,6 +1101,15 @@ class Manager:
                 site.update_period()
             self.follow_sites()
             await asyncio.sleep(STATUS_INTERVAL_S)
+
+    def world_summary(self, site_id: str) -> dict[str, Any] | None:
+        """Fusion mode and road users of a site's latest state (for the console's lists)."""
+        feed = self.feeds.get(site_id)
+        state = feed.model_state() if feed else None
+        if state is None:
+            return None
+        return {"mode": state["fusion"]["mode"], "road_users": len(state["road_users"]),
+                "t_ns": state["t_ns"]}
 
     def feed(self, site_id: str) -> SiteFeed:
         """World model of a site (created on first use, kept while the manager runs)."""

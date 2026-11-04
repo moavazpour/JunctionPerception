@@ -27,14 +27,6 @@
   touch-action: none;
 }
 
-#twin.panning {
-  cursor: grabbing;
-}
-
-#twin.rotating {
-  cursor: move;
-}
-
 #twin.hovering {
   cursor: pointer;
 }
@@ -359,113 +351,6 @@
 
 .stat.danger strong {
   color: var(--danger);
-}
-
-.events-card {
-  flex: 1;
-  min-height: 220px;
-}
-
-.events {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  margin: 0;
-  padding: 10px;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.event {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-elev);
-  opacity: 0.55;
-  transition: opacity 0.2s;
-}
-
-.event.active {
-  opacity: 1;
-}
-
-.event-icon {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  color: var(--cyan);
-  font-size: 17px;
-}
-
-.event.conflict .event-icon {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.event.conflict.active {
-  border-color: rgb(255 93 108 / 40%);
-  box-shadow: 0 0 0 3px rgb(255 93 108 / 8%);
-}
-
-.event.crosswalk.active {
-  border-color: rgb(47 212 240 / 30%);
-}
-
-.event-body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.event-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.event-detail {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.events-empty {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: center;
-  padding: 28px 12px;
-  color: var(--text-3);
-  font-size: 12.5px;
-  text-align: center;
-}
-
-.events-empty .icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: var(--ok-soft);
-  color: var(--ok);
-  font-size: 18px;
-}
-
-.events-empty strong {
-  color: var(--text-2);
 }
 
 @media (max-width: 1100px) {
@@ -807,4 +692,21 @@
 
 .layers-group .segmented {
   background: rgb(5 9 16 / 60%);
+}
+
+/* How the world model combined the cameras of the shown sites. */
+.fusion {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.fusion li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }

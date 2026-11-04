@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { View2D } from '../src/calibration/panZoom';
 import { crossingSuggestions, type OsmLayer, widenSegment } from '../src/map/mapData';
-import { ribbonGeometry } from '../src/map/mapLayers';
 import { applyHomography, invert3 } from '../src/net/calibrationApi';
 
 describe('View2D', () => {
@@ -107,22 +106,5 @@ describe('map geometry', () => {
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(4);
     expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(8);
     expect(way).toHaveLength(4);
-  });
-
-  it('builds one quad per road segment and a round joint at inner points', () => {
-    const geometry = ribbonGeometry(
-      [
-        [0, 0],
-        [10, 0],
-        [10, 10],
-      ],
-      4,
-      0.1,
-    );
-    // Two quads (4 vertices each) and one 12-segment disc (centre + 13 rim vertices).
-    expect(geometry.getAttribute('position').count).toBe(22);
-    geometry.computeBoundingBox();
-    expect(geometry.boundingBox?.max.y).toBeCloseTo(10);
-    expect(geometry.boundingBox?.min.y).toBeCloseTo(-2);
   });
 });

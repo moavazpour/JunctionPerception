@@ -41,7 +41,8 @@ class SiteFeed:
         self.model = SiteWorldModel(site_id, {}, settings, class_sizes)
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.clients: set[web.WebSocketResponse] = set()
-        self.latest: str | None = None
+        self.latest: str | None = None  # serialized, as sent
+        self.latest_state: dict[str, Any] | None = None
 
     def configure(self, session: aiohttp.ClientSession, cameras: dict[str, FeedCamera],
                   shared_clock: bool) -> None:
@@ -91,6 +92,7 @@ class SiteFeed:
         self.model.observe(camera_id, state)
         site_state = self.model.step()
         if site_state is not None:
+            self.latest_state = site_state
             self.latest = json.dumps(site_state, separators=(",", ":"))
             for client in list(self.clients):
                 if client.closed:
@@ -117,3 +119,7 @@ class SiteFeed:
         finally:
             self.clients.discard(ws)
         return ws
+
+    def model_state(self) -> dict[str, Any] | None:
+        """The latest site state, or None before the first step."""
+        return self.latest_state

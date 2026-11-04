@@ -1,5 +1,6 @@
 /** Client of the site manager (manager/jp_manager.py): sites, cameras, processes, logs, host. */
-import type { MapTransform } from '../twin/twinView';
+import type { MapTransform } from '../bev/siteFrame';
+import type { FusionMode } from './siteState';
 import type { PlaybackCommand, ServerStatus } from './client';
 
 export type SourceMode = 'live' | 'oracle' | 'replay';
@@ -127,7 +128,13 @@ export interface Site {
   zones: boolean;
   max_cameras: number;
   cameras: Camera[];
-  runtime: { state: SiteRunState; error: string | null; map_job: MapJob | null };
+  runtime: {
+    state: SiteRunState;
+    error: string | null;
+    map_job: MapJob | null;
+    /** Latest state of the site world model: fusion mode and road users (null before one). */
+    world: { mode: FusionMode; road_users: number; t_ns: number } | null;
+  };
 }
 
 export interface SitePatch {
@@ -298,11 +305,11 @@ export const deleteCamera = (site: string, camera: string): Promise<Site> =>
 export const cameraAction = (site: string, camera: string, action: CameraAction): Promise<Site> =>
   request('POST', `${cameraPath(site, camera)}/${action}`);
 
-/** Live figures of a site, summed (road users, events) or averaged over its running cameras. */
+/** Live figures of a site: road users from its world model, rates averaged over its cameras. */
 export interface SiteFigures {
   running: number;
-  objects: number;
-  events: number;
+  /** Road users of the site's latest state; null while the world model has none. */
+  objects: number | null;
   fps: number | null;
   latency_ms: number | null;
 }
@@ -317,8 +324,7 @@ export function siteFigures(site: Site): SiteFigures {
   };
   return {
     running: site.cameras.filter((c) => c.runtime.state === 'running').length,
-    objects: statuses.reduce((sum, s) => sum + (s.objects ?? 0), 0),
-    events: statuses.reduce((sum, s) => sum + (s.active_events ?? 0), 0),
+    objects: site.runtime.world?.road_users ?? null,
     fps: mean(statuses.map((s) => s.fps)),
     latency_ms: mean(statuses.map((s) => s.latency_ms)),
   };
@@ -444,128 +450,3 @@ export function uploadVideo(
     xhr.send(form);
   });
 }
-
-// ------------------------------------------------------------------------- traffic statistics
-
-export interface SpeedStats {
-  n: number;
-  mean?: number;
-  space_mean?: number;
-  std?: number;
-  min?: number;
-  max?: number;
-  p15?: number;
-  p50?: number;
-  p85?: number;
-  p95?: number;
-  pace_kmh?: [number, number];
-  pace_share?: number;
-  over_limit_share?: number | null;
-}
-
-export interface HeadwayStats {
-  n: number;
-  mean_s?: number;
-  min_s?: number;
-  p15_s?: number;
-  p50_s?: number;
-  short_share?: number;
-}
-
-export interface SeriesPoint {
-  t: number;
-  count: number;
-  by_class: Record<string, number>;
-  mean_kmh: number | null;
-  p85_kmh: number | null;
-}
-
-export interface PeakHour {
-  start: number;
-  volume: number;
-  peak_15min: number;
-  phf: number | null;
-}
-
-/** Measures of one counting line over the selected period. */
-export interface LineStats {
-  site: string;
-  camera: string;
-  line: string;
-  name: string;
-  speed_limit_kmh: number | null;
-  observed_s: number;
-  count: number;
-  vehicles: number;
-  vru: number;
-  by_class: Record<string, number>;
-  directions: { A: number; B: number };
-  flow_vph: number | null;
-  flow_pcuph: number | null;
-  heavy_share: number | null;
-  peak_hour: PeakHour | null;
-  speed_kmh: SpeedStats;
-  speed_by_direction: { A: SpeedStats; B: SpeedStats };
-  headway: { A: HeadwayStats; B: HeadwayStats };
-  density_vpkm: number | null;
-  series: SeriesPoint[];
-}
-
-export interface TurningMovement {
-  site: string;
-  camera: string;
-  from: string;
-  from_name: string;
-  to: string;
-  to_name: string;
-  count: number;
-  by_class: Record<string, number>;
-}
-
-export interface StatsReport {
-  generated_at: number;
-  bucket_s: number;
-  lines: LineStats[];
-  series: SeriesPoint[];
-  hourly: number[];
-  speed_histogram: { from: number; count: number }[];
-  turning: TurningMovement[];
-  events: {
-    count: number;
-    by_type: Record<string, number>;
-    min_ttc_s: number | null;
-    median_ttc_s: number | null;
-    min_gap_m: number | null;
-    recent: { t: number; site: string; camera: string; type: string; zone: string | null }[];
-  };
-  observed_s: number;
-  totals: { count: number; by_class: Record<string, number> };
-}
-
-export interface StatsFilters {
-  site?: string;
-  camera?: string;
-  line?: string;
-  /** Unix seconds. */
-  from?: number;
-  to?: number;
-}
-
-function statsQuery(filters: StatsFilters, extra: Record<string, string> = {}): string {
-  const query = new URLSearchParams(extra);
-  for (const [key, value] of Object.entries(filters)) {
-    if (value !== undefined && value !== '') {
-      query.set(key, String(value));
-    }
-  }
-  return query.toString();
-}
-
-export const fetchStats = (filters: StatsFilters, bucketS: number): Promise<StatsReport> =>
-  request('GET', `/stats?${statsQuery(filters, { bucket: String(bucketS) })}`);
-
-export const statsCsvUrl = (filters: StatsFilters): string =>
-  `${API}/stats/crossings.csv?${statsQuery(filters)}`;
-
-export const clearStats = (site?: string): Promise<unknown> =>
-  request('DELETE', `/stats${site ? `?${new URLSearchParams({ site })}` : ''}`);

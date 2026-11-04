@@ -1,4 +1,4 @@
-import { isWorldState, type WorldState } from './schema';
+import { isSiteState, type SiteState } from './siteState';
 
 /** Twin class as described by the server (configs/classes.yaml). */
 export interface ClassInfo {
@@ -50,7 +50,6 @@ export interface ServerStatus {
   fps?: number;
   latency_ms?: number;
   clients?: number;
-  active_events?: number;
   calibrated?: boolean;
 }
 
@@ -177,21 +176,21 @@ function openSocket(
   };
 }
 
-/** Subscribes to the world-state stream; malformed messages are dropped. */
-export function subscribeWorld(
-  onState: (state: WorldState) => void,
-  onConnection: (connected: boolean) => void,
-  base: string = siteBase,
+/** Subscribes to the site state of the manager's world model; malformed messages are dropped. */
+export function subscribeSite(
+  siteId: string,
+  onState: (state: SiteState) => void,
+  onConnection: (connected: boolean) => void = () => undefined,
 ): Unsubscribe {
   return openSocket(
-    siteUrl('/ws/world', base),
+    `/sites/${encodeURIComponent(siteId)}/ws/site`,
     false,
     (data) => {
       if (typeof data !== 'string') {
         return;
       }
       const parsed: unknown = JSON.parse(data);
-      if (isWorldState(parsed)) {
+      if (isSiteState(parsed)) {
         onState(parsed);
       }
     },

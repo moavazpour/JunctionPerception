@@ -170,3 +170,11 @@ function nearestRoadDirection(roads: Polyline[], point: Point): Point | null {
   }
   return best;
 }
+
+/** Attribution lines of the layers in use, e.g. "© OpenStreetMap contributors (ODbL 1.0)". */
+export function attributionLines(map: MapData): { text: string; url: string }[] {
+  return Object.values(map.manifest.attribution).map((a) => ({
+    text: `${a.text} (${a.license})`,
+    url: a.license_url,
+  }));
+}

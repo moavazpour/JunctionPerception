@@ -239,7 +239,6 @@ function siteCard(site: Site, thumbs: Thumbnails, refresh: () => Promise<void>):
         'div',
         { class: 'site-metrics' },
         metric('Road users', live ? formatNumber(figures.objects) : '–'),
-        metric('Events', live ? formatNumber(figures.events) : '–'),
         metric('Rate', live ? formatNumber(figures.fps, 1, 'fps') : '–'),
         metric('Latency', live ? formatNumber(figures.latency_ms, 0, 'ms') : '–'),
       ),
@@ -328,8 +327,7 @@ async function start(): Promise<void> {
     const cameras = sites.flatMap((s) => s.cameras);
     const runningCameras = figures.reduce((sum, f) => sum + f.running, 0);
     const runningSites = figures.filter((f) => f.running > 0).length;
-    const objects = figures.reduce((sum, f) => sum + f.objects, 0);
-    const events = figures.reduce((sum, f) => sum + f.events, 0);
+    const objects = figures.reduce((sum, f) => sum + (f.objects ?? 0), 0);
     const latencies = figures.map((f) => f.latency_ms).filter((v): v is number => v !== null);
     const latency =
       latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : null;
@@ -354,14 +352,7 @@ async function start(): Promise<void> {
         runningCameras > 0 ? 'ok' : '',
         `/ ${cameras.length}`,
       ),
-      kpi('activity', 'Road users tracked', `${objects}`, 'across all running cameras'),
-      kpi(
-        'conflict',
-        'Active safety events',
-        `${events}`,
-        'VRUs on crosswalks and conflicts',
-        events > 0 ? 'warn' : '',
-      ),
+      kpi('activity', 'Road users', `${objects}`, 'in the site world models'),
       kpi('clock', 'Pipeline latency', formatNumber(latency), 'mean per frame', '', 'ms'),
       kpi('gpu', 'GPU load', gpuText, gpuSub),
     );

@@ -60,3 +60,14 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 48);
 }
+
+// Timestamps above this are absolute (Unix time), below it relative to the start of a recording.
+const ABSOLUTE_TIMESTAMP_NS = 1e15;
+
+/** "12.3 s" for recording-relative timestamps, UTC clock time for absolute ones. */
+export function formatTimestamp(timestampNs: number): string {
+  if (timestampNs < ABSOLUTE_TIMESTAMP_NS) {
+    return `${(timestampNs / 1e9).toFixed(1)} s`;
+  }
+  return `${new Date(timestampNs / 1e6).toISOString().slice(11, 21)} UTC`;
+}

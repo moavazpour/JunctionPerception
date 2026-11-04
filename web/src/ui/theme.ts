@@ -1,5 +1,5 @@
 /** Night (dark) and day (light) theme of the console, remembered per browser. */
-import type { Theme } from '../twin/palette';
+import type { Theme } from '../bev/palette';
 
 const STORAGE_KEY = 'jp-theme';
 const EVENT = 'jp-theme';

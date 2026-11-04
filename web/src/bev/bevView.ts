@@ -1,20 +1,21 @@
-import type { ClassInfo, SceneDescription } from '../net/client';
 import type { MapData } from '../map/mapData';
-import type { WorldState } from '../net/schema';
-import { roadAxis } from '../twin/flowField';
-import { classCss, twinPalette } from '../twin/palette';
-import type { DrawnObject, MapTransform, SignalDef, SiteSpec } from '../twin/twinView';
-import { type BevTrack, BevWorld, type DuplicatePair, duplicateCandidates } from './bevModel';
-import { covarianceEllipse, footprintCorners, homography, type Vec } from './geometry';
-import { type LaneStatus, LaneAnalytics, type SiteStatus } from './laneAnalytics';
-import { perf } from './perf';
+import type { SceneDescription } from '../net/client';
+import type { RoadUser, SiteState } from '../net/siteState';
+import { covarianceEllipse, footprintCorners, homography } from './geometry';
+import { classCss, mapPalette } from './palette';
+import {
+  type MapTransform,
+  rotatePlacement,
+  shiftPlacement,
+  type SignalDef,
+  siteToView,
+  type SiteSpec,
+  type Vec,
+  viewToSite,
+} from './siteFrame';
 
-// A camera whose last world state is older than this shows no road users (as in the 3D twin).
-const STALE_AFTER_MS = 2500;
-// Lane analysis at most this often per site (it runs on every world state otherwise).
-const ANALYTICS_INTERVAL_MS = 100;
-// Tracks of two cameras further apart in time than this are not merged, only flagged.
-export const MAX_MERGE_SKEW_S = 0.25;
+// A site state older than this at the browser is not drawn: the stream stopped.
+const STALE_AFTER_MS = 3000;
 // Ground coverage of a camera: image border through the homography, cut at this range.
 const COVERAGE_RANGE_M = 160;
 const COVERAGE_SAMPLES = 24;
@@ -23,25 +24,36 @@ const MAX_SCALE = 80;
 const LABEL_MIN_SCALE = 3.5;
 const PICK_RADIUS_PX = 10;
 const VELOCITY_HORIZON_S = 1;
+// Drawn trail: the reported positions of the last seconds (site time).
+const TRAIL_S = 8;
+// Size of a road user the backend reports no size for (m): a marker, not a claim.
+const UNKNOWN_SIZE_M = 1;
 
-/** Optional layers and the way tracks of several cameras are shown. */
+/** Optional layers. */
 export interface BevOptions {
   aerial: boolean;
   trails: boolean;
   uncertainty: boolean;
   labels: boolean;
-  /** "cameras": every camera's tracks, duplicates linked; "merged": duplicates hidden. */
-  tracks: 'cameras' | 'merged';
+}
+
+/** A road user under the pointer or selected, with its site. */
+export interface Picked {
+  site: string;
+  user: RoadUser;
 }
 
 interface CameraLayer {
-  id: string;
   description: SceneDescription;
   position: Vec | null;
   coverage: Vec[];
-  lines: { name: string; points: Vec[] }[];
-  latest: WorldState | null;
-  arrival: number;
+  lines: Vec[][];
+  signals: SignalDef[];
+}
+
+interface Trail {
+  run: number;
+  points: { t: number; x: number; y: number }[];
 }
 
 interface BevSite {
@@ -49,13 +61,10 @@ interface BevSite {
   transform: MapTransform;
   map: MapData | null;
   aerial: HTMLImageElement | null;
-  analytics: LaneAnalytics | null;
   cameras: Map<string, CameraLayer>;
-  signals: Map<string, { camera: string; def: SignalDef }>;
-  lastAnalytics: number;
-  tracks: BevTrack[];
-  shown: BevTrack[];
-  duplicates: DuplicatePair[];
+  state: SiteState | null;
+  arrival: number;
+  trails: Map<number, Trail>;
 }
 
 interface Colors {
@@ -64,18 +73,9 @@ interface Colors {
   muted: string;
   border: string;
   accent: string;
-  ok: string;
-  warn: string;
-  danger: string;
   violet: string;
   cyan: string;
-  road: string;
-  path: string;
-  marking: string;
-  building: string;
 }
-
-const hex = (value: number): string => `#${value.toString(16).padStart(6, '0')}`;
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -116,84 +116,70 @@ export function cameraCoverage(
   return ground;
 }
 
-/** Keeps the more confident track of each duplicate pair that is close in time. */
-export function deduplicate(tracks: BevTrack[], pairs: DuplicatePair[]): BevTrack[] {
-  const dropped = new Set<string>();
-  for (const { a, b, dtS } of pairs) {
-    if (Math.abs(dtS) <= MAX_MERGE_SKEW_S) {
-      dropped.add(a.object.confidence >= b.object.confidence ? b.key : a.key);
-    }
-  }
-  return tracks.filter((t) => !dropped.has(t.key));
+/** Whether the heading of a road user was measured now (not held from earlier). */
+export function headingMeasured(user: RoadUser): boolean {
+  return user.heading_source !== null && user.heading_source !== 'held';
 }
 
 /**
- * Bird's-eye view of the sites: a metric, north-up top-down drawing on a 2D canvas. Road users
- * are drawn where their camera's latest world state puts them, with their measured or class-size
- * footprint and a heading that says where it comes from. Nothing is interpolated or smoothed: a
- * jump on screen is a jump in the data.
+ * Bird's-eye view of the sites: a metric, north-up top-down drawing on a 2D canvas of the site
+ * states the backend publishes. Every road user is drawn where its state puts it, with the size
+ * and heading it reports and their provenance; nothing is fused, smoothed or invented here.
  */
 export class BevView {
-  readonly world = new BevWorld();
   private readonly ctx: CanvasRenderingContext2D;
   private readonly sites = new Map<string, BevSite>();
   private colors: Colors = this.readColors();
   private view = { cx: 0, cy: 0, scale: 4 };
   private dirty = true;
-  private active = false;
+  private fresh = '';
   private frameRequest = 0;
   private drag: { x: number; y: number; moved: boolean; cx: number; cy: number } | null = null;
-  private selected: { site: string; key: string } | null = null;
-  private highlightedLane: { site: string; id: string } | null = null;
-  options: BevOptions = {
-    aerial: false,
-    trails: true,
-    uncertainty: true,
-    labels: false,
-    tracks: 'cameras',
-  };
-  /** Redraw every animation frame (for measurements) instead of only on new data. */
-  continuous = false;
+  private selected: { site: string; id: number } | null = null;
+  private home: string | null = null;
+  // Map alignment of a sensor-frame site, and traffic light placement.
+  private aligning: { site: BevSite; rotate: boolean; last: Vec } | null = null;
+  private alignSite: string | null = null;
+  private placing: { site: string; camera: string; id: string; position: Vec | null } | null = null;
+  options: BevOptions = { aerial: false, trails: true, uncertainty: true, labels: false };
 
-  onHover: (object: DrawnObject | null, x: number, y: number) => void = () => undefined;
-  onSelect: (track: BevTrack | null) => void = () => undefined;
-  /** Called after the lane analysis of a site ran. */
-  onStatus: (site: string) => void = () => undefined;
+  onHover: (picked: Picked | null, x: number, y: number) => void = () => undefined;
+  onSelect: (picked: Picked | null) => void = () => undefined;
+  onMapTransform: (site: string, transform: MapTransform) => void = () => undefined;
+  onSignalPlaced: (
+    site: string,
+    camera: string,
+    id: string,
+    position: Vec,
+    headingDeg: number,
+  ) => void = () => undefined;
 
-  constructor(
-    private readonly canvas: HTMLCanvasElement,
-    classes: ClassInfo[] = [],
-  ) {
+  constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('2D canvas not available');
     }
     this.ctx = ctx;
-    this.world.setClasses(classes);
-    this.world.laneHeading = (site, x, y) =>
-      this.sites.get(site)?.analytics?.directionAt(x, y) ?? null;
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
     canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
-    canvas.addEventListener('pointerleave', () => {
-      this.onHover(null, 0, 0);
+    canvas.addEventListener('pointerleave', () => this.onHover(null, 0, 0));
+    canvas.addEventListener('contextmenu', (e) => {
+      if (this.alignSite) {
+        e.preventDefault();
+      }
     });
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('dblclick', () => this.recenter());
     new ResizeObserver(() => this.invalidate()).observe(canvas);
+    this.frameRequest = requestAnimationFrame(() => this.loop());
   }
 
-  /** Shows or hides the view; hidden, it draws nothing. */
-  setActive(active: boolean): void {
-    this.active = active;
+  dispose(): void {
     cancelAnimationFrame(this.frameRequest);
-    if (active) {
-      this.dirty = true;
-      this.frameRequest = requestAnimationFrame(() => this.loop());
-    } else {
-      perf.bev.pause();
-    }
   }
+
+  // --- Data ----------------------------------------------------------------------------------
 
   addSite(spec: SiteSpec): void {
     if (this.sites.has(spec.id)) {
@@ -204,22 +190,12 @@ export class BevView {
       transform: spec.transform ?? { yaw_deg: 0, x_m: 0, y_m: 0 },
       map: null,
       aerial: null,
-      analytics: null,
       cameras: new Map(),
-      signals: new Map(),
-      lastAnalytics: 0,
-      tracks: [],
-      shown: [],
-      duplicates: [],
+      state: null,
+      arrival: 0,
+      trails: new Map(),
     });
-  }
-
-  setMapTransform(siteId: string, transform: MapTransform): void {
-    const site = this.sites.get(siteId);
-    if (site) {
-      site.transform = { ...transform };
-      this.invalidate();
-    }
+    this.invalidate();
   }
 
   setMap(siteId: string, map: MapData): void {
@@ -234,156 +210,114 @@ export class BevView {
       image.src = map.base + map.ortho.image;
       site.aerial = image;
     }
-    site.analytics?.setRoadLookup((x, y) => this.road(site, x, y));
     this.invalidate();
   }
 
+  setMapTransform(siteId: string, transform: MapTransform): void {
+    const site = this.sites.get(siteId);
+    if (site) {
+      site.transform = { ...transform };
+      this.invalidate();
+    }
+  }
+
+  mapTransform(siteId: string): MapTransform {
+    return { ...(this.sites.get(siteId)?.transform ?? { yaw_deg: 0, x_m: 0, y_m: 0 }) };
+  }
+
+  /** A camera of a site: its position, ground coverage and zones (from its scene). */
   addCamera(siteId: string, cameraId: string, description: SceneDescription): void {
     const site = this.sites.get(siteId);
     if (!site || site.cameras.has(cameraId)) {
       return;
     }
-    this.world.setClasses(description.classes);
-    if (!site.analytics) {
-      site.analytics = new LaneAnalytics(description.zones, `jp-bev-lanes-${siteId}`);
-      site.analytics.setRoadLookup((x, y) => this.road(site, x, y));
-    }
     const position = description.camera_ground_position_m;
     const h = description.image_to_ground ?? null;
     site.cameras.set(cameraId, {
-      id: cameraId,
       description,
       position,
       coverage: h ? cameraCoverage(h, description.image_size_px, position) : [],
       lines: [],
-      latest: null,
-      arrival: 0,
+      signals: [],
     });
     this.invalidate();
   }
 
-  /** Counting lines of a camera (image pixels), drawn on the ground through its homography. */
-  setLines(siteId: string, cameraId: string, lines: { name: string; points: Vec[] }[]): void {
+  /** Detection lines of a camera (image pixels), drawn on the ground through its homography. */
+  setLines(siteId: string, cameraId: string, lines: { points: Vec[] }[]): void {
     const camera = this.sites.get(siteId)?.cameras.get(cameraId);
     const h = camera?.description.image_to_ground;
     if (!camera || !h) {
       return;
     }
     camera.lines = lines
-      .map((line) => ({
-        name: line.name,
-        points: line.points
-          .map(([u, v]) => homography(h, u, v))
-          .filter((p): p is Vec => p !== null),
-      }))
-      .filter((line) => line.points.length >= 2);
+      .map((line) =>
+        line.points.map(([u, v]) => homography(h, u, v)).filter((p): p is Vec => p !== null),
+      )
+      .filter((points) => points.length >= 2);
     this.invalidate();
   }
 
   setSignals(siteId: string, cameraId: string, defs: SignalDef[]): void {
+    const camera = this.sites.get(siteId)?.cameras.get(cameraId);
+    if (camera) {
+      camera.signals = defs;
+      this.invalidate();
+    }
+  }
+
+  /** The latest site state from the backend. */
+  setState(siteId: string, state: SiteState): void {
     const site = this.sites.get(siteId);
     if (!site) {
       return;
     }
-    for (const [key, signal] of site.signals) {
-      if (signal.camera === cameraId) {
-        site.signals.delete(key);
+    site.state = state;
+    site.arrival = performance.now();
+    const t = state.t_ns / 1e9;
+    for (const user of state.road_users) {
+      let trail = site.trails.get(user.id);
+      if (!trail || trail.run !== state.run) {
+        trail = { run: state.run, points: [] };
+        site.trails.set(user.id, trail);
+      }
+      const last = trail.points[trail.points.length - 1];
+      if (!last || last.t < t) {
+        trail.points.push({ t, x: user.x, y: user.y });
+      }
+      while ((trail.points[0]?.t ?? t) < t - TRAIL_S) {
+        trail.points.shift();
       }
     }
-    for (const def of defs) {
-      site.signals.set(`${cameraId}:${def.id}`, { camera: cameraId, def });
+    const present = new Set(state.road_users.map((u) => u.id));
+    for (const [id, trail] of site.trails) {
+      if (!present.has(id) || trail.run !== state.run) {
+        site.trails.delete(id);
+      }
     }
-    this.invalidate();
-  }
-
-  /** A new world state of a camera: the same objects the 3D twin receives. */
-  push(siteId: string, cameraId: string, state: WorldState): void {
-    const site = this.sites.get(siteId);
-    const camera = site?.cameras.get(cameraId);
-    if (!site || !camera) {
-      return;
-    }
-    camera.latest = state;
-    camera.arrival = performance.now();
-    this.world.push(siteId, cameraId, state);
-    this.refresh(site, false);
     this.dirty = true;
   }
 
-  /** Tracks, duplicates and lane status of a site from its cameras' latest states. */
-  private refresh(site: BevSite, force: boolean): void {
-    const now = performance.now();
-    const live = new Set(
-      [...site.cameras.values()]
-        .filter((c) => c.latest && now - c.arrival < STALE_AFTER_MS)
-        .map((c) => c.id),
-    );
-    site.tracks = this.world.tracks(site.spec.id, live);
-    site.duplicates = duplicateCandidates(site.tracks);
-    const unique = deduplicate(site.tracks, site.duplicates);
-    site.shown = this.options.tracks === 'merged' ? unique : site.tracks;
-    if (site.analytics && (force || now - site.lastAnalytics >= ANALYTICS_INTERVAL_MS)) {
-      site.lastAnalytics = now;
-      const times = site.tracks.map((t) => t.timestampNs);
-      const latest = [...site.cameras.values()].map((c) => c.latest?.timestamp_ns ?? 0);
-      site.analytics.update(unique, Math.max(0, ...times, ...latest));
-      this.onStatus(site.spec.id);
-    }
-  }
-
-  /** Latest world state of each live camera of a site, with its age at the browser. */
-  cameraStates(siteId: string): { camera: string; state: WorldState; ageMs: number }[] {
-    const now = performance.now();
-    return [...(this.sites.get(siteId)?.cameras.values() ?? [])]
-      .filter((c) => c.latest && now - c.arrival < STALE_AFTER_MS)
-      .map((c) => ({ camera: c.id, state: c.latest as WorldState, ageMs: now - c.arrival }));
-  }
-
-  status(siteId: string): SiteStatus | null {
-    return this.sites.get(siteId)?.analytics?.status() ?? null;
-  }
-
-  /** Tracks of a site as shown, and the duplicate pairs among all tracks. */
-  snapshot(siteId: string): { tracks: BevTrack[]; shown: BevTrack[]; duplicates: DuplicatePair[] } {
+  /** The latest site state if it is fresh, else null. */
+  state(siteId: string): SiteState | null {
     const site = this.sites.get(siteId);
-    return {
-      tracks: site?.tracks ?? [],
-      shown: site?.shown ?? [],
-      duplicates: site?.duplicates ?? [],
-    };
+    if (!site?.state || performance.now() - site.arrival > STALE_AFTER_MS) {
+      return null;
+    }
+    return site.state;
   }
 
-  /** Road users as shown, in the form the side panel takes. */
-  objects(siteId?: string): DrawnObject[] {
-    const sites = siteId ? [this.sites.get(siteId)] : [...this.sites.values()];
-    return sites.flatMap((site) =>
-      (site?.shown ?? []).map((t) => ({
-        key: t.key,
-        site: t.site,
-        cameras: [t.camera],
-        object: t.object,
-      })),
-    );
-  }
-
-  selectedTrack(): BevTrack | null {
+  selectedRoadUser(): Picked | null {
     if (!this.selected) {
       return null;
     }
-    const { site, key } = this.selected;
-    return this.sites.get(site)?.tracks.find((t) => t.key === key) ?? null;
-  }
-
-  highlightLane(site: string | null, id: string | null): void {
-    this.highlightedLane = site && id ? { site, id } : null;
-    this.invalidate();
+    const { site, id } = this.selected;
+    const user = this.state(site)?.road_users.find((u) => u.id === id);
+    return user ? { site, user } : null;
   }
 
   setOptions(options: Partial<BevOptions>): void {
     this.options = { ...this.options, ...options };
-    for (const site of this.sites.values()) {
-      this.refresh(site, true);
-    }
     this.invalidate();
   }
 
@@ -395,6 +329,34 @@ export class BevView {
   invalidate(): void {
     this.dirty = true;
   }
+
+  // --- Configuration modes -------------------------------------------------------------------
+  /** The site in align mode, if any. */
+  alignedSite(): string | null {
+    return this.alignSite;
+  }
+
+  /**
+   * Align mode for a sensor-frame site: dragging moves the site over its map, right or shift
+   * drag turns it about the pointer; the wheel still zooms. null ends the mode.
+   */
+  setAlignMode(siteId: string | null): void {
+    this.alignSite = siteId;
+    this.aligning = null;
+    this.canvas.classList.toggle('aligning', siteId !== null || this.placing !== null);
+  }
+
+  /**
+   * Placement of a traffic light: the next click sets where it stands, the one after that the
+   * direction it faces (towards the traffic it controls). null cancels.
+   */
+  setSignalPlacement(siteId: string | null, cameraId = '', signalId = ''): void {
+    this.placing = siteId ? { site: siteId, camera: cameraId, id: signalId, position: null } : null;
+    this.canvas.classList.toggle('aligning', this.placing !== null || this.alignSite !== null);
+    this.invalidate();
+  }
+
+  // --- View ----------------------------------------------------------------------------------
 
   /** Looks at a site: its zones, cameras and coverage fill the canvas. */
   focus(siteId: string): void {
@@ -413,13 +375,13 @@ export class BevView {
         points.push(camera.position);
       }
     }
-    const twin = points.map(([x, y]) => this.toTwin(site, x, y));
-    if (twin.length === 0) {
+    const view = points.map(([x, y]) => this.toView(site, x, y));
+    if (view.length === 0) {
       const o = site.spec.offset;
       this.view = { cx: o.x, cy: o.y, scale: this.fitScale(80, 80) };
     } else {
-      const xs = twin.map((p) => p[0]);
-      const ys = twin.map((p) => p[1]);
+      const xs = view.map((p) => p[0]);
+      const ys = view.map((p) => p[1]);
       const w = Math.max(Math.max(...xs) - Math.min(...xs), 30);
       const hgt = Math.max(Math.max(...ys) - Math.min(...ys), 30);
       this.view = {
@@ -431,6 +393,7 @@ export class BevView {
     this.invalidate();
   }
 
+  /** Shows all sites at once. */
   overview(): void {
     const centers = [...this.sites.values()].map((s) => s.spec.offset);
     if (centers.length === 0) {
@@ -449,38 +412,17 @@ export class BevView {
     this.invalidate();
   }
 
-  private focusId: string | null = null;
-
   /** The site the view returns to on a double click (null: all sites). */
   setHome(siteId: string | null): void {
-    this.focusId = siteId;
+    this.home = siteId;
   }
 
   recenter(): void {
-    if (this.focusId) {
-      this.focus(this.focusId);
+    if (this.home) {
+      this.focus(this.home);
     } else {
       this.overview();
     }
-  }
-
-  /** Site nearest to the view centre. */
-  centralSite(): string | null {
-    let best: string | null = null;
-    let distance = Infinity;
-    for (const site of this.sites.values()) {
-      const d = Math.hypot(site.spec.offset.x - this.view.cx, site.spec.offset.y - this.view.cy);
-      if (d < distance) {
-        distance = d;
-        best = site.spec.id;
-      }
-    }
-    return best;
-  }
-
-  /** Metres per CSS pixel of the current view. */
-  metresPerPixel(): number {
-    return 1 / this.view.scale;
   }
 
   private fitScale(widthM: number, heightM: number): number {
@@ -492,93 +434,67 @@ export class BevView {
   }
 
   private readColors(): Colors {
-    const p = twinPalette();
     return {
       bg: cssVar('--bg', '#080d17'),
       text: cssVar('--text', '#e7eef8'),
       muted: cssVar('--text-3', '#6b7a92'),
       border: cssVar('--border-strong', '#2a3a57'),
       accent: cssVar('--accent', '#3d9bff'),
-      ok: cssVar('--ok', '#2fcf8a'),
-      warn: cssVar('--warn', '#f6b443'),
-      danger: cssVar('--danger', '#ff5d6c'),
       violet: cssVar('--violet', '#a68bfa'),
       cyan: cssVar('--cyan', '#2fd4f0'),
-      road: hex(p.road),
-      path: hex(p.path),
-      marking: hex(p.marking),
-      building: hex(p.building),
     };
   }
 
-  /** Site frame -> twin frame (east and north metres of the first site). */
-  private toTwin(site: BevSite, x: number, y: number): Vec {
-    const { offset } = site.spec;
-    if (site.spec.transform === null) {
-      return [offset.x + x, offset.y + y];
-    }
-    // world = offset + R(-yaw) · (scene - t), the inverse of the map placement.
-    const yaw = (-site.transform.yaw_deg * Math.PI) / 180;
-    const dx = x - site.transform.x_m;
-    const dy = y - site.transform.y_m;
-    return [
-      offset.x + Math.cos(yaw) * dx - Math.sin(yaw) * dy,
-      offset.y + Math.sin(yaw) * dx + Math.cos(yaw) * dy,
-    ];
-  }
-
-  private fromTwin(site: BevSite, x: number, y: number): Vec {
-    const { offset } = site.spec;
-    if (site.spec.transform === null) {
-      return [x - offset.x, y - offset.y];
-    }
-    const yaw = (site.transform.yaw_deg * Math.PI) / 180;
-    const dx = x - offset.x;
-    const dy = y - offset.y;
-    return [
-      Math.cos(yaw) * dx - Math.sin(yaw) * dy + site.transform.x_m,
-      Math.sin(yaw) * dx + Math.cos(yaw) * dy + site.transform.y_m,
-    ];
+  private toView(site: BevSite, x: number, y: number): Vec {
+    return siteToView(site.spec, site.transform, x, y);
   }
 
   private toScreen(site: BevSite, x: number, y: number): Vec {
-    const [tx, ty] = this.toTwin(site, x, y);
+    const [vx, vy] = this.toView(site, x, y);
     return [
-      this.canvas.clientWidth / 2 + (tx - this.view.cx) * this.view.scale,
-      this.canvas.clientHeight / 2 - (ty - this.view.cy) * this.view.scale,
+      this.canvas.clientWidth / 2 + (vx - this.view.cx) * this.view.scale,
+      this.canvas.clientHeight / 2 - (vy - this.view.cy) * this.view.scale,
     ];
   }
 
-  private screenToTwin(px: number, py: number): Vec {
+  private screenToView(px: number, py: number): Vec {
     return [
       this.view.cx + (px - this.canvas.clientWidth / 2) / this.view.scale,
       this.view.cy - (py - this.canvas.clientHeight / 2) / this.view.scale,
     ];
   }
 
-  /** Road axis of the site's OSM map at a point of the site frame. */
-  private road(site: BevSite, x: number, y: number): { angle: number; oneway: boolean } | null {
-    if (!site.map?.osm) {
-      return null;
-    }
-    // The map lies in its own frame for sensor-frame sites: scene = R · map + t.
-    const yaw = (site.transform.yaw_deg * Math.PI) / 180;
-    const dx = x - site.transform.x_m;
-    const dy = y - site.transform.y_m;
-    const mx = Math.cos(-yaw) * dx - Math.sin(-yaw) * dy;
-    const my = Math.sin(-yaw) * dx + Math.cos(-yaw) * dy;
-    const axis = roadAxis(site.map.osm, mx, my);
-    return axis ? { angle: axis.angle + yaw, oneway: axis.oneway } : null;
-  }
-
-  // --- Interaction -------------------------------------------------------------------------
+  // --- Interaction ---------------------------------------------------------------------------
 
   private onPointerDown(e: PointerEvent): void {
+    const align = this.alignSite ? this.sites.get(this.alignSite) : undefined;
+    if (align && !this.placing) {
+      this.aligning = {
+        site: align,
+        rotate: e.button === 2 || e.shiftKey,
+        last: this.screenToView(e.offsetX, e.offsetY),
+      };
+      this.canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     this.drag = { x: e.clientX, y: e.clientY, moved: false, cx: this.view.cx, cy: this.view.cy };
     this.canvas.setPointerCapture(e.pointerId);
   }
 
   private onPointerMove(e: PointerEvent): void {
+    if (this.aligning) {
+      const { site, rotate, last } = this.aligning;
+      const now = this.screenToView(e.offsetX, e.offsetY);
+      site.transform = rotate
+        ? rotatePlacement(site.spec, site.transform, last, (e.movementX / 200) * (Math.PI / 4))
+        : shiftPlacement(site.transform, now[0] - last[0], now[1] - last[1]);
+      if (!rotate) {
+        this.aligning.last = now;
+      }
+      this.onMapTransform(site.spec.id, { ...site.transform });
+      this.invalidate();
+      return;
+    }
     if (this.drag) {
       const dx = e.clientX - this.drag.x;
       const dy = e.clientY - this.drag.y;
@@ -594,67 +510,89 @@ export class BevView {
     }
     const hit = this.pick(e.offsetX, e.offsetY);
     this.canvas.classList.toggle('hovering', hit !== null);
-    this.onHover(
-      hit ? { key: hit.key, site: hit.site, cameras: [hit.camera], object: hit.object } : null,
-      e.offsetX,
-      e.offsetY,
-    );
+    this.onHover(hit, e.offsetX, e.offsetY);
   }
 
   private onPointerUp(e: PointerEvent): void {
+    if (this.aligning) {
+      this.aligning = null;
+      return;
+    }
     const drag = this.drag;
     this.drag = null;
-    if (drag && !drag.moved) {
-      const hit = this.pick(e.offsetX, e.offsetY);
-      this.selected = hit ? { site: hit.site, key: hit.key } : null;
-      this.onSelect(hit);
-      this.invalidate();
+    if (!drag || drag.moved) {
+      return;
     }
+    if (this.placing) {
+      this.placeSignal(e);
+      return;
+    }
+    const hit = this.pick(e.offsetX, e.offsetY);
+    this.selected = hit ? { site: hit.site, id: hit.user.id } : null;
+    this.onSelect(hit);
+    this.invalidate();
+  }
+
+  private placeSignal(e: PointerEvent): void {
+    const placing = this.placing;
+    const site = placing ? this.sites.get(placing.site) : undefined;
+    if (!placing || !site) {
+      return;
+    }
+    const [vx, vy] = this.screenToView(e.offsetX, e.offsetY);
+    const point = viewToSite(site.spec, site.transform, vx, vy);
+    if (!placing.position) {
+      placing.position = point;
+      this.invalidate();
+      return;
+    }
+    const [x0, y0] = placing.position;
+    const heading = (Math.atan2(point[1] - y0, point[0] - x0) * 180) / Math.PI;
+    this.setSignalPlacement(null);
+    this.onSignalPlaced(placing.site, placing.camera, placing.id, [x0, y0], heading);
   }
 
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
-    const before = this.screenToTwin(e.offsetX, e.offsetY);
+    const before = this.screenToView(e.offsetX, e.offsetY);
     this.view.scale = clamp(this.view.scale * Math.exp(-e.deltaY * 0.0015), MIN_SCALE, MAX_SCALE);
-    const after = this.screenToTwin(e.offsetX, e.offsetY);
+    const after = this.screenToView(e.offsetX, e.offsetY);
     this.view.cx += before[0] - after[0];
     this.view.cy += before[1] - after[1];
     this.invalidate();
   }
 
-  /** The shown track under a screen point: inside its footprint, or within a few pixels. */
-  private pick(px: number, py: number): BevTrack | null {
-    let best: BevTrack | null = null;
+  /** The road user under a screen point: inside its footprint, or within a few pixels. */
+  private pick(px: number, py: number): Picked | null {
+    let best: Picked | null = null;
     let distance = PICK_RADIUS_PX;
     for (const site of this.sites.values()) {
-      for (const t of site.shown) {
-        const [sx, sy] = this.toScreen(site, t.object.x, t.object.y);
-        const reach = Math.max((Math.max(t.length, t.width) / 2) * this.view.scale, 0);
+      for (const user of this.state(site.spec.id)?.road_users ?? []) {
+        const [sx, sy] = this.toScreen(site, user.x, user.y);
+        const [length, width] = drawnSize(user);
+        const reach = (Math.max(length, width) / 2) * this.view.scale;
         const d = Math.max(Math.hypot(sx - px, sy - py) - reach, 0);
         if (d < distance || (d === 0 && best === null)) {
           distance = d;
-          best = t;
+          best = { site: site.spec.id, user };
         }
       }
     }
     return best;
   }
 
-  // --- Drawing -----------------------------------------------------------------------------
+  // --- Drawing -------------------------------------------------------------------------------
 
   private loop(): void {
-    if (!this.active) {
-      return;
+    // Stale states drop out even without new data.
+    const fresh = [...this.sites.keys()].filter((id) => this.state(id) !== null).join('|');
+    if (fresh !== this.fresh) {
+      this.fresh = fresh;
+      this.dirty = true;
     }
-    if (this.dirty || this.continuous) {
-      const start = performance.now();
-      // Stale cameras drop out even without new data.
-      for (const site of this.sites.values()) {
-        this.refresh(site, false);
-      }
+    if (this.dirty) {
       this.draw();
       this.dirty = false;
-      perf.bev.record(start, performance.now() - start);
     }
     this.frameRequest = requestAnimationFrame(() => this.loop());
   }
@@ -704,14 +642,11 @@ export class BevView {
   /** Sets the canvas transform from the site frame (on top of the view transform). */
   private siteFrame(site: BevSite): void {
     const { offset } = site.spec;
-    if (site.spec.transform === null) {
-      this.ctx.translate(offset.x, offset.y);
-      return;
-    }
-    const yaw = (-site.transform.yaw_deg * Math.PI) / 180;
     this.ctx.translate(offset.x, offset.y);
-    this.ctx.rotate(yaw);
-    this.ctx.translate(-site.transform.x_m, -site.transform.y_m);
+    if (site.spec.transform !== null) {
+      this.ctx.rotate((-site.transform.yaw_deg * Math.PI) / 180);
+      this.ctx.translate(-site.transform.x_m, -site.transform.y_m);
+    }
   }
 
   private px(pixels: number): number {
@@ -725,6 +660,7 @@ export class BevView {
     if (!map) {
       return;
     }
+    const colors = mapPalette();
     if (this.options.aerial && site.aerial?.complete && map.ortho) {
       const [tl, tr, , bl] = map.ortho.corners;
       const iw = site.aerial.naturalWidth;
@@ -751,14 +687,14 @@ export class BevView {
     for (const building of map.buildings) {
       this.path(building.footprint);
       ctx.closePath();
-      ctx.fillStyle = this.colors.building;
+      ctx.fillStyle = colors.building;
       ctx.fill();
     }
     const osm = map.osm;
     if (osm) {
       for (const [lines, color] of [
-        [osm.paths, this.colors.path],
-        [osm.roads, this.colors.road],
+        [osm.paths, colors.path],
+        [osm.roads, colors.road],
       ] as const) {
         ctx.strokeStyle = color;
         for (const line of lines) {
@@ -767,7 +703,7 @@ export class BevView {
           ctx.stroke();
         }
       }
-      ctx.strokeStyle = this.colors.marking;
+      ctx.strokeStyle = colors.marking;
       ctx.globalAlpha = alpha * 0.55;
       ctx.setLineDash([0.5, 0.5]);
       for (const crossing of osm.crossings) {
@@ -788,7 +724,7 @@ export class BevView {
     points.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   }
 
-  /** Everything in the site frame: coverage, zones, lanes, lines, signals and road users. */
+  /** Everything in the site frame: coverage, zones, lines, cameras, signals and road users. */
   private drawScene(site: BevSite): void {
     const { ctx, colors } = this;
     // Ground coverage of the cameras: no road users outside it does not mean there are none.
@@ -808,115 +744,48 @@ export class BevView {
         ctx.globalAlpha = 1;
       }
     }
-    const status = site.analytics?.status();
-    const lanes = new Map((status?.lanes ?? []).map((l) => [l.id, l]));
-    const areas = new Map((status?.areas ?? []).map((a) => [a.id, a]));
     const first = [...site.cameras.values()][0];
     for (const f of first?.description.zones.features ?? []) {
       const ring = (f.geometry.coordinates[0] ?? []).map(([x = 0, y = 0]): Vec => [x, y]);
-      const lane = lanes.get(f.properties.id);
-      const area = areas.get(f.properties.id);
-      const highlighted =
-        this.highlightedLane?.site === site.spec.id && this.highlightedLane.id === f.properties.id;
-      let color = colors.accent;
-      let fill = 0.06;
-      if (f.properties.type === 'crosswalk') {
-        color = colors.cyan;
-        fill = area && area.vrus > 0 ? 0.3 : 0.12;
-      } else if (f.properties.type === 'intersection') {
-        color = area?.blocked ? colors.danger : colors.violet;
-        fill = area?.blocked ? 0.16 : 0.05;
-      } else if (lane) {
-        color = laneColor(lane, colors);
-        fill = lane.state === 'empty' ? 0.05 : 0.14;
-      }
+      const color =
+        f.properties.type === 'crosswalk'
+          ? colors.cyan
+          : f.properties.type === 'intersection'
+            ? colors.violet
+            : colors.accent;
       this.path(ring);
       ctx.closePath();
       ctx.fillStyle = color;
-      ctx.globalAlpha = fill;
+      ctx.globalAlpha = 0.06;
       ctx.fill();
-      ctx.globalAlpha = highlighted ? 1 : 0.7;
+      ctx.globalAlpha = 0.6;
       ctx.strokeStyle = color;
-      ctx.lineWidth = this.px(highlighted ? 3 : 1.2);
+      ctx.lineWidth = this.px(1.2);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      if (lane) {
-        this.drawLaneDirection(lane);
-      }
     }
-    // Counting lines drawn in the console, on the ground.
     for (const camera of site.cameras.values()) {
       for (const line of camera.lines) {
-        ctx.strokeStyle = colors.warn;
+        ctx.strokeStyle = colors.muted;
         ctx.lineWidth = this.px(2);
         ctx.setLineDash([this.px(8), this.px(4)]);
-        this.path(line.points);
+        this.path(line);
         ctx.stroke();
         ctx.setLineDash([]);
       }
     }
-    // Queues: from the lane end upstream.
-    for (const lane of lanes.values()) {
-      if (lane.queueLine) {
-        ctx.strokeStyle = (lane.queueM ?? 0) > 40 ? colors.danger : colors.warn;
-        ctx.lineWidth = Math.max(this.px(5), 0.8);
-        ctx.lineCap = 'butt';
-        this.path(lane.queueLine);
-        ctx.stroke();
-        ctx.lineCap = 'round';
-      }
-    }
     this.drawCameras(site);
     this.drawSignals(site);
-    if (this.options.trails) {
-      this.drawTrails(site);
-    }
-    this.drawDuplicates(site);
-    const conflict = new Set<string>();
-    for (const camera of site.cameras.values()) {
-      for (const event of camera.latest?.events ?? []) {
-        if (event.state === 'active' && event.type === 'VRU_VEHICLE_CONFLICT') {
-          for (const id of event.object_ids) {
-            conflict.add(`${camera.id}:${id}`);
-          }
-        }
-      }
-    }
-    for (const t of site.shown) {
-      this.drawTrack(site, t, conflict.has(t.key));
-    }
-  }
-
-  /** Chevrons along a lane with a known direction (dashed when it comes from OSM). */
-  private drawLaneDirection(lane: LaneStatus): void {
-    const { ctx, colors } = this;
-    const { axis, direction } = lane;
-    if (!axis || !direction) {
+    const state = this.state(site.spec.id);
+    if (!state) {
       return;
     }
-    const length = axis.max - axis.min;
-    const size = Math.min(axis.width * 0.35, 2);
-    const ux = Math.cos(direction.angle);
-    const uy = Math.sin(direction.angle);
-    ctx.strokeStyle = colors.text;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = this.px(1.5);
-    if (direction.source === 'osm') {
-      ctx.setLineDash([this.px(3), this.px(3)]);
+    if (this.options.trails) {
+      this.drawTrails(site, state);
     }
-    const count = Math.max(1, Math.min(4, Math.floor(length / 15)));
-    for (let i = 1; i <= count; i++) {
-      const d = axis.min + (length * i) / (count + 1);
-      const x = axis.cx + axis.ux * d;
-      const y = axis.cy + axis.uy * d;
-      ctx.beginPath();
-      ctx.moveTo(x - ux * size - uy * size, y - uy * size + ux * size);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x - ux * size + uy * size, y - uy * size - ux * size);
-      ctx.stroke();
+    for (const user of state.road_users) {
+      this.drawRoadUser(site, user);
     }
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
   }
 
   private drawCameras(site: BevSite): void {
@@ -938,96 +807,88 @@ export class BevView {
     }
   }
 
-  private signalState(
-    site: BevSite,
+  /** Colour and duration of a traffic light, as the backend reports it. */
+  signalState(
+    siteId: string,
     camera: string,
     id: string,
   ): { color: string; seconds: number | null } {
-    const state = site.cameras.get(camera)?.latest;
-    const signal = state?.signals?.find((s) => s.id === id);
-    const fresh =
-      state && performance.now() - (site.cameras.get(camera)?.arrival ?? 0) < STALE_AFTER_MS;
-    if (!signal || !fresh || !state) {
+    const state = this.state(siteId);
+    const signal = state?.signals.find((s) => s.camera === camera && s.id === id);
+    if (!state || !signal) {
       return { color: 'unknown', seconds: null };
     }
-    return {
-      color: signal.state,
-      seconds: Math.max(0, (state.timestamp_ns - signal.since_ns) / 1e9),
-    };
+    return { color: signal.state, seconds: Math.max(0, (state.t_ns - signal.since_ns) / 1e9) };
   }
 
   private drawSignals(site: BevSite): void {
     const { ctx, colors } = this;
-    for (const { camera, def } of site.signals.values()) {
-      if (!def.position) {
-        continue;
+    for (const [cameraId, camera] of site.cameras) {
+      for (const def of camera.signals) {
+        if (!def.position) {
+          continue;
+        }
+        const [x, y] = def.position;
+        const { color } = this.signalState(site.spec.id, cameraId, def.id);
+        const heading = (def.heading_deg * Math.PI) / 180;
+        ctx.strokeStyle = colors.text;
+        ctx.lineWidth = this.px(2);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(heading) * this.px(14), y + Math.sin(heading) * this.px(14));
+        ctx.stroke();
+        ctx.fillStyle = signalCss(color, colors);
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(this.px(6), 0.6), 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
       }
-      const [x, y] = def.position;
-      const { color } = this.signalState(site, camera, def.id);
-      const heading = (def.heading_deg * Math.PI) / 180;
-      ctx.strokeStyle = colors.text;
+    }
+    const placing = this.placing;
+    if (placing?.site === site.spec.id && placing.position) {
+      ctx.strokeStyle = colors.accent;
       ctx.lineWidth = this.px(2);
       ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + Math.cos(heading) * this.px(14), y + Math.sin(heading) * this.px(14));
-      ctx.stroke();
-      ctx.fillStyle = signalCss(color, colors);
-      ctx.beginPath();
-      ctx.arc(x, y, Math.max(this.px(6), 0.6), 0, 2 * Math.PI);
-      ctx.fill();
+      ctx.arc(placing.position[0], placing.position[1], this.px(9), 0, 2 * Math.PI);
       ctx.stroke();
     }
   }
 
-  private drawTrails(site: BevSite): void {
+  private drawTrails(site: BevSite, state: SiteState): void {
     const { ctx } = this;
     ctx.lineWidth = this.px(1.5);
-    for (const t of site.shown) {
-      if (t.trail.length < 2) {
+    for (const user of state.road_users) {
+      const trail = site.trails.get(user.id);
+      if (!trail || trail.points.length < 2) {
         continue;
       }
-      ctx.strokeStyle = classCss(t.object.class);
+      ctx.strokeStyle = classCss(user.class);
       ctx.globalAlpha = 0.55;
-      this.path(t.trail.map((p): Vec => [p.x, p.y]));
+      this.path(trail.points.map((p): Vec => [p.x, p.y]));
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }
 
-  private drawDuplicates(site: BevSite): void {
-    if (this.options.tracks !== 'cameras') {
-      return;
-    }
+  private drawRoadUser(site: BevSite, user: RoadUser): void {
     const { ctx, colors } = this;
-    ctx.strokeStyle = colors.violet;
-    ctx.lineWidth = this.px(2);
-    ctx.setLineDash([this.px(4), this.px(3)]);
-    for (const { a, b } of site.duplicates) {
-      ctx.beginPath();
-      ctx.moveTo(a.object.x, a.object.y);
-      ctx.lineTo(b.object.x, b.object.y);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-  }
+    const color = classCss(user.class);
+    const coasting = user.status === 'coasting';
+    const alpha = (user.validated ? 1 : 0.45) * (coasting ? 0.5 : 1);
+    const selected = this.selected?.site === site.spec.id && this.selected.id === user.id;
+    const { x, y } = user;
+    ctx.globalAlpha = alpha;
 
-  private drawTrack(site: BevSite, t: BevTrack, conflict: boolean): void {
-    const { ctx, colors } = this;
-    const o = t.object;
-    const color = classCss(o.class);
-    const selected = this.selected?.site === site.spec.id && this.selected.key === t.key;
-    ctx.globalAlpha = o.validated ? 1 : 0.45;
-
-    if (this.options.uncertainty && o.position_cov_m2) {
-      const ellipse = covarianceEllipse(o.position_cov_m2, 2);
+    if (this.options.uncertainty) {
+      const ellipse = covarianceEllipse(user.position_cov_m2, 2);
       if (ellipse && ellipse.major > 0) {
         ctx.strokeStyle = color;
         ctx.lineWidth = this.px(1);
-        ctx.globalAlpha *= 0.7;
+        ctx.globalAlpha = alpha * 0.7;
         ctx.beginPath();
         ctx.ellipse(
-          o.x,
-          o.y,
+          x,
+          y,
           ellipse.major,
           Math.max(ellipse.minor, 0.01),
           ellipse.angle,
@@ -1035,191 +896,124 @@ export class BevView {
           2 * Math.PI,
         );
         ctx.stroke();
-        ctx.globalAlpha = o.validated ? 1 : 0.45;
+        ctx.globalAlpha = alpha;
       }
     }
 
-    // Velocity over the next second, only from a speed the filter knows.
-    if (t.motion !== 'stopped' && o.speed_mps > 0.2) {
-      ctx.strokeStyle = t.motion === 'moving' ? colors.text : colors.muted;
+    // Velocity over the next second; dashed while the speed is not clearly above its noise.
+    if (user.speed_mps > 0.2) {
+      const certain = user.speed_std_mps !== null && user.speed_mps > 2 * user.speed_std_mps;
+      ctx.strokeStyle = certain ? colors.text : colors.muted;
       ctx.lineWidth = this.px(1.5);
-      if (t.motion === 'uncertain') {
+      if (!certain) {
         ctx.setLineDash([this.px(3), this.px(3)]);
       }
       ctx.beginPath();
-      ctx.moveTo(o.x, o.y);
-      ctx.lineTo(o.x + o.vx * VELOCITY_HORIZON_S, o.y + o.vy * VELOCITY_HORIZON_S);
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + user.vx * VELOCITY_HORIZON_S, y + user.vy * VELOCITY_HORIZON_S);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
     const minimum = this.px(3);
-    const length = Math.max(t.length, minimum * 2);
-    const width = Math.max(t.width, minimum * 2);
-    if (t.heading === null) {
-      // No heading: an orientation-free disc of the footprint's size, never a guessed box.
-      const r = o.vru ? Math.max(width / 2, minimum) : length / 2;
+    const [rawLength, rawWidth] = drawnSize(user);
+    const length = Math.max(rawLength, minimum * 2);
+    const width = Math.max(rawWidth, minimum * 2);
+    const outline = (): void => {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = user.size_source === 'measured' ? colors.text : color;
+      ctx.lineWidth = this.px(1.2);
+      if (user.size_source !== 'measured' || coasting) {
+        ctx.setLineDash([this.px(4), this.px(2)]);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    if (user.heading_rad === null || user.vru) {
+      // No heading (or a person): an orientation-free disc of the footprint's size.
       ctx.beginPath();
-      ctx.arc(o.x, o.y, r, 0, 2 * Math.PI);
+      ctx.arc(x, y, user.vru ? Math.max(width / 2, minimum) : length / 2, 0, 2 * Math.PI);
       ctx.fillStyle = color;
-      ctx.globalAlpha *= o.vru ? 0.9 : 0.35;
+      ctx.globalAlpha = alpha * (user.vru ? 0.9 : 0.35);
       ctx.fill();
-      ctx.globalAlpha = o.validated ? 1 : 0.45;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = this.px(1.5);
-      if (!o.vru) {
-        ctx.setLineDash([this.px(4), this.px(3)]);
+      outline();
+      if (user.heading_rad !== null) {
+        this.drawFront(user, Math.max(width, 0.9), Math.max(width * 0.6, 0.5));
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
     } else {
-      const corners =
-        o.class === 'pedestrian' ? null : footprintCorners(o.x, o.y, t.heading, length, width);
-      if (corners) {
-        this.path(corners);
-        ctx.closePath();
-        ctx.fillStyle = color;
-        ctx.globalAlpha *= t.headingStatus === 'lane' ? 0.45 : 0.85;
-        ctx.fill();
-        ctx.globalAlpha = o.validated ? 1 : 0.45;
-        ctx.strokeStyle = t.sizeMeasured ? colors.text : color;
-        ctx.lineWidth = this.px(1.2);
-        if (!t.sizeMeasured) {
-          ctx.setLineDash([this.px(4), this.px(2)]);
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        this.drawFront(t, length, width);
-      } else {
-        ctx.beginPath();
-        ctx.arc(o.x, o.y, Math.max(0.35, minimum), 0, 2 * Math.PI);
-        ctx.fillStyle = color;
-        ctx.fill();
-        this.drawFront(t, 0.9, 0.5);
-      }
-    }
-    if (conflict) {
-      ctx.strokeStyle = colors.danger;
-      ctx.lineWidth = this.px(2.5);
-      ctx.beginPath();
-      ctx.arc(o.x, o.y, Math.max(length, width) / 2 + this.px(5), 0, 2 * Math.PI);
-      ctx.stroke();
-    }
-    if (t.possibleIdSwitch && t.ageS < 3) {
-      ctx.strokeStyle = colors.warn;
-      ctx.lineWidth = this.px(1.5);
-      ctx.setLineDash([this.px(2), this.px(2)]);
-      ctx.beginPath();
-      ctx.arc(o.x, o.y, Math.max(length, width) / 2 + this.px(9), 0, 2 * Math.PI);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      this.path(footprintCorners(x, y, user.heading_rad, length, width));
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.fill();
+      outline();
+      this.drawFront(user, length, width);
     }
     if (selected) {
+      ctx.globalAlpha = 1;
       ctx.strokeStyle = colors.accent;
       ctx.lineWidth = this.px(2.5);
       ctx.beginPath();
-      ctx.arc(o.x, o.y, Math.max(length, width) / 2 + this.px(7), 0, 2 * Math.PI);
+      ctx.arc(x, y, Math.max(length, width) / 2 + this.px(7), 0, 2 * Math.PI);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }
 
-  /** Front of a road user: filled (measured), hollow (held) or dotted (lane direction). */
-  private drawFront(t: BevTrack, length: number, width: number): void {
+  /** Front of a road user: filled if measured now, hollow if held from earlier. */
+  private drawFront(user: RoadUser, length: number, width: number): void {
     const { ctx, colors } = this;
-    const heading = t.heading as number;
+    const heading = user.heading_rad as number;
     const c = Math.cos(heading);
     const s = Math.sin(heading);
     const tip = length / 2;
     const back = tip - Math.min(length * 0.35, width * 0.9);
     const half = width * 0.35;
-    const { x, y } = t.object;
+    const { x, y } = user;
     ctx.beginPath();
     ctx.moveTo(x + c * tip, y + s * tip);
     ctx.lineTo(x + c * back - s * half, y + s * back + c * half);
     ctx.lineTo(x + c * back + s * half, y + s * back - c * half);
     ctx.closePath();
     ctx.lineWidth = this.px(1.2);
-    ctx.strokeStyle = colors.bg;
-    if (t.headingStatus === 'measured') {
+    if (headingMeasured(user)) {
       ctx.fillStyle = colors.text;
       ctx.fill();
     } else {
-      if (t.headingStatus === 'lane') {
-        ctx.setLineDash([this.px(2), this.px(2)]);
-      }
       ctx.strokeStyle = colors.text;
       ctx.stroke();
-      ctx.setLineDash([]);
     }
   }
 
-  /** Screen-space text: road user labels, lane names and signal times. */
+  /** Screen-space text: road user labels and signal times. */
   private drawLabels(site: BevSite): void {
-    const { ctx, colors } = this;
+    const { colors } = this;
     const scale = this.view.scale;
-    ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
-    ctx.textBaseline = 'middle';
-    const status = site.analytics?.status();
-    if (scale >= 1.5) {
-      for (const lane of status?.lanes ?? []) {
-        if (!lane.axis) {
+    this.ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    this.ctx.textBaseline = 'middle';
+    for (const [cameraId, camera] of site.cameras) {
+      for (const def of camera.signals) {
+        if (!def.position) {
           continue;
         }
-        const [x, y] = this.toScreen(site, lane.axis.cx, lane.axis.cy);
-        const text = lane.direction ? lane.id : `${lane.id} · direction ?`;
-        this.text(text, x, y, colors.muted, 'center');
-        if (lane.queueM && lane.queueLine) {
-          const [qx, qy] = this.toScreen(site, ...lane.queueLine[1]);
-          this.text(`Q ${lane.queueM.toFixed(0)} m`, qx, qy - 10, colors.warn, 'center', true);
-        }
+        const { seconds } = this.signalState(site.spec.id, cameraId, def.id);
+        const [x, y] = this.toScreen(site, def.position[0], def.position[1]);
+        const time = seconds !== null ? ` ${seconds.toFixed(0)} s` : '';
+        this.text(`${def.name}${time}`, x + 10, y - 10, colors.text, 'left', true);
       }
     }
-    for (const { camera, def } of site.signals.values()) {
-      if (!def.position) {
+    if (!this.options.labels) {
+      return;
+    }
+    for (const user of this.state(site.spec.id)?.road_users ?? []) {
+      const selected = this.selected?.site === site.spec.id && this.selected.id === user.id;
+      if (scale < LABEL_MIN_SCALE && !selected) {
         continue;
       }
-      const { seconds } = this.signalState(site, camera, def.id);
-      const [x, y] = this.toScreen(site, def.position[0], def.position[1]);
-      this.text(
-        `${def.name}${seconds !== null ? ` ${seconds.toFixed(0)} s` : ''}`,
-        x + 10,
-        y - 10,
-        colors.text,
-        'left',
-        true,
-      );
-    }
-    if (this.options.labels) {
-      for (const t of site.shown) {
-        const selected = this.selected?.site === site.spec.id && this.selected.key === t.key;
-        if (scale < LABEL_MIN_SCALE && !selected) {
-          continue;
-        }
-        const [x, y] = this.toScreen(site, t.object.x, t.object.y);
-        const r = (Math.max(t.length, t.width) / 2) * scale;
-        const speed =
-          t.motion === 'uncertain' ? '? km/h' : `${(t.object.speed_mps * 3.6).toFixed(0)} km/h`;
-        const camera = site.cameras.size > 1 ? `${t.camera} ` : '';
-        this.text(
-          `${camera}#${t.object.id} ${speed}`,
-          x + r + 4,
-          y - r - 2,
-          colors.text,
-          'left',
-          true,
-        );
-      }
-    }
-    if (this.options.tracks === 'cameras' && scale >= LABEL_MIN_SCALE) {
-      for (const { a, b, dtS } of site.duplicates) {
-        const [x, y] = this.toScreen(
-          site,
-          (a.object.x + b.object.x) / 2,
-          (a.object.y + b.object.y) / 2,
-        );
-        this.text(`dup Δt ${(dtS * 1000).toFixed(0)} ms`, x, y + 12, colors.violet, 'center', true);
-      }
+      const [x, y] = this.toScreen(site, user.x, user.y);
+      const r = (Math.max(...drawnSize(user)) / 2) * scale;
+      const speed = `${(user.speed_mps * 3.6).toFixed(0)} km/h`;
+      this.text(`#${user.id} ${speed}`, x + r + 4, y - r - 2, colors.text, 'left', true);
     }
   }
 
@@ -1251,8 +1045,8 @@ export class BevView {
       return;
     }
     const step = s >= 6 ? 10 : 50;
-    const [x0, y1] = this.screenToTwin(0, 0);
-    const [x1, y0] = this.screenToTwin(w, h);
+    const [x0, y1] = this.screenToView(0, 0);
+    const [x1, y0] = this.screenToView(w, h);
     ctx.strokeStyle = colors.border;
     ctx.globalAlpha = 0.35;
     ctx.lineWidth = this.px(1);
@@ -1290,14 +1084,8 @@ export class BevView {
     ctx.lineTo(x + length, y);
     ctx.lineTo(x + length, y - 5);
     ctx.stroke();
-    this.text(
-      `${metres >= 1 ? metres.toFixed(0) : metres.toFixed(1)} m`,
-      x + length / 2,
-      y - 12,
-      colors.text,
-      'center',
-      true,
-    );
+    const label = `${metres >= 1 ? metres.toFixed(0) : metres.toFixed(1)} m`;
+    this.text(label, x + length / 2, y - 12, colors.text, 'center', true);
     const nx = w - 30;
     const ny = y - 52;
     ctx.fillStyle = colors.text;
@@ -1310,29 +1098,15 @@ export class BevView {
     ctx.fill();
     this.text('N', nx, ny - 22, colors.text, 'center', true);
   }
+}
 
-  /** Site frame position of a point of the twin frame, for tests and tools. */
-  siteAt(siteId: string, x: number, y: number): Vec | null {
-    const site = this.sites.get(siteId);
-    return site ? this.fromTwin(site, x, y) : null;
-  }
+/** Length and width drawn for a road user: its reported size, else a small marker. */
+export function drawnSize(user: RoadUser): [number, number] {
+  return [user.length_m ?? UNKNOWN_SIZE_M, user.width_m ?? UNKNOWN_SIZE_M];
 }
 
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(Math.max(value, lo), hi);
-}
-
-function laneColor(lane: LaneStatus, colors: Colors): string {
-  switch (lane.state) {
-    case 'queue':
-      return (lane.queueM ?? 0) > 40 ? colors.danger : colors.warn;
-    case 'flowing':
-      return colors.ok;
-    case 'unknown':
-      return colors.muted;
-    default:
-      return colors.accent;
-  }
 }
 
 export function signalCss(state: string, colors: { muted: string }): string {

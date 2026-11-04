@@ -1,19 +1,13 @@
+import { CLASS_LABELS, classCss } from '../bev/palette';
 import {
   type PlaybackCommand,
   sendPlayback,
   type ServerStatus,
   type VideoFrame,
 } from '../net/client';
-import type { DrawnObject } from '../twin/twinView';
-import { CLASS_LABELS, classCss } from '../twin/palette';
+import type { SiteState } from '../net/siteState';
 import { element, fill, h } from './dom';
-import {
-  describeEvent,
-  EVENT_LABELS,
-  formatTimestamp,
-  type TaggedEvent,
-  TaggedEventLog,
-} from './events';
+import { formatTimestamp } from './format';
 import { icon } from './icons';
 
 /** A camera the panel can show, with the address of its server. */
@@ -26,7 +20,7 @@ export interface PanelCamera {
 
 /**
  * Panels of the twin page: camera image (with tabs for the cameras of the site), counters,
- * class legend, event list, playback bar of the shown camera and the live status chip.
+ * class legend, fusion status, playback bar of the shown camera and the live status chip.
  */
 export class SidePanel {
   private readonly video = element<HTMLImageElement>('#video');
@@ -34,8 +28,6 @@ export class SidePanel {
   private readonly videoEmpty = element<HTMLElement>('#video-empty');
   private readonly cameraTabs = element<HTMLElement>('#camera-tabs');
   private readonly cameraTitle = element<HTMLElement>('#camera-title');
-  private readonly events = element<HTMLUListElement>('#events');
-  private readonly eventCount = element<HTMLElement>('#event-count');
   private readonly stats = element<HTMLElement>('#stats');
   private readonly legend = element<HTMLElement>('#legend');
   private readonly liveChip = element<HTMLElement>('#live-chip');
@@ -45,12 +37,12 @@ export class SidePanel {
   private readonly offline = element<HTMLElement>('#offline');
   private readonly signalsCard = element<HTMLElement>('#signals-card');
   private readonly signals = element<HTMLUListElement>('#signals');
+  private readonly fusion = element<HTMLUListElement>('#fusion');
   private readonly grid = element<HTMLElement>('#video-grid');
   private readonly gridCells = new Map<
     string,
     { cell: HTMLElement; img: HTMLImageElement; tag: HTMLElement; url: string | null }
   >();
-  private readonly log = new TaggedEventLog();
   private videoUrl: string | null = null;
   private playing = true;
   private sliding = false;
@@ -89,10 +81,8 @@ export class SidePanel {
     this.slider.addEventListener('input', () => (this.sliding = true));
     this.slider.addEventListener('change', () => {
       this.sliding = false;
-      this.log.clear();
       void this.onPlayback({ action: 'seek', frame: Number(this.slider.value) });
     });
-    this.renderEvents();
   }
 
   /**
@@ -202,11 +192,10 @@ export class SidePanel {
     this.videoFrame.textContent = `frame ${frame.frame}`;
   }
 
-  /** Road users and events as drawn (for the focused site, or all sites). */
-  showWorld(objects: DrawnObject[], events: TaggedEvent[]): void {
-    this.log.update(events);
-    this.renderEvents();
-    this.renderStats(objects, events);
+  /** Counters, legend and fusion status of the shown sites' latest states (null: no data). */
+  showSites(states: SiteState[]): void {
+    this.renderStats(states);
+    this.renderFusion(states);
   }
 
   /** Traffic lights read by the cameras: colour and how long it has shown. */
@@ -284,11 +273,10 @@ export class SidePanel {
     this.playButton.title = playing ? 'Pause' : 'Play';
   }
 
-  private renderStats(objects: DrawnObject[], events: TaggedEvent[]): void {
-    const vrus = objects.filter((o) => o.object.vru).length;
-    const conflicts = events.filter(
-      (e) => e.event.state === 'active' && e.event.type === 'VRU_VEHICLE_CONFLICT',
-    ).length;
+  private renderStats(states: SiteState[]): void {
+    const users = states.flatMap((s) => s.road_users);
+    const vrus = users.filter((u) => u.vru).length;
+    const coasting = users.filter((u) => u.status === 'coasting').length;
     const stat = (label: string, value: number, tone = '') =>
       h(
         'div',
@@ -298,14 +286,14 @@ export class SidePanel {
       );
     fill(
       this.stats,
-      stat('Road users', objects.length),
+      stat('Road users', users.length),
       stat('Vulnerable', vrus, vrus > 0 ? 'vru' : ''),
-      stat('Vehicles', objects.length - vrus),
-      stat('Conflicts', conflicts, conflicts > 0 ? 'danger' : ''),
+      stat('Vehicles', users.length - vrus),
+      stat('Not seen now', coasting),
     );
     const counts = new Map<string, number>();
-    for (const { object } of objects) {
-      counts.set(object.class, (counts.get(object.class) ?? 0) + 1);
+    for (const user of users) {
+      counts.set(user.class, (counts.get(user.class) ?? 0) + 1);
     }
     const order = Object.keys(CLASS_LABELS);
     const classes = [...counts.entries()].sort(([a], [b]) => order.indexOf(a) - order.indexOf(b));
@@ -325,49 +313,34 @@ export class SidePanel {
     );
   }
 
-  private renderEvents(): void {
-    const entries = this.log.entries();
-    const active = entries.filter((e) => e.isActive).length;
-    this.eventCount.textContent = active > 0 ? `${active} active` : '';
-    this.eventCount.hidden = active === 0;
-    if (entries.length === 0) {
-      fill(
-        this.events,
-        h(
-          'li',
-          { class: 'events-empty' },
-          icon('check'),
-          h('strong', {}, 'No safety events'),
-          h('span', {}, 'VRUs on crosswalks and conflicts appear here.'),
-        ),
-      );
-      return;
-    }
+  /** How the backend combined the cameras: fused, single camera or unfused (and why). */
+  private renderFusion(states: SiteState[]): void {
+    const labels = { fused: 'Fused', single: 'Single camera', unfused: 'Not fused' };
     fill(
-      this.events,
-      entries.map(({ event, label, isActive }) => {
-        const conflict = event.type === 'VRU_VEHICLE_CONFLICT';
-        return h(
-          'li',
-          { class: `event ${conflict ? 'conflict' : 'crosswalk'}${isActive ? ' active' : ''}` },
-          h('span', { class: 'event-icon' }, icon(conflict ? 'conflict' : 'walk')),
-          h(
-            'div',
-            { class: 'event-body' },
-            h('span', { class: 'event-title' }, EVENT_LABELS[event.type]),
+      this.fusion,
+      states.length === 0
+        ? h('li', { class: 'muted' }, 'No site state from the world model yet.')
+        : states.map((s) =>
             h(
-              'span',
-              { class: 'event-detail' },
-              label ? `${label} · ${describeEvent(event)}` : describeEvent(event),
+              'li',
+              {},
+              h(
+                'span',
+                { class: `pill ${s.fusion.mode === 'unfused' ? 'warn' : 'ok'}` },
+                labels[s.fusion.mode],
+              ),
+              h(
+                'span',
+                { class: 'muted' },
+                s.fusion.reason ??
+                  s.cameras
+                    .map(
+                      (c) => `${c.id} ${c.state}${c.lag_ms ? ` −${c.lag_ms.toFixed(0)} ms` : ''}`,
+                    )
+                    .join(' · '),
+              ),
             ),
           ),
-          h(
-            'span',
-            { class: `pill ${isActive ? (conflict ? 'danger live' : 'info live') : 'plain'}` },
-            isActive ? 'Active' : 'Ended',
-          ),
-        );
-      }),
     );
   }
 }

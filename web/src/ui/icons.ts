@@ -50,8 +50,6 @@ const PATHS = {
   recenter: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><circle cx="12" cy="12" r="2.5"/>',
   route:
     '<circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H16a3.5 3.5 0 0 0 0-7H8a3.5 3.5 0 0 1 0-7h7.5"/>',
-  walk: '<circle cx="13" cy="4" r="1.8"/><path d="m9 21 2.5-6.5L14 17v4M7 10.5l3-3.5 4 1.5 2 3.5 2.5 1M11.5 14.5 12.5 9"/>',
-  conflict: '<path d="M12 3.5 21.5 20h-19z"/><path d="M12 10v4.5M12 17.5h.01"/>',
   pulse: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" opacity=".45"/>',
   map: '<path d="m3 6.5 6-3 6 3 6-3v14l-6 3-6-3-6 3z"/><path d="M9 3.5v14M15 6.5v14"/>',
   image:
@@ -60,7 +58,6 @@ const PATHS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
   moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
   upload: '<path d="M12 16V5M7 9.5l5-5 5 5M5 20h14"/>',
-  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   globe:
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
   junction: '<path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/>',

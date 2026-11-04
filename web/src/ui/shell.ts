@@ -14,8 +14,7 @@ export type Page =
   | 'settings'
   | 'new-site'
   | 'system'
-  | 'logs'
-  | 'stats';
+  | 'logs';
 
 export interface ShellOptions {
   page: Page;
@@ -59,19 +58,17 @@ export const links = {
     (camera ? `&camera=${encodeURIComponent(camera)}` : ''),
   settings: (id: string) => `/site.html?site=${encodeURIComponent(id)}`,
   newSite: '/new-site.html',
-  stats: '/stats.html',
   system: '/system.html',
   logs: (source?: string) =>
     source ? `/logs.html?source=${encodeURIComponent(source)}` : '/logs.html',
 };
 
-/** Road users seen by the running cameras of a site, or null if none runs. */
+/** Road users of a site's world model, or null if no camera runs. */
 export function siteObjects(site: Site): number | null {
-  const running = site.cameras.filter((c) => c.runtime.state === 'running');
-  if (running.length === 0) {
+  if (!site.cameras.some((c) => c.runtime.state === 'running')) {
     return null;
   }
-  return running.reduce((sum, c) => sum + (c.runtime.status?.objects ?? 0), 0);
+  return site.runtime.world?.road_users ?? null;
 }
 
 function navItem(href: string, name: IconName, label: string, active: boolean, extra?: Child) {
@@ -237,7 +234,6 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
       h('div', { class: 'nav-label' }, 'Monitor'),
       navItem('/', 'overview', 'Overview', p === 'overview'),
       navItem(links.twin(), 'globe', 'Digital twin', p === 'twin' && !options.siteId),
-      navItem(links.stats, 'chart', 'Statistics', p === 'stats'),
       navItem(links.logs(), 'logs', 'Logs', p === 'logs'),
       h(
         'div',
