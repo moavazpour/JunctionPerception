@@ -1,15 +1,4 @@
-      RegionLine line{l.at("id").get<std::string>(), l.value("name", ""),
-                      points_from(l, 2, "a line"), l.value("band_m", 0.0), {}};
-      if (line.band_m < 0.0) {
-        throw std::runtime_error("band_m must not be negative");
-      }
-      if (const auto it = l.find("direction"); it != l.end() && !it->is_null()) {
-        line.direction = points_from(json{{"points", *it}}, 2, "a direction");
-        const cv::Point2f d = line.direction.back() - line.direction.front();
-        if (line.direction.size() != 2 || std::hypot(d.x, d.y) < 1.0F) {
-          throw std::runtime_error("a direction is two different image points");
-        }
-      }#include "jp/sources/detection_regions.hpp"
+#include "jp/sources/detection_regions.hpp"
 
 #include <Eigen/Geometry>
 #include <algorithm>
@@ -173,10 +162,16 @@ DetectionRegions DetectionRegions::parse(const std::string& text) {
     }
     for (const auto& l : root.value("lines", json::array())) {
       RegionLine line{l.at("id").get<std::string>(), l.value("name", ""),
-                      points_from(l, 2, "a line"), l.value("band_m", 0.0),
-                      l.value("speed_limit_kmh", 0.0)};
-      if (line.band_m < 0.0 || line.speed_limit_kmh < 0.0) {
-        throw std::runtime_error("band_m and speed_limit_kmh must not be negative");
+                      points_from(l, 2, "a line"), l.value("band_m", 0.0), {}};
+      if (line.band_m < 0.0) {
+        throw std::runtime_error("band_m must not be negative");
+      }
+      if (const auto it = l.find("direction"); it != l.end() && !it->is_null()) {
+        line.direction = points_from(json{{"points", *it}}, 2, "a direction");
+        const cv::Point2f d = line.direction.back() - line.direction.front();
+        if (line.direction.size() != 2 || std::hypot(d.x, d.y) < 1.0F) {
+          throw std::runtime_error("a direction is two different image points");
+        }
       }
       regions.lines.push_back(std::move(line));
     }
