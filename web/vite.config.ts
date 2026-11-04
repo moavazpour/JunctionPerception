@@ -16,6 +16,7 @@ export default defineConfig({
         newSite: page('new-site.html'),
         system: page('system.html'),
         logs: page('logs.html'),
+        traffic: page('traffic.html'),
       },
     },
   },

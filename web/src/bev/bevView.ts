@@ -43,13 +43,22 @@ export interface Picked {
   user: RoadUser;
 }
 
+/** A line of a camera on the ground; three or more points outline a lane. */
+interface GroundLine {
+  /** "<camera>/<line id>", as the lane traffic of the site state names it. */
+  id: string;
+  points: Vec[];
+  /** Direction of travel set by the user: tail and head on the ground. */
+  arrow: [Vec, Vec] | null;
+}
+
 interface CameraLayer {
   description: SceneDescription;
   /** Image-to-ground homography oriented with groundHomography; null if not calibrated. */
   ground: number[][] | null;
   position: Vec | null;
   coverage: Vec[];
-  lines: Vec[][];
+  lines: GroundLine[];
   signals: SignalDef[];
 }
 
@@ -76,6 +85,7 @@ interface Colors {
   border: string;
   accent: string;
   cyan: string;
+  warn: string;
 }
 
 function cssVar(name: string, fallback: string): string {
@@ -247,18 +257,30 @@ export class BevView {
     this.invalidate();
   }
 
-  /** Detection lines of a camera (image pixels), drawn on the ground through its homography. */
-  setLines(siteId: string, cameraId: string, lines: { points: Vec[] }[]): void {
+  /** Lines and lanes of a camera (image pixels), drawn on the ground through its homography. */
+  setLines(
+    siteId: string,
+    cameraId: string,
+    lines: { id: string; points: Vec[]; direction: [Vec, Vec] | null }[],
+  ): void {
     const camera = this.sites.get(siteId)?.cameras.get(cameraId);
     const h = camera?.ground;
     if (!camera || !h) {
       return;
     }
     camera.lines = lines
-      .map((line) =>
-        line.points.map(([u, v]) => homography(h, u, v)).filter((p): p is Vec => p !== null),
-      )
-      .filter((points) => points.length >= 2);
+      .map((line): GroundLine => {
+        const tail = line.direction ? homography(h, ...line.direction[0]) : null;
+        const head = line.direction ? homography(h, ...line.direction[1]) : null;
+        return {
+          id: `${cameraId}/${line.id}`,
+          points: line.points
+            .map(([u, v]) => homography(h, u, v))
+            .filter((p): p is Vec => p !== null),
+          arrow: tail && head ? [tail, head] : null,
+        };
+      })
+      .filter((line) => line.points.length >= 2);
     this.invalidate();
   }
 
@@ -445,6 +467,7 @@ export class BevView {
       border: cssVar('--border-strong', '#2a3a57'),
       accent: cssVar('--accent', '#3d9bff'),
       cyan: cssVar('--cyan', '#2fd4f0'),
+      warn: cssVar('--warn', '#f6b443'),
     };
   }
 
@@ -764,12 +787,7 @@ export class BevView {
     }
     for (const camera of site.cameras.values()) {
       for (const line of camera.lines) {
-        ctx.strokeStyle = colors.muted;
-        ctx.lineWidth = this.px(2);
-        ctx.setLineDash([this.px(8), this.px(4)]);
-        this.path(line);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        this.drawLine(line);
       }
     }
     this.drawCameras(site);
@@ -784,6 +802,42 @@ export class BevView {
     for (const user of state.road_users) {
       this.drawRoadUser(site, user);
     }
+  }
+
+  /** A lane: outline, light fill and the direction arrow; a plain line: dashed. */
+  private drawLine(line: GroundLine): void {
+    const { ctx, colors } = this;
+    const lane = line.points.length >= 3;
+    this.path(line.points);
+    if (lane) {
+      ctx.closePath();
+      ctx.fillStyle = colors.accent;
+      ctx.globalAlpha = 0.08;
+      ctx.fill();
+      ctx.globalAlpha = 0.7;
+    } else {
+      ctx.setLineDash([this.px(8), this.px(4)]);
+    }
+    ctx.strokeStyle = lane ? colors.accent : colors.muted;
+    ctx.lineWidth = this.px(lane ? 1.4 : 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    if (!line.arrow) {
+      return;
+    }
+    const [[x0, y0], [x1, y1]] = line.arrow;
+    const angle = Math.atan2(y1 - y0, x1 - x0);
+    const head = this.px(9);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.moveTo(x1 - head * Math.cos(angle - 0.45), y1 - head * Math.sin(angle - 0.45));
+    ctx.lineTo(x1, y1);
+    ctx.lineTo(x1 - head * Math.cos(angle + 0.45), y1 - head * Math.sin(angle + 0.45));
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = this.px(2);
+    ctx.stroke();
   }
 
   private drawCameras(site: BevSite): void {
@@ -998,6 +1052,22 @@ export class BevView {
         const [x, y] = this.toScreen(site, def.position[0], def.position[1]);
         const time = seconds !== null ? ` ${seconds.toFixed(0)} s` : '';
         this.text(`${def.name}${time}`, x + 10, y - 10, colors.text, 'left', true);
+      }
+    }
+    // Queue of each lane, as the backend measured it, at the middle of the lane.
+    const traffic = this.state(site.spec.id)?.traffic.lanes ?? [];
+    for (const camera of site.cameras.values()) {
+      for (const line of camera.lines) {
+        const lane = traffic.find((t) => t.id === line.id);
+        if (!lane || line.points.length < 3) {
+          continue;
+        }
+        const n = line.points.length;
+        const cx = line.points.reduce((sum, p) => sum + p[0], 0) / n;
+        const cy = line.points.reduce((sum, p) => sum + p[1], 0) / n;
+        const [x, y] = this.toScreen(site, cx, cy);
+        const color = lane.queue > 0 ? colors.warn : colors.muted;
+        this.text(`${lane.name}: ${lane.queue} in queue`, x, y, color, 'center', true);
       }
     }
     if (!this.options.labels) {

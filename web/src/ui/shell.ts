@@ -14,7 +14,8 @@ export type Page =
   | 'settings'
   | 'new-site'
   | 'system'
-  | 'logs';
+  | 'logs'
+  | 'traffic';
 
 export interface ShellOptions {
   page: Page;
@@ -57,6 +58,7 @@ export const links = {
     `/calibrate.html?site=${encodeURIComponent(id)}` +
     (camera ? `&camera=${encodeURIComponent(camera)}` : ''),
   settings: (id: string) => `/site.html?site=${encodeURIComponent(id)}`,
+  traffic: (id: string) => `/traffic.html?site=${encodeURIComponent(id)}`,
   newSite: '/new-site.html',
   system: '/system.html',
   logs: (source?: string) =>
@@ -215,6 +217,7 @@ export async function mountShell(options: ShellOptions): Promise<Shell> {
           'div',
           { class: 'nav-sub' },
           navItem(links.twin(site.id), 'twin', 'Live twin', p === 'twin'),
+          navItem(links.traffic(site.id), 'activity', 'Traffic', p === 'traffic'),
           navItem(links.calibration(site.id), 'calibration', 'Calibration', p === 'calibration'),
           navItem(links.settings(site.id), 'settings', 'Settings', p === 'settings'),
         ),
