@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# (Re)starts the twin server (jp_server) as a background container that restarts with the host.
+# (Re)starts one camera server (jp_server) without the manager, as a background container that
+# restarts with the host: its API, observation stream (/ws/world) and video, headless. The BEV
+# console and the site world model need the manager (scripts/run_manager.sh).
 # The port is published on JP_SERVER_ADDRESS only (the LAN address of the host); recordings are
 # read from JP_DATA_ROOT. Extra arguments are passed to jp_server (e.g. --mode oracle --input ...).
 # Usage: JP_SERVER_ADDRESS=<lan address> JP_DATA_ROOT=<dataset root> scripts/run_server.sh [args]

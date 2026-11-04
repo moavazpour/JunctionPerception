@@ -2,86 +2,45 @@
 
 [![CI](https://github.com/moavazpour/JunctionPerception/actions/workflows/ci.yml/badge.svg)](https://github.com/moavazpour/JunctionPerception/actions/workflows/ci.yml)
 
-A live digital twin of a signalized intersection from the video of a single fixed camera, with a
-focus on vulnerable road users (VRUs): pedestrians, cyclists and motorcyclists.
+A live bird's-eye-view (BEV) digital twin of an intersection from the video of one or more fixed
+cameras: every road user — vehicles, pedestrians, cyclists — in metric map coordinates, with its
+speed, heading and their uncertainty, one identity across all cameras of the site.
 
-![Digital twin of an intersection in Munich next to the camera image](docs/media/twin_custom.gif)
+## Pipeline
 
-*The twin of a custom scene: road users from the camera video (right) placed on the orthophoto of
-the intersection. Map data: Bayerische Vermessungsverwaltung – www.geodaten.bayern.de (CC BY 4.0),
-© OpenStreetMap contributors (ODbL 1.0).*
-
-## Problem and approach
-
-Traffic cameras at intersections are rarely calibrated, yet safety analysis needs road users in
-metric map coordinates: where pedestrians cross, how fast vehicles approach them, how close they
-come. JunctionPerception turns any fixed-camera video into such a top-down world state:
-
-1. **Calibrate** the camera against a map once, by clicking corresponding points in the camera
-   image and on an orthophoto; the tool fits an image-to-ground homography and reports the error of
-   every point in metres.
-2. **Detect** road users in every frame with a COCO-pretrained YOLO26 model (ONNX Runtime, CUDA).
-3. **Track** them in the image with ByteTrack; a person on a bicycle or motorcycle becomes one rider.
-4. **Localize** each track on the ground plane: the bottom centre of the box through the
-   homography, corrected to the footprint centre by fitting a class-sized box with the camera
-   model. This is ground-plane (bird's-eye view) localization, not 3D detection.
-5. **Filter** positions with a Kalman filter whose measurement noise follows the camera geometry,
-   giving speed, heading and their uncertainty.
-6. **Detect events**: a VRU on a crosswalk, and VRU–vehicle conflicts from the predicted gap
-   between footprints.
-7. **Stream** the world state to a web twin: a top-down Three.js view on the map, with the camera
-   image and the event list.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    V[Camera video] --> D[Detection<br/>YOLO26, ONNX Runtime]
-    D --> T[Tracking<br/>ByteTrack, riders]
-    T --> L[Localization<br/>homography, box fit,<br/>Kalman filter]
-    C[Calibration tool<br/>image ↔ map points] -. homography .-> L
-    L --> E[Zones and VRU events]
-    E --> W[World state]
-    W --> S[Server<br/>REST, WebSockets]
-    S --> UI[Web twin]
-    M[Map layers<br/>orthophoto, OSM, buildings] --> UI
-    W --> J[JSONL] --> EV[Evaluation<br/>jp_eval]
+```text
+video → detection → tracking → ground-plane localization → heading      (C++, one server per camera)
+      → time alignment → association and fusion → global IDs           (Python, site world model)
+      → site state → BEV                                                (browser, drawing only)
 ```
 
-The C++23 core is split into modules (`core`, `io`, `calibration`, `detection`, `tracking`,
-`localization`, `vru`, `sources`, `server`, `evaluation`, `benchmark`, `twin`); the frontend is
-TypeScript with Vite and Three.js. Details, coordinate frames and the world-state schema:
-[docs/architecture.md](docs/architecture.md).
+1. **Calibrate** each camera against the map once, by clicking corresponding points in the camera
+   image and on an aerial image; the tool fits an image-to-ground homography and reports the
+   error of every point in metres.
+2. **Detect** road users in every frame (YOLO26 or a keypoint model giving the four bottom corners
+   of each 3D box; ONNX Runtime, CUDA) and **track** them in the image (ByteTrack; a person on a
+   bicycle or motorcycle becomes one rider).
+3. **Localize** each track on the ground plane with a Kalman filter whose measurement noise follows
+   the camera geometry: position, velocity, heading with its source, and their uncertainty.
+4. **Fuse** the cameras of a site in the backend world model: observations are aligned on one
+   site clock, associated by gates on their covariances, fused, and given global IDs that survive
+   camera ID switches and short occlusions. Without a common clock the site runs visibly unfused.
+5. **Show** the site state in the BEV console: map, camera coverage, zones, traffic lights and
+   road users exactly as the backend reports them, next to the camera videos.
 
-## Key features
-
-- **Calibration in the browser** – image and orthophoto side by side, fit and check points,
-  residuals in metres, outlier rejection, camera position and height, zone editor with
-  crosswalk suggestions from OpenStreetMap.
-- **Map context** – orthophoto, OpenStreetMap roads and LoD2 building models in the scene's
-  world frame (local east-north-up at a geographic anchor), with attribution.
-- **Physically based uncertainty** – image noise of the box bottom propagated through the
-  homography (anisotropic, growing with the square of the range along the viewing ray), outlier
-  gating for swapped or merged boxes, per-class motion models.
-- **VRU events** – crosswalk occupancy and conflicts predicted from footprint gaps, only from
-  velocities that are known well enough; the state of the vehicle (moving, stopped, starting)
-  is reported. Scenes calibrated from control points limit events to the region where positions
-  are validated and resolved finely enough; objects elsewhere are tracked and drawn faded.
-- **Three sources, one pipeline** – `live` (camera video), `oracle` (benchmark labels) and
-  `replay` (recorded JSONL) produce the same world state.
-- **Benchmark evaluation** – detection, localization, motion, tracking (MOTA, IDF1) and conflict
-  metrics against LiDAR labels, with ablations.
+Architecture, contracts and ownership: [docs/architecture.md](docs/architecture.md); rules for
+contributors and coding agents: [AGENTS.md](AGENTS.md); decisions: [docs/adr/](docs/adr/).
 
 ## Custom mode and benchmark mode
 
-**Custom mode** is the product: any intersection video plus a scene created with the calibration
-tool (`scenes/<name>/`: `scene.yaml`, control points, homography, zones). The scene
+**Custom mode** is the product: any intersection video plus a site created in the console
+(`scenes/<name>/`: `scene.yaml`, cameras with their calibration, zones). The scene
 `scenes/munich_5538` is an example, filmed from a pedestrian bridge.
 
-**Benchmark mode** runs on the TUMTraf Intersection
-dataset (R02, sequences S1–S4, south cameras of the S110 gantry). Its calibration and 3D labels
-measure the localization quantitatively and drive the `oracle` source. Dataset-specific code is
-limited to the `benchmark` module and the evaluation.
+**Benchmark mode** runs on the TUMTraf Intersection dataset (R02, sequences S1–S4, south cameras
+of the S110 gantry). Its calibration and 3D labels measure the localization and the site world
+model quantitatively and drive the `oracle` source. Dataset-specific code is limited to the
+`benchmark` module, the evaluation and `tools/eval_fusion.py`.
 
 ## Results
 
@@ -113,64 +72,48 @@ missed by the 2 m gate. The method, all tables and their interpretation:
 On the [reference hardware](docs/hardware.md) the live pipeline takes about 28 ms per 1920×1080
 frame (YOLO26s at 1280 px on CUDA).
 
+Multi-camera site world model on TUMTraf R02 s03 (both south cameras): see
+[docs/evaluation.md](docs/evaluation.md#site-world-model-multi-camera).
+
 ## Quick start
 
 Everything builds and runs inside a Docker development image, so a host needs Docker (with the
-NVIDIA Container Toolkit for GPU inference) and Python only for the helper tools.
+NVIDIA Container Toolkit for GPU inference).
 
-**Set up and build**
+**Set up, build and test**
 
 ```bash
 git clone https://github.com/moavazpour/JunctionPerception.git && cd JunctionPerception
 scripts/setup_server.sh                                     # development image (GPU if available)
-scripts/in_docker.sh scripts/build_and_test.sh all release  # C++ and frontend: build, lint, test
+scripts/in_docker.sh scripts/build_and_test.sh all release  # C++, Python and frontend
 ```
 
-**Detector.** The default is the keypoint model `models/jp_pose5_736x1280.onnx` (five classes, each
-with the four bottom corners of its 3D box; not in git, copy it into `models/`). The box-only
-YOLO26 detector can be exported instead (needs the `ultralytics` and `onnx` Python packages) and
-selected with `detection.model` and `class_source: coco` in `configs/pipeline.yaml`:
+**Detector.** Select the model with `detection.model` and `detection.class_source` in
+`configs/pipeline.yaml` (models are not in git; copy them into `models/`). The box-only YOLO26
+detector can be exported with `python tools/export_yolo26.py --variant yolo26l --imgsz 1280`.
 
-```bash
-python tools/export_yolo26.py --variant yolo26s --imgsz 1280   # -> models/yolo26s_1280.onnx
-```
-
-**Start the console.** The site manager serves the web console and runs one twin server per active
-camera; a site is one intersection (`scenes/<name>/`) with up to four cameras. The first start runs
-the scene of `configs/server.yaml`:
+**Start the console.** The site manager serves the web console, runs one camera server per active
+camera and the world model of every site:
 
 ```bash
 JP_SERVER_ADDRESS=<LAN address> JP_DATA_ROOT=<video folder> scripts/run_manager.sh
 ```
 
-The console is at `http://<LAN address>:8080/`, bound to that address only. It shows every
-intersection with the live images and counters of its cameras, one 3D twin of all sites at their
-real positions (top-down or tilted; overlapping cameras merged), and the
-system page with start, stop and restart of the backend, host and GPU load, and the logs of every
-server.
+The console is at `http://<LAN address>:8080/`, bound to that address only (no authentication:
+trusted networks only). It shows every intersection with its cameras, the BEV twin of all sites
+at their real positions, and a system page with the backend state, host and GPU load and logs.
+The world model runs whether or not a browser is open; `GET /manager/api/sites/<id>/state`
+returns the latest site state for headless use.
 
-**Add and calibrate an intersection.** In the console, *New site* asks for the centre of the
-intersection (latitude, longitude; the map layers are downloaded for 200 m around it) and its one to
-four cameras: for each, the arm it watches and its source (a video uploaded from the browser or
-already below the data root, an RTSP/HTTP stream, or a recording; the image size is read from it).
-Then calibrate each camera in *Calibration* (it starts the camera and playback if needed): click at
-least
-eight points in the camera image and the same points on the aerial image, check the residuals, set
-the camera position if the points cannot constrain it, draw the zones, save and apply. Details:
-[docs/map-data.md](docs/map-data.md). A single scene can still be served without the console:
-`scripts/run_server.sh --scene scenes/<name> --mode live --input <video>`.
-
-**ROI, lines and statistics.** In a camera's *Calibration*, tab *ROI and lines*, draw
-ROIs (only road users inside them are detected) and lines across the lanes on the camera image.
-Every road user crossing a line is recorded with time, type, direction and speed; the
-*Statistics* page shows volumes, flow rates, peak hour factor, speeds, headways and turning
-movements per line and period, and exports the crossings as CSV. Signal areas around traffic
-light heads ("Finish signal") are read for their colour; place them in the live twin with
-*Traffic lights* to see them change there.
-
-**Google imagery (optional).** With a key of the Google Map Tiles API in `GOOGLE_MAPS_API_KEY`
-(`DEPLOY_GOOGLE_MAPS_API_KEY` in `deploy.env`), the map tool takes the aerial image from Google
-satellite tiles and adds a Google road map layer; without it, the Bavarian orthophoto is used.
+**Add and calibrate an intersection.** *New site* asks for the centre of the intersection (the map
+layers are downloaded around it) and its one to four cameras with their sources (uploaded video,
+video below the data root, RTSP/HTTP stream or recording). Calibrate each camera in
+*Calibration*: at least eight points in the camera image and the same points on the aerial image,
+check the residuals, set the camera position if needed, draw zones, save and apply
+([docs/map-data.md](docs/map-data.md)). In *ROI and lines*, areas and banded lines limit where
+road users are detected, and signal areas around traffic-light heads are read for their colour;
+place the lights in the twin with *Traffic lights*. Cameras whose recordings did not start
+together get a `time_offset_ms` in the site settings API (`PATCH .../cameras/<camera>`).
 
 **Process a video offline**
 
@@ -179,65 +122,43 @@ scripts/in_docker.sh build/release/src/apps/jp_run --source /data/<video> --scen
     --world-jsonl outputs/run/world.jsonl --overlay outputs/run/overlay.mp4 --bev outputs/run/bev.mp4
 ```
 
-**Run the benchmark.** Put the TUMTraf Intersection R02 sequences (`a9_dataset_r02_s01` …
-`s04`) and their south-camera videos into the data root, then:
+**Run the benchmark**
 
 ```bash
 JP_DATA_ROOT=<dataset root> JP_PYTHON=<python with matplotlib> scripts/run_benchmark.sh <run>
+scripts/in_docker.sh python3 tools/eval_fusion.py --help    # site world model vs labels
 ```
-
-This writes `outputs/<run>/eval/` with a report per variant, a summary and figures.
 
 ## Repository layout
 
 | Path | Content |
 |---|---|
-| `include/jp/`, `src/` | C++ modules, one folder each; command-line programs in `src/apps/` |
-| `tests/` | C++ unit tests (GoogleTest) and the shared world-state example |
-| `web/` | Twin and calibration tool (TypeScript, Vite, Three.js) with unit tests (Vitest) |
-| `configs/` | Pipeline, classes, server and evaluation settings |
-| `scenes/` | Scenes: calibration, zones and geographic anchor |
-| `tools/` | Detector export, map data preparation, evaluation figures (Python) |
-| `scripts/` | Development image, build and test, server, benchmark, deployment |
-| `docker/` | Development image |
-| `docs/` | Architecture, evaluation, map data, reference hardware |
+| `include/jp/`, `src/` | C++ perception and camera server, one module per folder; programs in `src/apps/` |
+| `manager/` | Site manager (`jp_manager.py`), site world model (`world_model.py`, `site_feed.py`) and its tests |
+| `web/` | BEV console and calibration tool (TypeScript, Vite) with unit and architecture tests (Vitest) |
+| `tests/` | C++ unit tests (GoogleTest) and the shared contract fixtures |
+| `configs/` | Pipeline, classes, server, manager (incl. world model) and evaluation settings |
+| `scenes/` | Sites: calibration, zones and geographic anchor |
+| `tools/` | Detector export, map data preparation, evaluation (Python) |
+| `scripts/` | Development image, build and test, manager, server, benchmark, deployment |
+| `docs/` | Architecture, decisions, evaluation, map data, reference hardware |
 
-## Configuration
-
-| File | Content |
-|---|---|
-| `configs/pipeline.yaml` | Detector model and thresholds, tracking, localization noise model, event rules |
-| `configs/classes.yaml` | Twin classes with footprint sizes, VRU flag, mapping of COCO and TUMTraf labels |
-| `configs/server.yaml` | Address, port, video stream, playback, startup scene |
-| `configs/evaluation.yaml` | Matching gates and metric settings of `jp_eval` |
-
-Programs: `jp_server` (twin server), `jp_run` (offline processing and debug videos),
+Programs: `jp_server` (camera server), `jp_run` (offline processing and debug videos),
 `jp_calibrate` (benchmark calibration), `jp_eval` (evaluation); each lists its options with
 `--help`.
 
 ## Limitations
 
-- The detector is COCO-pretrained and not fine-tuned for roadside viewpoints; it has no classes
-  for vans, trailers or emergency vehicles, and it degrades strongly at night and in rain.
-- Localization assumes a planar ground and uses the bottom of the 2D box as ground contact; it is
-  not 3D detection. Errors grow with the distance from the camera.
-- Custom videos are assumed free of lens distortion.
-- Object footprints have a fixed size per class.
-- One camera; occlusions are not reasoned about, and objects that merge in the image can swap
-  identities.
-- Accuracy depends on the quality of the manual calibration, and the region where events are
-  reliable depends on the camera's viewpoint.
-
-## Roadmap
-
-- Fine-tuning the detector on roadside data.
-- Monocular 3D detection.
-- Automatic calibration from aerial imagery or the ground plane, with drift detection for moving
-  masts.
-- Tilted or free 3D view and a photorealistic 3D map backdrop.
-- Fusion of several cameras.
-- RTSP live streams.
-- A decision layer on top of the twin.
+- The default detector is COCO-pretrained and not fine-tuned for roadside viewpoints; it degrades
+  strongly at night and in rain.
+- Localization assumes a planar ground; it is not 3D detection. Errors grow with the distance from
+  the camera. Custom videos are assumed free of lens distortion.
+- Multi-camera fusion needs all cameras of a site calibrated into one site frame and on one clock:
+  recordings by the site clock (plus configured offsets), live streams by their arrival time
+  (latency uncorrected unless configured). Otherwise the site runs unfused.
+- Fusion combines camera tracks, not detections; road users merged in one camera's image stay
+  merged.
+- Accuracy depends on the manual calibration.
 
 ## Acknowledgements and citations
 
@@ -247,8 +168,8 @@ Programs: `jp_server` (twin server), `jp_run` (offline processing and debug vide
 - **Ultralytics YOLO26** – Ultralytics, [docs.ultralytics.com](https://docs.ultralytics.com).
 - **ByteTrack** – Y. Zhang et al.: *ByteTrack: Multi-Object Tracking by Associating Every
   Detection Box*, ECCV 2022.
-- **Three.js** – [threejs.org](https://threejs.org); **ONNX Runtime**, **OpenCV**, **PROJ**,
-  **Crow**, **Eigen** and the other libraries listed in `vcpkg.json` and `web/package.json`.
+- **ONNX Runtime**, **OpenCV**, **PROJ**, **Crow**, **Eigen** and the other libraries listed in
+  `vcpkg.json` and `web/package.json`.
 - **Map data** – orthophoto (DOP20) and LoD2 building models: Bayerische Vermessungsverwaltung –
   [www.geodaten.bayern.de](https://www.geodaten.bayern.de), CC BY 4.0; roads and crossings:
   © OpenStreetMap contributors, ODbL 1.0. Map data is downloaded per scene and not part of this

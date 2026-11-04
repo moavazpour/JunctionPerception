@@ -1,7 +1,7 @@
 /*
  * Design tokens and shared components of the console. Dark "operations" theme: deep blue-grey
- * surfaces, one blue accent, cyan for zones, semantic colours for state. Colours of the 3D twin
- * live in src/twin/palette.ts and follow the same values.
+ * surfaces, one blue accent, cyan for zones, semantic colours for state. Colours of the BEV
+ * live in src/bev/palette.ts and follow the same values.
  */
 :root {
   color-scheme: dark;

@@ -10,7 +10,7 @@ struct ValidatedRegionOptions {
   double max_ground_m_per_px = 0.2;  ///< Coarsest ground sampling along the camera ray.
 };
 
-/// Where ground positions are good enough for safety events: inside the outline (convex hull)
+/// Where ground positions are trustworthy (flag `validated`): inside the outline (convex hull)
 /// of the calibration's control points plus a margin, and where one pixel of image motion moves
 /// the ground point by at most `max_ground_m_per_px` along the camera ray (the direction in
 /// which a camera resolves positions worst; it grows with the square of the range).

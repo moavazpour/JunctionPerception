@@ -4,7 +4,7 @@
 # detection (ground contact) and for the twin meshes. Length and width of car, truck, bus,
 # bicycle and pedestrian are generic priors; van, trailer and emergency_vehicle and all heights
 # follow the median TUMTraf R02 box size of the class (two-wheelers including the rider).
-# vru: vulnerable road user, considered by the VRU zone and conflict events.
+# vru: vulnerable road user (pedestrian or two-wheeler; matched with a 1 m gate, drawn as a disc).
 classes:
   car:               {length_m: 4.5,  width_m: 1.8,  height_m: 1.5, vru: false}
   van:               {length_m: 6.0,  width_m: 2.3,  height_m: 2.5, vru: false}
