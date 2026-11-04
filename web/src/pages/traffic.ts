@@ -29,7 +29,12 @@ function card(name: IconName, title: string, sub: string, body: HTMLElement): HT
   return h(
     'section',
     { class: 'card', style: 'margin-top: 18px' },
-    h('header', { class: 'card-header' }, icon(name), h('div', {}, h('h2', {}, title), h('p', {}, sub))),
+    h(
+      'header',
+      { class: 'card-header' },
+      icon(name),
+      h('div', {}, h('h2', {}, title), h('p', {}, sub)),
+    ),
     body,
   );
 }
@@ -41,7 +46,15 @@ function table(head: string[], rows: HTMLElement[], empty: string): HTMLElement 
     h(
       'table',
       { class: 'table' },
-      h('thead', {}, h('tr', {}, head.map((t) => h('th', {}, t)))),
+      h(
+        'thead',
+        {},
+        h(
+          'tr',
+          {},
+          head.map((t) => h('th', {}, t)),
+        ),
+      ),
       h(
         'tbody',
         {},
@@ -85,7 +98,15 @@ function render(state: SiteState): HTMLElement[] {
       {},
       h('td', {}, s.name),
       h('td', {}, s.camera),
-      h('td', {}, h('span', { class: `pill ${s.state === 'green' ? 'ok' : s.state === 'red' ? 'danger' : 'warn'}` }, s.state)),
+      h(
+        'td',
+        {},
+        h(
+          'span',
+          { class: `pill ${s.state === 'green' ? 'ok' : s.state === 'red' ? 'danger' : 'warn'}` },
+          s.state,
+        ),
+      ),
       h('td', { class: 'num' }, formatDuration(Math.max(0, (state.t_ns - s.since_ns) / 1e9))),
     ),
   );
@@ -93,7 +114,12 @@ function render(state: SiteState): HTMLElement[] {
     h(
       'section',
       { class: 'kpis' },
-      kpi('activity', 'Road users now', String(state.road_users.length), byClass(traffic.present_by_class)),
+      kpi(
+        'activity',
+        'Road users now',
+        String(state.road_users.length),
+        byClass(traffic.present_by_class),
+      ),
       kpi(
         'video',
         'Cameras',
