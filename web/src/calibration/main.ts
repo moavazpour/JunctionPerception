@@ -154,7 +154,7 @@ class CalibrationApp {
   private cameraHeight: number | null = null;
   private zones: EditableZone[] = [];
   private drawing: Point[] = [];
-  // Detection areas and counting lines of the camera, and the one being drawn (image px).
+  // Detection areas, lines and lanes of the camera, and the one being drawn (image px).
   private regions: Regions = { areas: [], lines: [], signals: [] };
   private drawingRegion: [number, number][] = [];
   // The line whose direction of travel is being set, and the clicked tail (image px).

@@ -397,7 +397,7 @@ class Camera:
             )
 
     def regions(self) -> dict[str, Any]:
-        """Detection areas, counting lines and traffic lights of the camera (regions.json),
+        """Detection areas, lines and lanes, and traffic lights of the camera (regions.json),
         summarized."""
         try:
             regions = json.loads((self.dir / "regions.json").read_text(encoding="utf-8"))

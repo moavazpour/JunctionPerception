@@ -129,12 +129,12 @@ std::string DetectionRegions::to_json() const {
         {{"id", area.id}, {"name", area.name}, {"points", points_json(area.points)}});
   }
   for (const auto& line : lines) {
-    out["lines"].push_back({{"id", line.id},
-                            {"name", line.name},
-                            {"points", points_json(line.points)},
-                            {"band_m", line.band_m},
-                            {"direction", line.direction.empty() ? json(nullptr)
-                                                                 : points_json(line.direction)}});
+    out["lines"].push_back(
+        {{"id", line.id},
+         {"name", line.name},
+         {"points", points_json(line.points)},
+         {"band_m", line.band_m},
+         {"direction", line.direction.empty() ? json(nullptr) : points_json(line.direction)}});
   }
   out["signals"] = json::array();
   for (const auto& signal : signals) {
@@ -161,8 +161,11 @@ DetectionRegions DetectionRegions::parse(const std::string& text) {
           {a.at("id").get<std::string>(), a.value("name", ""), points_from(a, 3, "an area")});
     }
     for (const auto& l : root.value("lines", json::array())) {
-      RegionLine line{l.at("id").get<std::string>(), l.value("name", ""),
-                      points_from(l, 2, "a line"), l.value("band_m", 0.0), {}};
+      RegionLine line{l.at("id").get<std::string>(),
+                      l.value("name", ""),
+                      points_from(l, 2, "a line"),
+                      l.value("band_m", 0.0),
+                      {}};
       if (line.band_m < 0.0) {
         throw std::runtime_error("band_m must not be negative");
       }

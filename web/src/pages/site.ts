@@ -148,7 +148,7 @@ class CameraPanel {
             'span',
             {
               class: 'tag',
-              title: 'Detection areas and counting lines (Calibration → Areas and lines)',
+              title: 'Detection areas, lines and lanes (Calibration → Areas and lines)',
             },
             icon('route'),
             `${camera.regions.areas} areas · ${camera.regions.lines.length} lines`,

@@ -158,15 +158,18 @@ Lanes two cameras both outline are separate lanes and both count. Thresholds: `T
 
 `web/src/pages/twin.ts` subscribes to `/sites/<id>/ws/site` for every placed site and draws it
 with `web/src/bev/bevView.ts` (2D canvas, north up, metric): map layers, camera coverage (from
-each camera's homography), zones, detection lines, traffic lights and road users exactly as
-reported — footprint along a known heading (dashed outline for class sizes), a disc when the
+each camera's homography, oriented so that `w` is positive on the ground), zones, lines, lanes
+with the direction the user set and their queue from `traffic`, traffic lights and road users
+exactly as reported — footprint along a known heading (dashed outline for class sizes), a disc when the
 heading is unknown, faded when coasting, 2σ ellipse, velocity arrow (dashed when not clearly
 above its noise), trail of the reported positions. Camera video comes from each camera's
 `/ws/video`. Configuration in the view: map alignment of sensor-frame sites (drag/turn the site
 over its map, saved as `map_transform`) and placement of traffic lights (saved in the camera's
 `regions.json`). `web/src/bev/siteFrame.ts` holds the site→view transforms; they are tested to
-keep positions metric and unchanged. Other pages: overview, site settings, new site,
-calibration, system, logs.
+keep positions metric and unchanged. The Traffic page of a site (`web/src/pages/traffic.ts`)
+shows the `traffic` block, cameras and traffic lights of the live site state as tables. Other
+pages: overview, site settings, new site, calibration (lines and lanes with their direction of
+travel are drawn in the camera image), system, logs.
 
 ## 7. Coordinate frames
 

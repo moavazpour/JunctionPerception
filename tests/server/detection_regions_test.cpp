@@ -87,11 +87,13 @@ TEST(DetectionRegions, RoundTripsAndRejectsMalformedRegions) {
   EXPECT_EQ(again.lines[1].direction[0], cv::Point2f(1, 8));
   EXPECT_EQ(again.lines[1].direction[1], cv::Point2f(8, 1));
   // A direction is exactly two different points.
-  for (const char* direction : {R"([[1, 1]])", R"([[1, 1], [1, 1]])", R"([[0, 0], [1, 1], [2, 2]])"}) {
-    EXPECT_THROW(static_cast<void>(DetectionRegions::parse(
-                     std::string(R"({"lines": [{"id": "l", "points": [[0, 0], [5, 5]], "direction": )") +
-                     direction + "}]}")),
-                 std::runtime_error);
+  for (const char* direction :
+       {R"([[1, 1]])", R"([[1, 1], [1, 1]])", R"([[0, 0], [1, 1], [2, 2]])"}) {
+    EXPECT_THROW(
+        static_cast<void>(DetectionRegions::parse(
+            std::string(R"({"lines": [{"id": "l", "points": [[0, 0], [5, 5]], "direction": )") +
+            direction + "}]}")),
+        std::runtime_error);
   }
   EXPECT_THROW(static_cast<void>(DetectionRegions::parse(
                    R"json({"areas": [{"id": "a", "points": [[0, 0], [1, 1]]}]})json")),
