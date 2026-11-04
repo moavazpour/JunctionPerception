@@ -1,6 +1,7 @@
 import type { WorldState } from '../net/schema';
 import { CLASS_LABELS } from '../twin/palette';
 import { fill, h } from '../ui/dom';
+import { icon } from '../ui/icons';
 import type { BevTrack, DuplicatePair, FeedQuality } from './bevModel';
 import { covarianceEllipse } from './geometry';
 import type { LaneStatus, SiteStatus } from './laneAnalytics';
@@ -25,18 +26,20 @@ function num(value: number | null, digits = 0, unit = ''): string {
 }
 
 const COMPACT_KEY = 'jp-bev-card-compact';
+const FOLDED_KEY = 'jp-bev-card-folded';
 
-function readCompact(): boolean {
+function readFlag(key: string, fallback: boolean): boolean {
   try {
-    return localStorage.getItem(COMPACT_KEY) !== '0';
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === '1';
   } catch {
-    return false;
+    return fallback;
   }
 }
 
-function writeCompact(compact: boolean): void {
+function writeFlag(key: string, on: boolean): void {
   try {
-    localStorage.setItem(COMPACT_KEY, compact ? '1' : '0');
+    localStorage.setItem(key, on ? '1' : '0');
   } catch {
     // Not remembered.
   }
@@ -62,23 +65,43 @@ export class BevPanel {
   onLane: (id: string | null) => void = () => undefined;
 
   /** Compact: lanes, intersection, crosswalks and signals only (what the operator watches). */
-  private compact = readCompact();
+  private compact = readFlag(COMPACT_KEY, true);
+  /** Folded: the header line only, the map free. */
+  private folded = readFlag(FOLDED_KEY, false);
   private last: PanelInput | null = null;
   // The header stays: the body is rebuilt a few times a second, which would swallow clicks.
   private readonly title = h('strong', {});
   private readonly time = h('span', { class: 'muted num' });
   private readonly toggle = h('button', { type: 'button', class: 'btn ghost small' });
+  private readonly fold = h(
+    'button',
+    { type: 'button', class: 'btn ghost small icon-only fold' },
+    icon('chevron'),
+  );
+  private readonly legend = h(
+    'span',
+    { class: 'bev-legend-basis' },
+    basis('measured'),
+    'measured ',
+    basis('estimate'),
+    'estimate ',
+    basis('experimental'),
+    'experimental',
+  );
   private readonly body = h('div', {});
 
-  constructor(root: HTMLElement) {
+  constructor(private readonly root: HTMLElement) {
     // Rows are rebuilt while hovered: clear the lane highlight when the pointer leaves the card.
     root.addEventListener('mouseleave', () => this.onLane(null));
     this.toggle.addEventListener('click', () => {
       this.compact = !this.compact;
-      writeCompact(this.compact);
-      if (this.last) {
-        this.render(this.last);
-      }
+      writeFlag(COMPACT_KEY, this.compact);
+      this.refresh();
+    });
+    this.fold.addEventListener('click', () => {
+      this.folded = !this.folded;
+      writeFlag(FOLDED_KEY, this.folded);
+      this.refresh();
     });
     fill(
       root,
@@ -87,20 +110,13 @@ export class BevPanel {
         { class: 'bev-head' },
         this.title,
         this.time,
+        this.fold,
         this.toggle,
-        h(
-          'span',
-          { class: 'bev-legend-basis' },
-          basis('measured'),
-          'measured ',
-          basis('estimate'),
-          'estimate ',
-          basis('experimental'),
-          'experimental',
-        ),
+        this.legend,
       ),
       this.body,
     );
+    this.applyFold();
   }
 
   /** A note instead of the status (no camera yet). */
@@ -114,10 +130,10 @@ export class BevPanel {
     const time = input.states[0]?.state.timestamp_ns;
     this.title.textContent = input.siteName;
     this.time.textContent = time !== undefined ? `t ${(time / 1e9).toFixed(1)} s` : '';
-    this.toggle.textContent = this.compact ? 'More' : 'Less';
-    this.toggle.title = this.compact
-      ? 'Show conflicts, data quality and the key'
-      : 'Only the lane status';
+    this.applyFold();
+    if (this.folded) {
+      return;
+    }
     fill(
       this.body,
       this.lanes(status?.lanes ?? []),
@@ -130,6 +146,26 @@ export class BevPanel {
     );
   }
 
+  private refresh(): void {
+    if (this.last) {
+      this.render(this.last);
+    } else {
+      this.applyFold();
+    }
+  }
+
+  private applyFold(): void {
+    this.root.classList.toggle('folded', this.folded);
+    this.body.hidden = this.folded;
+    this.toggle.hidden = this.folded;
+    this.legend.hidden = this.folded || this.compact;
+    this.fold.title = this.folded ? 'Show the lane status' : 'Fold the card (header only)';
+    this.toggle.textContent = this.compact ? 'More' : 'Less';
+    this.toggle.title = this.compact
+      ? 'Show directions, arrivals, speeds, conflicts, data quality and the key'
+      : 'Only what the operator watches';
+  }
+
   private section(title: string, ...children: (Node | null)[]): HTMLElement {
     return h('section', { class: 'bev-section' }, h('h4', {}, title), ...children);
   }
@@ -138,47 +174,59 @@ export class BevPanel {
     if (lanes.length === 0) {
       return this.section(
         'Lanes',
-        h('p', { class: 'muted' }, 'No lane zones in this site: draw them in the calibration.'),
+        h(
+          'p',
+          { class: 'muted' },
+          'No lanes drawn. Calibration › Zones: one zone per lane up to its stop line, type “lane”.',
+        ),
       );
     }
+    const full = !this.compact;
+    const tag = (kind: Basis) => (full ? basis(kind) : null);
     const head = h(
       'tr',
       {},
       h('th', {}, 'Lane'),
-      h('th', { title: 'Direction of travel and what it rests on' }, 'Dir'),
-      h('th', { title: 'Vehicles in the lane' }, 'Veh ', basis('measured')),
-      h('th', { title: 'Standing vehicles (< 5 km/h, speed known)' }, 'Stop ', basis('measured')),
-      h('th', { title: 'Queue from the lane end upstream (m)' }, 'Queue ', basis('estimate')),
+      full ? h('th', { title: 'Direction of travel and what it rests on' }, 'Dir') : null,
+      h('th', { title: 'Vehicles in the lane' }, 'Veh ', tag('measured')),
+      h('th', { title: 'Standing vehicles (< 5 km/h, speed known)' }, 'Stop ', tag('measured')),
+      h('th', { title: 'Queue from the lane end upstream (m)' }, 'Queue ', tag('estimate')),
       h(
         'th',
         { title: 'Longest standing time in the queue (s); restarts with a new track ID' },
         'Wait ',
-        basis('estimate'),
+        tag('estimate'),
       ),
-      h('th', { title: 'Vehicles entering the lane per minute' }, 'Arr/min ', basis('estimate')),
-      h(
-        'th',
-        { title: 'Mean speed of vehicles with a known speed (km/h)' },
-        'km/h ',
-        basis('measured'),
-      ),
+      full
+        ? h('th', { title: 'Vehicles entering the lane per minute' }, 'Arr/min ', tag('estimate'))
+        : null,
+      full
+        ? h(
+            'th',
+            { title: 'Mean speed of vehicles with a known speed (km/h)' },
+            'km/h ',
+            tag('measured'),
+          )
+        : null,
     );
     const rows = lanes.map((lane) => {
       const row = h(
         'tr',
         { class: `lane-${lane.state}` },
         h('td', {}, h('span', { class: `lane-dot ${lane.state}` }), lane.id),
-        h(
-          'td',
-          {
-            title: lane.direction
-              ? lane.direction.source === 'observed'
-                ? `Observed: ${lane.direction.agree} of ${lane.direction.total} tracks`
-                : 'One-way road in OpenStreetMap'
-              : 'Unknown: too few tracks moved along this lane, and no one-way road. No queue without it.',
-          },
-          lane.direction ? (lane.direction.source === 'observed' ? 'obs' : 'OSM') : '?',
-        ),
+        full
+          ? h(
+              'td',
+              {
+                title: lane.direction
+                  ? lane.direction.source === 'observed'
+                    ? `Observed: ${lane.direction.agree} of ${lane.direction.total} tracks`
+                    : 'One-way road in OpenStreetMap'
+                  : 'Unknown: too few tracks moved along this lane, and no one-way road. No queue without it.',
+              },
+              lane.direction ? (lane.direction.source === 'observed' ? 'obs' : 'OSM') : '?',
+            )
+          : null,
         h(
           'td',
           { class: 'num' },
@@ -194,18 +242,23 @@ export class BevPanel {
         h('td', { class: 'num' }, String(lane.stopped)),
         h(
           'td',
-          { class: 'num' },
+          {
+            class: 'num',
+            title: lane.direction ? '' : 'Direction not known yet: no queue without it',
+          },
           lane.queueM === null
             ? '–'
             : `${lane.queueM.toFixed(0)} m${lane.queueVehicles > 0 ? ` (${lane.queueVehicles})` : ''}`,
         ),
-        h('td', { class: 'num' }, num(lane.maxWaitS)),
-        h(
-          'td',
-          { class: 'num', title: `over ${lane.arrivalWindowS.toFixed(0)} s of camera time` },
-          num(lane.arrivalsPerMin, 1),
-        ),
-        h('td', { class: 'num' }, num(lane.meanSpeedKmh)),
+        h('td', { class: 'num' }, num(lane.maxWaitS, 0, ' s')),
+        full
+          ? h(
+              'td',
+              { class: 'num', title: `over ${lane.arrivalWindowS.toFixed(0)} s of camera time` },
+              num(lane.arrivalsPerMin, 1),
+            )
+          : null,
+        full ? h('td', { class: 'num' }, num(lane.meanSpeedKmh)) : null,
       );
       row.addEventListener('mouseenter', () => this.onLane(lane.id));
       row.addEventListener('mouseleave', () => this.onLane(null));
@@ -214,11 +267,13 @@ export class BevPanel {
     return this.section(
       'Lanes',
       h('table', { class: 'bev-table' }, h('thead', {}, head), h('tbody', {}, rows)),
-      h(
-        'p',
-        { class: 'note' },
-        'Queue: standing vehicles chained from the lane end (gaps ≤ 10 m). The lane end stands in for the stop line, which is not mapped.',
-      ),
+      full
+        ? h(
+            'p',
+            { class: 'note' },
+            'Queue: standing vehicles chained from the lane end (gaps ≤ 10 m). The lane end stands in for the stop line, which is not mapped.',
+          )
+        : null,
     );
   }
 
@@ -227,38 +282,50 @@ export class BevPanel {
     if (areas.length === 0) {
       return null;
     }
+    // Compact: only zones with someone in them; the rest in one line.
+    const shown = this.compact ? areas.filter((a) => a.vehicles + a.vrus > 0 || a.blocked) : areas;
+    const clear = areas.length - shown.length;
     return this.section(
       'Intersection and crosswalks',
-      h(
-        'ul',
-        { class: 'bev-list' },
-        areas.map((a) =>
-          h(
-            'li',
-            { class: a.blocked ? 'danger' : '' },
-            h('span', { class: `area-dot ${a.type}` }),
-            h('span', { class: 'name' }, a.id),
-            h(
-              'span',
-              { class: 'num' },
-              `${a.vehicles} veh`,
-              a.stoppedVehicles > 0 ? ` (${a.stoppedVehicles} standing)` : '',
-            ),
-            h('span', { class: 'num' }, `${a.vrus} VRU`),
-            basis('measured'),
-            a.blocked
-              ? h(
+      shown.length > 0
+        ? h(
+            'ul',
+            { class: 'bev-list' },
+            shown.map((a) =>
+              h(
+                'li',
+                { class: a.blocked ? 'danger' : '' },
+                h('span', { class: `area-dot ${a.type}` }),
+                h('span', { class: 'name' }, a.id),
+                h(
                   'span',
-                  {
-                    class: 'pill danger plain',
-                    title: 'A vehicle stands in the intersection ≥ 5 s',
-                  },
-                  `blocked ${num(a.longestStopS)} s`,
-                )
-              : null,
-          ),
-        ),
-      ),
+                  { class: 'num' },
+                  `${a.vehicles} veh`,
+                  a.stoppedVehicles > 0 ? ` (${a.stoppedVehicles} standing)` : '',
+                ),
+                h('span', { class: 'num' }, `${a.vrus} VRU`),
+                this.compact ? null : basis('measured'),
+                a.blocked
+                  ? h(
+                      'span',
+                      {
+                        class: 'pill danger plain',
+                        title: 'A vehicle stands in the intersection ≥ 5 s',
+                      },
+                      `blocked ${num(a.longestStopS)} s`,
+                    )
+                  : null,
+              ),
+            ),
+          )
+        : null,
+      clear > 0
+        ? h(
+            'p',
+            { class: 'muted' },
+            shown.length > 0 ? `${clear} more clear` : `All ${clear} zones clear`,
+          )
+        : null,
     );
   }
 

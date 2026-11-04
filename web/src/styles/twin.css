@@ -704,3 +704,107 @@
 .signal-row .height input {
   width: 64px;
 }
+
+/* All cameras of the site side by side: stacked in the panel, side by side when enlarged. */
+.camera-frame:has(.video-grid:not([hidden])) {
+  aspect-ratio: auto;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+}
+
+.video-grid:has(> :nth-child(3)) {
+  grid-template-columns: 1fr 1fr;
+}
+
+.camera-frame.expanded .video-grid {
+  height: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(40%, 1fr));
+  align-content: center;
+}
+
+.grid-cell {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  margin: 0;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: #05080f;
+  cursor: pointer;
+}
+
+.grid-cell.active {
+  outline-color: var(--accent);
+}
+
+.grid-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.grid-cell figcaption {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  display: flex;
+  gap: 8px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgb(5 8 15 / 70%);
+  color: #fff;
+  font-size: 11px;
+}
+
+.grid-cell figcaption .num {
+  color: rgb(255 255 255 / 70%);
+}
+
+.camera-tabs .grid-tab {
+  display: grid;
+  place-items: center;
+}
+
+.camera-tabs .grid-tab .icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* Layers menu under the toolbar: display options of the shown view. */
+.layers {
+  position: relative;
+}
+
+.layers > .btn.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.layers-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 220px;
+  padding: 12px;
+  white-space: nowrap;
+}
+
+.layers-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 12.5px;
+}
+
+.layers-group .segmented {
+  background: rgb(5 9 16 / 60%);
+}

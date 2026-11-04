@@ -45,6 +45,11 @@ export class SidePanel {
   private readonly offline = element<HTMLElement>('#offline');
   private readonly signalsCard = element<HTMLElement>('#signals-card');
   private readonly signals = element<HTMLUListElement>('#signals');
+  private readonly grid = element<HTMLElement>('#video-grid');
+  private readonly gridCells = new Map<
+    string,
+    { cell: HTMLElement; img: HTMLImageElement; tag: HTMLElement; url: string | null }
+  >();
   private readonly log = new TaggedEventLog();
   private videoUrl: string | null = null;
   private playing = true;
@@ -52,8 +57,10 @@ export class SidePanel {
   private base = '';
   private tabsKey = '';
 
-  /** Called when another camera is chosen in the tabs. */
+  /** Called when another camera is chosen in the tabs (or its image in the grid). */
   onCamera: (id: string) => void = () => undefined;
+  /** Called when the grid of all cameras is switched on or off. */
+  onGrid: (on: boolean) => void = () => undefined;
   /** Play, pause and seek (frame of the shown camera): by default for that camera only. */
   onPlayback: (command: PlaybackCommand) => Promise<unknown> = (command) =>
     sendPlayback(command, this.base);
@@ -88,12 +95,18 @@ export class SidePanel {
     this.renderEvents();
   }
 
-  /** Cameras of the focused site and the one whose image and playback are shown. */
-  setCameras(cameras: PanelCamera[], selected: string | null): void {
+  /**
+   * Cameras of the focused site and the one whose playback and status are shown; with `grid`,
+   * the images of all running cameras side by side instead of the selected one's.
+   */
+  setCameras(cameras: PanelCamera[], selected: string | null, grid = false): void {
     const camera = cameras.find((c) => c.id === selected);
     this.base = camera?.base ?? '';
-    this.cameraTitle.textContent = camera?.name ?? 'Camera';
-    const key = cameras.map((c) => `${c.id}:${c.running}`).join('|') + `>${selected}`;
+    this.cameraTitle.textContent = grid ? 'All cameras' : (camera?.name ?? 'Camera');
+    for (const [id, { cell }] of this.gridCells) {
+      cell.classList.toggle('active', id === selected);
+    }
+    const key = cameras.map((c) => `${c.id}:${c.running}`).join('|') + `>${selected}:${grid}`;
     if (key === this.tabsKey) {
       return;
     }
@@ -106,21 +119,76 @@ export class SidePanel {
           'button',
           {
             type: 'button',
-            class: `${c.id === selected ? 'active' : ''}${c.running ? '' : ' off'}`,
+            class: `${c.id === selected && !grid ? 'active' : ''}${c.running ? '' : ' off'}`,
             title: c.running ? c.name : `${c.name} (not running)`,
-            onclick: () => this.onCamera(c.id),
+            onclick: () => {
+              this.onGrid(false);
+              this.onCamera(c.id);
+            },
           },
           String(i + 1),
         ),
       ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: `grid-tab${grid ? ' active' : ''}`,
+          title: 'All cameras side by side (click an image for its playback and status)',
+          onclick: () => this.onGrid(!grid),
+        },
+        icon('panel'),
+      ),
     );
   }
 
-  /** Clears the image while another camera's stream starts. */
-  resetVideo(): void {
+  /** Clears the image while other streams start; with `cells`, an empty grid of those cameras. */
+  resetVideo(cells: { id: string; name: string }[] = []): void {
+    const grid = cells.length > 0;
     this.video.hidden = true;
-    this.videoEmpty.hidden = false;
+    this.videoEmpty.hidden = grid;
     this.videoFrame.textContent = '';
+    for (const { url } of this.gridCells.values()) {
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+    }
+    this.gridCells.clear();
+    this.grid.replaceChildren();
+    this.grid.hidden = !grid;
+    for (const { id, name } of cells) {
+      this.gridCell(id, name);
+    }
+  }
+
+  private gridCell(id: string, name: string) {
+    let entry = this.gridCells.get(id);
+    if (!entry) {
+      const img = h('img', { alt: `${name}: camera image with tracked road users` });
+      const tag = h('span', { class: 'num' }, 'waiting…');
+      const cell = h(
+        'figure',
+        { class: 'grid-cell', title: `${name}: show its playback and status` },
+        img,
+        h('figcaption', {}, h('span', {}, name), tag),
+      );
+      cell.addEventListener('click', () => this.onCamera(id));
+      entry = { cell, img, tag, url: null };
+      this.gridCells.set(id, entry);
+      this.grid.append(cell);
+    }
+    return entry;
+  }
+
+  /** The latest image of one camera in the grid. */
+  showGridVideo(id: string, name: string, frame: VideoFrame): void {
+    const entry = this.gridCell(id, name);
+    if (entry.url) {
+      URL.revokeObjectURL(entry.url);
+    }
+    entry.url = URL.createObjectURL(frame.jpeg);
+    entry.img.src = entry.url;
+    entry.tag.textContent = `frame ${frame.frame}`;
   }
 
   showVideo(frame: VideoFrame): void {

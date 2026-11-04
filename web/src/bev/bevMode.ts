@@ -39,7 +39,17 @@ export class BevMode {
   private switcher: { root: HTMLElement; set: (mode: StageMode) => void } | null = null;
   private readonly canvas = h('canvas', { id: 'bev', class: 'bev-only' });
   private readonly card = h('aside', { id: 'bev-card', class: 'glass bev-card bev-only' });
-  private readonly options = h('div', { id: 'bev-options', class: 'glass bev-options bev-only' });
+  // Display options of the BEV, shown in the twin's Layers menu.
+  private readonly options = h('div', { class: 'layers-group' });
+  private readonly fit = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn ghost small icon-only bev-only',
+      title: 'Fit the view (or double click)',
+    },
+    icon('recenter'),
+  );
   private readonly listeners: ((mode: StageMode) => void)[] = [];
 
   constructor(
@@ -49,7 +59,8 @@ export class BevMode {
     classes: ClassInfo[] = [],
   ) {
     const twinCanvas = stage.querySelector('#twin');
-    twinCanvas?.after(this.canvas, this.card, this.options);
+    twinCanvas?.after(this.canvas, this.card);
+    this.fit.addEventListener('click', () => this.view.recenter());
     this.view = new BevView(this.canvas, classes);
     this.panel = new BevPanel(this.card);
     this.panel.onLane = (id) => this.view.highlightLane(id ? hooks.panelSite() : null, id);
@@ -127,17 +138,17 @@ export class BevMode {
       toggle('Trajectories', o.trails, (on) => this.view.setOptions({ trails: on })),
       toggle('Uncertainty 2σ', o.uncertainty, (on) => this.view.setOptions({ uncertainty: on })),
       toggle('Labels', o.labels, (on) => this.view.setOptions({ labels: on })),
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'btn ghost small icon-only',
-          title: 'Fit the view (or double click)',
-          onclick: () => this.view.recenter(),
-        },
-        icon('recenter'),
-      ),
     );
+  }
+
+  /** BEV display options, for the Layers menu of the toolbar. */
+  optionControls(): HTMLElement {
+    return this.options;
+  }
+
+  /** "Fit" button of the BEV, for the toolbar. */
+  fitControl(): HTMLElement {
+    return this.fit;
   }
 
   /** Redraws the status card (called a few times a second while the BEV is shown). */

@@ -149,7 +149,7 @@ export class BevView {
     aerial: false,
     trails: true,
     uncertainty: true,
-    labels: true,
+    labels: false,
     tracks: 'cameras',
   };
   /** Redraw every animation frame (for measurements) instead of only on new data. */

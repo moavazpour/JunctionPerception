@@ -48,6 +48,24 @@ const PANEL_INTERVAL_MS = 250;
 // Status requests that may fail in a row before the shown camera counts as unreachable.
 const MISSED_STATUS_LIMIT = 3;
 const ALL = '';
+const GRID_KEY = 'jp-twin-camera-grid';
+const MAX_GRID_CAMERAS = 4;
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, on: boolean): void {
+  try {
+    localStorage.setItem(key, on ? '1' : '0');
+  } catch {
+    // Not remembered.
+  }
+}
 
 function layout(): HTMLElement {
   return h(
@@ -107,6 +125,7 @@ function layout(): HTMLElement {
           'div',
           { class: 'camera-frame' },
           h('img', { id: 'video', alt: 'Camera image with tracked road users', hidden: true }),
+          h('div', { id: 'video-grid', class: 'video-grid', hidden: true }),
           h(
             'button',
             {
@@ -159,7 +178,9 @@ class TwinPage {
   private origin: GeoAnchor | null = null;
   private focus: string;
   private camera: string | null;
-  private video: { key: string; close: Unsubscribe } | null = null;
+  private video: { key: string; close: Unsubscribe[] } | null = null;
+  // All cameras side by side in the panel (remembered in the browser).
+  private grid = readFlag(GRID_KEY);
   private status: ServerStatus | null = null;
   private missed = 0;
   private framed = false;
@@ -178,6 +199,11 @@ class TwinPage {
     this.focus = focus ?? ALL;
     this.camera = camera;
     this.panel.onCamera = (id) => this.selectCamera(id);
+    this.panel.onGrid = (on) => {
+      this.grid = on;
+      writeFlag(GRID_KEY, on);
+      this.renderCameras();
+    };
     // The cameras of a site play together: play, pause and seek go to the site.
     this.panel.onPlayback = async (command) => {
       const [siteId, cameraId] = (this.camera ?? '').split('/');
@@ -382,23 +408,29 @@ class TwinPage {
     const selected =
       cameras.find((c) => c.id === wanted) ?? cameras.find((c) => c.running) ?? cameras[0] ?? null;
     this.camera = selected?.id ?? null;
-    this.panel.setCameras(cameras, this.camera);
-    // The image of the selected camera only: video streams cost encoding on the server.
-    const key = selected?.running ? selected.id : null;
+    // The grid shows every running camera of the view (at most four); otherwise only the selected
+    // one is streamed: video streams cost encoding on the server.
+    const running = cameras.filter((c) => c.running).slice(0, MAX_GRID_CAMERAS);
+    const grid = this.grid && running.length > 1;
+    this.panel.setCameras(cameras, this.camera, grid);
+    const streamed = grid ? running : selected?.running ? [selected] : [];
+    const key = `${grid}:${streamed.map((c) => c.id).join(',')}`;
     if (this.video?.key !== key) {
-      this.video?.close();
-      this.video = null;
-      this.panel.resetVideo();
-      if (selected && key) {
-        this.video = {
-          key,
-          close: subscribeVideo(
-            (frame) => this.panel.showVideo(frame),
-            () => undefined,
-            selected.base,
-          ),
-        };
+      for (const close of this.video?.close ?? []) {
+        close();
       }
+      this.panel.resetVideo(grid ? streamed : []);
+      this.video = {
+        key,
+        close: streamed.map((c) =>
+          subscribeVideo(
+            (frame) =>
+              grid ? this.panel.showGridVideo(c.id, c.name, frame) : this.panel.showVideo(frame),
+            () => undefined,
+            c.base,
+          ),
+        ),
+      };
     }
   }
 
@@ -859,16 +891,21 @@ function setupControls(
     'map',
     (value) => view.showLayer(value),
   );
-  // Controls of the 3D twin only; the BEV has its own options bar.
-  const twinOnly = [
-    mode.root,
+  // The toolbar keeps what is used often; display options go into the Layers menu, one group for
+  // the 3D twin and one for the BEV (each shown in its view only).
+  const twinLayers = h(
+    'div',
+    { class: 'layers-group twin-only' },
     hasMap ? layer.root : null,
     hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
     analysisToggle(view),
-    alignSite ? alignButton(view, alignSite) : null,
-    signals,
-  ].filter((e): e is HTMLElement => e !== null);
+  );
+  const bevLayers = bev.optionControls();
+  bevLayers.classList.add('bev-only');
+  const twinOnly = [mode.root, alignSite ? alignButton(view, alignSite) : null, signals].filter(
+    (e): e is HTMLElement => e !== null,
+  );
   for (const e of twinOnly) {
     e.classList.add('twin-only');
   }
@@ -876,6 +913,7 @@ function setupControls(
     controls,
     bev.switchControl(),
     twinOnly,
+    layersMenu(twinLayers, bevLayers),
     h(
       'button',
       {
@@ -886,7 +924,40 @@ function setupControls(
       },
       icon('recenter'),
     ),
+    bev.fitControl(),
   );
+}
+
+// Closes the open Layers menu's outside-click listener when the toolbar is rebuilt.
+let layersMenuListener: AbortController | null = null;
+
+/** "Layers": a menu under the toolbar with the display options of the current view. */
+function layersMenu(...groups: HTMLElement[]): HTMLElement {
+  const menu = h('div', { class: 'layers-menu glass', hidden: true }, groups);
+  const button = h(
+    'button',
+    { type: 'button', class: 'btn small ghost', title: 'Map layers and display options' },
+    icon('layers'),
+    'Layers',
+  );
+  const root = h('div', { class: 'layers' }, button, menu);
+  button.addEventListener('click', () => {
+    menu.hidden = !menu.hidden;
+    button.classList.toggle('active', !menu.hidden);
+  });
+  layersMenuListener?.abort();
+  layersMenuListener = new AbortController();
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!menu.hidden && !root.contains(e.target as Node)) {
+        menu.hidden = true;
+        button.classList.remove('active');
+      }
+    },
+    { signal: layersMenuListener.signal },
+  );
+  return root;
 }
 
 /**
