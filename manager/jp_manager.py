@@ -26,14 +26,13 @@ purpose), keeps their logs and reports the host.
   PATCH /manager/api/sites/<id>/cameras/<c>   change a camera (restarts it if it runs)
   DELETE /manager/api/sites/<id>/cameras/<c>  stop and move the camera folder to the trash
   POST /manager/api/sites/<id>/cameras/<c>/<action>  start | stop | restart
+  GET  /manager/api/sites/<id>/state          latest site state (world model, JSON)
   GET  /manager/api/inputs                    videos, sequences and replays to choose from
   GET  /manager/api/probe?input=              image size, frame rate and length of a video or stream
   POST /manager/api/videos                    upload a video (multipart "file") below the data root
-  GET  /manager/api/stats?site=&camera=&line=&from=&to=&bucket=   traffic statistics of the lines
-  GET  /manager/api/stats/crossings.csv?...   the recorded line crossings as CSV
-  DELETE /manager/api/stats?site=             delete recorded statistics (of a site, or all)
   GET  /manager/api/logs?source=&lines=       recent log lines (manager, a site or site/camera)
   GET  /manager/api/logs/stream?source=       the same as server-sent events
+  WS   /sites/<id>/ws/site                    site state stream: fused road users of the site
   *    /sites/<id>/map/...                    map layers (also while the site is stopped)
   *    /sites/<id>/cameras/<c>/...            proxied to the camera's jp_server (HTTP, WebSockets)
   *    /sites/<id>/...                        proxied to the site's first camera
@@ -66,7 +65,8 @@ import aiohttp
 import yaml
 from aiohttp import web
 
-from traffic_stats import CameraCounter, TrafficStats
+from site_feed import FeedCamera, SiteFeed
+from world_model import ClassSize, FusionSettings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{1,47}$")
@@ -183,6 +183,7 @@ class ManagerConfig:
     upload_max_bytes: int
     probe_timeout_s: float
     data_root: Path
+    world_model: dict[str, Any]
 
     @staticmethod
     def load(path: Path) -> ManagerConfig:
@@ -209,6 +210,7 @@ class ManagerConfig:
             upload_dir=data_root / raw.get("upload_dir", "uploads"),
             upload_max_bytes=int(float(raw.get("upload_max_gb", 20)) * 1024**3),
             probe_timeout_s=float(raw.get("probe_timeout_s", 20)),
+            world_model=dict(raw.get("world_model") or {}),
         )
 
 
@@ -217,6 +219,12 @@ def read_yaml(path: Path) -> dict[str, Any]:
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
+
+
+def load_class_sizes(path: Path) -> dict[str, ClassSize]:
+    """Footprint of each twin class (configs/classes.yaml), for road users without a measured one."""
+    classes = read_yaml(path).get("classes", {})
+    return {name: ClassSize(float(c["length_m"]), float(c["width_m"])) for name, c in classes.items()}
 
 def write_yaml(path: Path, data: dict[str, Any], header: str = "") -> None:
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
@@ -294,6 +302,8 @@ def validate_camera_settings(settings: dict[str, Any], require_source: bool = Tr
         raise BadRequest("video.width_px must be between 320 and 1920")
     if not 30 <= int(video.get("jpeg_quality", 70)) <= 95:
         raise BadRequest("video.jpeg_quality must be between 30 and 95")
+    if not -60_000 <= float(settings.get("time_offset_ms", 0)) <= 60_000:
+        raise BadRequest("time_offset_ms must be within ±60000")
 
 
 def image_size(value: Any) -> list[int]:
@@ -420,6 +430,7 @@ class Camera:
             "source": self.settings["source"],
             "playback": self.settings["playback"],
             "video": self.settings["video"],
+            "time_offset_ms": float(self.settings.get("time_offset_ms", 0)),
             "runtime": {
                 "state": r.state,
                 "pid": r.process.pid if r.process and r.process.returncode is None else None,
@@ -998,8 +1009,9 @@ class Manager:
         self.state_file = config.state_dir / "state.json"
         self.backend_on = True
         self.session: aiohttp.ClientSession | None = None
-        self.stats = TrafficStats(config.state_dir / "stats.sqlite")
-        self.counters: dict[str, asyncio.Task[None]] = {}
+        self.fusion = FusionSettings.from_dict(config.world_model)
+        self.class_sizes = load_class_sizes(REPO_ROOT / "configs" / "classes.yaml")
+        self.feeds: dict[str, SiteFeed] = {}
 
     @staticmethod
     def _version() -> str:
@@ -1086,27 +1098,33 @@ class Manager:
             await asyncio.gather(*(c.poll_status(self.session) for c in self.cameras()))
             for site in self.sites.values():
                 site.update_period()
-            self.follow_cameras()
+            self.follow_sites()
             await asyncio.sleep(STATUS_INTERVAL_S)
 
-    def follow_cameras(self) -> None:
-        """Counts on the lines of every running camera (traffic statistics)."""
+    def feed(self, site_id: str) -> SiteFeed:
+        """World model of a site (created on first use, kept while the manager runs)."""
+        feed = self.feeds.get(site_id)
+        if feed is None:
+            feed = SiteFeed(
+                site_id, self.fusion, self.class_sizes,
+                lambda level, message, s=site_id: self.logs.add(s, level, message),
+            )
+            self.feeds[site_id] = feed
+        return feed
+
+    def follow_sites(self) -> None:
+        """Feeds the running cameras of every site into its world model."""
         assert self.session is not None
-        for camera in self.cameras():
-            r = camera.runtime
-            task = self.counters.get(camera.key)
-            if r.state != "running" or r.port is None or (task and not task.done()):
-                continue
-            port = r.port
-            counter = CameraCounter(
-                self.stats, camera.site.id, camera.id, camera.dir, port, camera.log
-            )
-            self.counters[camera.key] = asyncio.create_task(
-                counter.follow(
-                    self.session,
-                    lambda c=camera, p=port: c.runtime.state == "running" and c.runtime.port == p,
-                )
-            )
+        for site_id in [s for s in self.feeds if s not in self.sites]:
+            asyncio.ensure_future(self.feeds.pop(site_id).close())
+        for site in self.sites.values():
+            cameras = {
+                c.id: FeedCamera(c.runtime.port, round(float(c.settings.get("time_offset_ms", 0)) * 1e6))
+                for c in site.cameras.values()
+                if c.runtime.state == "running" and c.runtime.port is not None
+            }
+            if cameras or site.id in self.feeds:
+                self.feed(site.id).configure(self.session, cameras, site.synced())
 
     def system(self) -> dict[str, Any]:
         sites = list(self.sites.values())
@@ -1430,7 +1448,7 @@ def routes(manager: Manager) -> web.RouteTableDef:
         site = manager.site(request.match_info["id"])
         camera = site.camera(request.match_info["camera"])
         body = await body_of(request)
-        allowed = {k: body[k] for k in ("source", "playback", "video") if k in body}
+        allowed = {k: body[k] for k in ("source", "playback", "video", "time_offset_ms") if k in body}
         settings = merge(camera.settings, allowed)
         validate_camera_settings(settings, require_source=False)
         changes: dict[str, Any] = {}
@@ -1449,8 +1467,8 @@ def routes(manager: Manager) -> web.RouteTableDef:
         site.save_settings()
         site.reload()
         log.info("updated camera %s", camera.key)
-        # Name and approach only label the camera; everything else restarts its server.
-        if camera.is_active() and (allowed or "image_size_px" in changes):
+        # Name, approach and time offset do not concern the server; everything else restarts it.
+        if camera.is_active() and (set(allowed) - {"time_offset_ms"} or "image_size_px" in changes):
             await camera.restart()
         return ok(site.describe())
 
@@ -1585,38 +1603,6 @@ def routes(manager: Manager) -> web.RouteTableDef:
         log.info("uploaded %s (%.1f MB)", rel, size / 1024**2)
         return ok({"path": rel, "size": size}, 201)
 
-    def stats_filters(request: web.Request) -> dict[str, Any]:
-        q = request.query
-        filters: dict[str, Any] = {k: q[k] for k in ("site", "camera", "line") if q.get(k)}
-        for key in ("from", "to"):
-            if q.get(key):
-                filters[key] = float(q[key])
-        return filters
-
-    @r.get(f"{api}/stats")
-    async def stats_report(request: web.Request) -> web.Response:
-        bucket = int(request.query.get("bucket", "900"))
-        if bucket not in (60, 300, 900, 3600, 86400):
-            raise BadRequest("bucket must be 60, 300, 900, 3600 or 86400 seconds")
-        filters = stats_filters(request)
-        return ok(await asyncio.to_thread(manager.stats.report, filters, bucket))
-
-    @r.get(f"{api}/stats/crossings.csv")
-    async def stats_csv(request: web.Request) -> web.Response:
-        text = await asyncio.to_thread(manager.stats.export_csv, stats_filters(request))
-        return web.Response(
-            text=text,
-            content_type="text/csv",
-            headers={"Content-Disposition": 'attachment; filename="crossings.csv"'},
-        )
-
-    @r.delete(f"{api}/stats")
-    async def stats_clear(request: web.Request) -> web.Response:
-        site = request.query.get("site") or None
-        await asyncio.to_thread(manager.stats.clear, site)
-        log.info("cleared the traffic statistics of %s", site or "all sites")
-        return ok({"ok": True})
-
     @r.get(f"{api}/inputs")
     async def inputs(_: web.Request) -> web.Response:
         return ok(await asyncio.to_thread(manager.inputs))
@@ -1668,6 +1654,19 @@ def routes(manager: Manager) -> web.RouteTableDef:
         site = manager.site(request.match_info["id"])
         camera = site.camera(request.match_info["camera"])
         return await proxy(request, manager, camera, request.match_info["path"])
+
+    @r.get("/sites/{id}/ws/site")
+    async def site_state_stream(request: web.Request) -> web.StreamResponse:
+        site = manager.site(request.match_info["id"])
+        return await manager.feed(site.id).serve(request)
+
+    @r.get(f"{api}/sites/{{id}}/state")
+    async def site_state(request: web.Request) -> web.Response:
+        site = manager.site(request.match_info["id"])
+        latest = manager.feed(site.id).latest
+        if latest is None:
+            return ok({"error": f"no site state of {site.id} yet"}, 404)
+        return web.Response(text=latest, content_type="application/json")
 
     @r.route("*", "/sites/{id}/{path:.*}")
     async def site_proxy(request: web.Request) -> web.StreamResponse:
@@ -1758,6 +1757,7 @@ async def serve(config: ManagerConfig) -> None:
     await stop.wait()
     log.info("stopping")
     status.cancel()
+    await asyncio.gather(*(feed.close() for feed in manager.feeds.values()))
     await asyncio.gather(*(site.stop() for site in manager.sites.values()))
     await manager.session.close()
     await runner.cleanup()
