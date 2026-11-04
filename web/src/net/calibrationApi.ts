@@ -46,13 +46,18 @@ export interface RegionArea {
   points: [number, number][];
 }
 
-/** A counting line of a camera in image pixels; a band also limits detections to near it. */
+/**
+ * A line of a camera in image pixels. With three or more points it outlines a lane, measured by
+ * the manager along the direction of travel the user set; a band also limits detections to near
+ * the line.
+ */
 export interface RegionLine {
   id: string;
   name: string;
   points: [number, number][];
   band_m: number;
-  speed_limit_kmh: number;
+  /** Direction of travel: tail and head in image pixels; null while not set. */
+  direction: [[number, number], [number, number]] | null;
 }
 
 /**

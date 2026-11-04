@@ -157,6 +157,8 @@ class CalibrationApp {
   // Detection areas and counting lines of the camera, and the one being drawn (image px).
   private regions: Regions = { areas: [], lines: [], signals: [] };
   private drawingRegion: [number, number][] = [];
+  // The line whose direction of travel is being set, and the clicked tail (image px).
+  private directing: { id: string; tail: [number, number] | null } | null = null;
   private image = new Image();
   private orthoImage = new Image();
   private readonly imageCanvas: PanZoomCanvas;
@@ -233,6 +235,7 @@ class CalibrationApp {
         this.pendingPixel = null;
         this.drawing = [];
         this.drawingRegion = [];
+        this.directing = null;
         this.redraw();
       }
     });
@@ -295,7 +298,7 @@ class CalibrationApp {
       zones:
         'Click the corners of a zone on the map, then "Finish zone" (or Enter). Zones (lanes, crosswalks) are drawn in the twin.',
       regions:
-        'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. Lines with a band keep only road users that close to the line. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
+        'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. A line with three or more points outlines a lane: after finishing it, click where its traffic comes from and then where it goes; the twin shows its queue and the statistics count the vehicles passing it in that direction. Lines with a band keep only road users that close to the line. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:
         'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
     };
@@ -305,6 +308,10 @@ class CalibrationApp {
   }
 
   private onImageClick(u: number, v: number): void {
+    if (this.mode === 'regions' && this.directing) {
+      this.direct(u, v);
+      return;
+    }
     if (this.mode === 'regions') {
       this.drawingRegion.push([u, v]);
       this.redraw();
@@ -340,7 +347,8 @@ class CalibrationApp {
     if (kind === 'area') {
       this.regions.areas.push({ id, name: `ROI ${n}`, points });
     } else if (kind === 'line') {
-      this.regions.lines.push({ id, name: `Line ${n}`, points, band_m: 0, speed_limit_kmh: 50 });
+      this.regions.lines.push({ id, name: `Line ${n}`, points, band_m: 0, direction: null });
+      this.startDirection(id);
     } else {
       this.regions.signals.push({
         id,
@@ -373,6 +381,9 @@ class CalibrationApp {
     const tag = document.createElement('span');
     tag.className = `region-tag ${kind}`;
     tag.textContent = { area: 'ROI', line: 'Line', signal: 'Signal' }[kind];
+    if (kind === 'line' && (region as Regions['lines'][number]).points.length >= 3) {
+      tag.textContent = 'Lane';
+    }
     if (kind === 'signal') {
       const signal = region as Regions['signals'][number];
       tag.title = signal.position
@@ -420,37 +431,67 @@ class CalibrationApp {
             line.band_m = v;
           },
         ),
-        number('limit km/h', line.speed_limit_kmh, 'Speed limit for the statistics', (v) => {
-          line.speed_limit_kmh = v;
-        }),
       );
+      const direction = document.createElement('button');
+      direction.type = 'button';
+      direction.textContent = line.direction ? 'Direction ✓' : 'Set direction';
+      direction.title = line.direction
+        ? 'Direction of travel set; click to set it again'
+        : 'Not set: the lane is not counted. Click, then click where its traffic comes from and where it goes';
+      direction.addEventListener('click', () => this.startDirection(line.id));
+      item.append(direction);
     }
     item.append(remove);
     return item;
   }
 
-  /** Arrow at the middle of a line towards the side a direction-A crossing goes to. */
-  private directionArrow(line: [number, number][]): [[number, number], [number, number]] | null {
-    const projection = this.projection;
-    const [a, b] = line;
-    if (!projection || !a || !b) {
-      return null;
+  /** The next two image clicks set the direction of travel of a line: tail, then head. */
+  private startDirection(id: string): void {
+    this.directing = { id, tail: null };
+    this.message('Direction of travel: click where the traffic comes from, then where it goes.');
+    this.redraw();
+  }
+
+  private direct(u: number, v: number): void {
+    const directing = this.directing;
+    if (!directing) {
+      return;
     }
-    const mid: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const normal: [number, number] = [-(b[1] - a[1]) / length, (b[0] - a[0]) / length];
-    const toGround = (u: number, v: number) => applyHomography(projection.imageToGround, u, v);
-    const ga = toGround(...a);
-    const gb = toGround(...b);
-    const probe = toGround(mid[0] + normal[0] * 10, mid[1] + normal[1] * 10);
-    if (!ga || !gb || !probe) {
-      return null;
+    if (!directing.tail) {
+      directing.tail = [u, v];
+      this.redraw();
+      return;
     }
-    // Direction A crosses from the left of the line (as drawn, on the ground) to its right.
-    const left = (gb[0] - ga[0]) * (probe[1] - ga[1]) - (gb[1] - ga[1]) * (probe[0] - ga[0]) > 0;
-    const sign = left ? -1 : 1;
-    const reach = Math.min(60, length * 0.25);
-    return [mid, [mid[0] + normal[0] * reach * sign, mid[1] + normal[1] * reach * sign]];
+    const [tu, tv] = directing.tail;
+    if (Math.hypot(u - tu, v - tv) < 5) {
+      this.message('Click the head of the arrow further from its tail.');
+      return;
+    }
+    const line = this.regions.lines.find((l) => l.id === directing.id);
+    if (line) {
+      line.direction = [directing.tail, [u, v]];
+      this.message(`Direction of ${line.name} set; Save applies it.`);
+    }
+    this.directing = null;
+    this.renderList();
+    this.redraw();
+  }
+
+  private arrow(
+    c: CanvasRenderingContext2D,
+    [x0, y0]: [number, number],
+    [x1, y1]: [number, number],
+  ): void {
+    const angle = Math.atan2(y1 - y0, x1 - x0);
+    const head = 14;
+    c.beginPath();
+    c.moveTo(x0, y0);
+    c.lineTo(x1, y1);
+    c.moveTo(x1 - head * Math.cos(angle - 0.45), y1 - head * Math.sin(angle - 0.45));
+    c.lineTo(x1, y1);
+    c.lineTo(x1 - head * Math.cos(angle + 0.45), y1 - head * Math.sin(angle + 0.45));
+    c.lineWidth = 3;
+    c.stroke();
   }
 
   private drawRegions(c: CanvasRenderingContext2D, view: View2D): void {
@@ -480,16 +521,9 @@ class CalibrationApp {
       c.strokeStyle = COLORS.line;
       c.lineWidth = 3;
       c.stroke();
-      const arrow = this.directionArrow(line.points);
-      if (arrow) {
-        const [x0, y0] = view.toScreen(...arrow[0]);
-        const [x1, y1] = view.toScreen(...arrow[1]);
-        c.beginPath();
-        c.moveTo(x0, y0);
-        c.lineTo(x1, y1);
-        c.lineWidth = 2;
-        c.stroke();
-        this.marker(c, x1, y1, COLORS.line, 'A');
+      if (line.direction) {
+        const [tail, head] = line.direction;
+        this.arrow(c, view.toScreen(...tail), view.toScreen(...head));
       }
       const [first] = screen;
       if (first) {
@@ -518,6 +552,14 @@ class CalibrationApp {
         c.fillStyle = COLORS.drawing;
         c.fill();
       }
+    }
+    const tail = this.directing?.tail;
+    if (tail) {
+      const [x, y] = view.toScreen(...tail);
+      c.beginPath();
+      c.arc(x, y, 5, 0, 2 * Math.PI);
+      c.fillStyle = COLORS.line;
+      c.fill();
     }
   }
 

@@ -1,4 +1,15 @@
-#include "jp/sources/detection_regions.hpp"
+      RegionLine line{l.at("id").get<std::string>(), l.value("name", ""),
+                      points_from(l, 2, "a line"), l.value("band_m", 0.0), {}};
+      if (line.band_m < 0.0) {
+        throw std::runtime_error("band_m must not be negative");
+      }
+      if (const auto it = l.find("direction"); it != l.end() && !it->is_null()) {
+        line.direction = points_from(json{{"points", *it}}, 2, "a direction");
+        const cv::Point2f d = line.direction.back() - line.direction.front();
+        if (line.direction.size() != 2 || std::hypot(d.x, d.y) < 1.0F) {
+          throw std::runtime_error("a direction is two different image points");
+        }
+      }#include "jp/sources/detection_regions.hpp"
 
 #include <Eigen/Geometry>
 #include <algorithm>
@@ -133,7 +144,8 @@ std::string DetectionRegions::to_json() const {
                             {"name", line.name},
                             {"points", points_json(line.points)},
                             {"band_m", line.band_m},
-                            {"speed_limit_kmh", line.speed_limit_kmh}});
+                            {"direction", line.direction.empty() ? json(nullptr)
+                                                                 : points_json(line.direction)}});
   }
   out["signals"] = json::array();
   for (const auto& signal : signals) {
@@ -208,6 +220,10 @@ void draw_regions(cv::Mat& canvas, const DetectionRegions& regions) {
   for (const auto& line : regions.lines) {
     const auto points = rounded(line.points);
     cv::polylines(canvas, std::vector{points}, false, line_color, 3, cv::LINE_AA);
+    if (line.direction.size() == 2) {
+      cv::arrowedLine(canvas, line.direction[0], line.direction[1], line_color, 3, cv::LINE_AA, 0,
+                      0.2);
+    }
     if (!line.name.empty()) {
       cv::putText(canvas, line.name, points.front() + cv::Point(6, -8), cv::FONT_HERSHEY_SIMPLEX,
                   0.6, line_color, 2, cv::LINE_AA);

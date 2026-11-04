@@ -20,15 +20,17 @@ struct RegionArea {
   std::vector<cv::Point2f> points;
 };
 
-/// A line of a camera, drawn across (or along) the road in image pixels. Road users crossing it
-/// are counted (site manager statistics). With a band, only road users within that ground
-/// distance of a banded line are accepted at all.
+/// A line of a camera in image pixels. With three or more points it outlines a lane, whose queue
+/// and passing road users the site manager measures (manager/traffic.py) along the direction the
+/// user set. With a band, only road users within that ground distance of a banded line are
+/// accepted at all.
 struct RegionLine {
   std::string id;
   std::string name;
   std::vector<cv::Point2f> points;
-  double band_m = 0.0;           ///< Half width of the accepting band; 0: the line only counts.
-  double speed_limit_kmh = 0.0;  ///< For the statistics; 0: not set.
+  double band_m = 0.0;  ///< Half width of the accepting band; 0: no band.
+  /// Direction of travel set by the user: two image points, from tail to head; empty if unset.
+  std::vector<cv::Point2f> direction;
 };
 
 /// A traffic light seen by a camera: the area of its signal head in image pixels (two points: a

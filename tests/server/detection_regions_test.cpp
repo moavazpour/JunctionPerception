@@ -73,14 +73,26 @@ TEST(DetectionRegions, KeepsSignalsWithTheirPlacement) {
 TEST(DetectionRegions, RoundTripsAndRejectsMalformedRegions) {
   const auto regions = DetectionRegions::parse(R"json({
     "areas": [{"id": "a", "name": "North", "points": [[0, 0], [10, 0], [10, 10]]}],
-    "lines": [{"id": "l", "points": [[0, 5], [10, 5]], "band_m": 2.5, "speed_limit_kmh": 50}]
+    "lines": [{"id": "l", "points": [[0, 5], [10, 5]], "band_m": 2.5, "speed_limit_kmh": 50},
+              {"id": "lane", "points": [[0, 0], [9, 0], [9, 9]], "direction": [[1, 8], [8, 1]]}]
   })json");
   const auto again = DetectionRegions::parse(regions.to_json());
   ASSERT_EQ(again.areas.size(), 1U);
   EXPECT_EQ(again.areas[0].name, "North");
-  ASSERT_EQ(again.lines.size(), 1U);
+  ASSERT_EQ(again.lines.size(), 2U);
   EXPECT_DOUBLE_EQ(again.lines[0].band_m, 2.5);
-  EXPECT_DOUBLE_EQ(again.lines[0].speed_limit_kmh, 50.0);
+  // Without a direction set (older files carried an unused speed limit, ignored now).
+  EXPECT_TRUE(again.lines[0].direction.empty());
+  ASSERT_EQ(again.lines[1].direction.size(), 2U);
+  EXPECT_EQ(again.lines[1].direction[0], cv::Point2f(1, 8));
+  EXPECT_EQ(again.lines[1].direction[1], cv::Point2f(8, 1));
+  // A direction is exactly two different points.
+  for (const char* direction : {R"([[1, 1]])", R"([[1, 1], [1, 1]])", R"([[0, 0], [1, 1], [2, 2]])"}) {
+    EXPECT_THROW(static_cast<void>(DetectionRegions::parse(
+                     std::string(R"({"lines": [{"id": "l", "points": [[0, 0], [5, 5]], "direction": )") +
+                     direction + "}]}")),
+                 std::runtime_error);
+  }
   EXPECT_THROW(static_cast<void>(DetectionRegions::parse(
                    R"json({"areas": [{"id": "a", "points": [[0, 0], [1, 1]]}]})json")),
                std::runtime_error);
