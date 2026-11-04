@@ -109,3 +109,47 @@ predicted as cars (1188) or trucks (101), trailers mostly as trucks (728).
   unmatched prediction counts as a false positive.
 - **Motion.** Speed is accurate (median error 0.06 m/s, P90 1.0 m/s); heading of moving vehicles
   has a median error of 2.4°.
+
+## Site world model (multi-camera)
+
+`tools/eval_fusion.py` replays the camera observations of both south cameras of TUMTraf R02 s03
+(`jp_run`, default `configs/pipeline.yaml`, YOLO26l at 1280 px, box fit; 2 × 1033 frames) on
+their image capture times through `manager/world_model.py`, south1 moved into the south2 ground
+frame, and matches every site state to the labels interpolated at its time (greedy, 2 m vehicles /
+1 m VRUs). Baselines: the same model with `fuse_cameras: false` (both cameras' tracks, unfused)
+and each camera alone. Run of 2026-11-04 on the refactor branch:
+
+| | Road users (sum over states) | Matched | Position error median / P90 (m) | Global ID switches |
+|---|---|---|---|---|
+| fused (both cameras) | 37 459 | 14 074 | 0.81 / 1.69 | 48 |
+| unfused (both cameras) | 54 011 | 18 830 | 0.81 / 1.70 | 81 |
+| south1 alone | 10 795 | 4 180 | 1.03 / 1.75 | 9 |
+| south2 alone | 16 217 | 5 414 | 0.56 / 1.55 | 8 |
+
+Labels that both cameras matched at the same time (overlap; only 138 label instants, 3–4 road
+users in s03, so a small sample):
+
+| | Represented by exactly one road user | By two or more | Missed | Nearest road user, median / P90 (m) |
+|---|---|---|---|---|
+| fused | 86 % | 14 % | 0 % | 1.21 / 1.33 |
+| unfused | 1 % | 99 % | 0 % | 0.75 / 0.84 (the better camera) |
+
+Of the labels some camera track matched, the fused state represents 98.7 %.
+
+Clock error: adding 300 ms to south2's timestamps lowers the matched road users from 14 074 to
+12 081 (positions of the wrong instant fall outside the gate); configuring
+`time_offset_ms: -300` for that camera restores the synchronized result exactly.
+
+Reading:
+
+- Fusion does what it is for: one road user per physical road user in the overlap (86 % vs 1 %),
+  global IDs kept through camera hand-overs (48 vs 81 switches).
+- It does **not** improve positions: in the overlap the fused position is worse than the better
+  camera (1.21 m vs 0.75 m), because the two cameras disagree systematically (south1's median
+  error is 1.03 m, south2's 0.56 m) while their reported covariances are similar (≈0.25 m² each,
+  dominated by the floor). Inverse-covariance weighting then lands between them. Fixing this
+  needs per-camera bias estimates or a joint calibration, not a different weighting rule.
+- Precision is low everywhere (0.33–0.39) because many road users lie beyond the labelled range
+  of the south LiDAR; it is the same for single cameras and is not a fusion effect.
+- 14 % of overlap instants still show two road users, mostly at the start of a co-observation
+  before `merge_after` steps or when the cameras disagree by more than the gate.
