@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -23,6 +24,12 @@ struct WorldObject {
   double speed_mps = 0.0;
   std::optional<double> speed_std_mps;  ///< Speed uncertainty; empty if not estimated.
   std::optional<double> heading_rad;    ///< Empty while the heading is unknown.
+  /// Where the heading comes from: "motion" (direction of travel), "keypoints" (box corners),
+  /// "held" (last heading kept while too slow to measure it) or "label" (ground truth); empty
+  /// while the heading is unknown or for sources that do not say.
+  std::optional<std::string> heading_source;
+  /// Position covariance of the tracking filter (xx, xy, yy in m²); empty if not estimated.
+  std::optional<std::array<double, 3>> position_cov_m2;
   double confidence = 0.0;
   /// Measured footprint (keypoint models), else empty: the twin uses the class size then.
   std::optional<double> length_m;

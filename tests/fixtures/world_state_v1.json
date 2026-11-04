@@ -22,7 +22,9 @@
       "turning": false,
       "validated": true,
       "length_m": 4.42,
-      "width_m": 1.83
+      "width_m": 1.83,
+      "heading_source": "keypoints",
+      "position_cov_m2": [0.09, 0.012, 0.36]
     },
     {
       "id": 42,
@@ -41,7 +43,9 @@
       "turning": false,
       "validated": false,
       "length_m": null,
-      "width_m": null
+      "width_m": null,
+      "heading_source": null,
+      "position_cov_m2": null
     }
   ],
   "events": [

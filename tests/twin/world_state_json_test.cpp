@@ -25,6 +25,11 @@ TEST(WorldStateJson, ParsesSharedExample) {
   EXPECT_DOUBLE_EQ(state.objects[0].speed_std_mps.value_or(0.0), 0.12);
   EXPECT_FALSE(state.objects[1].speed_std_mps.has_value());
   EXPECT_FALSE(state.objects[1].validated);
+  EXPECT_EQ(state.objects[0].heading_source, "keypoints");
+  ASSERT_TRUE(state.objects[0].position_cov_m2.has_value());
+  EXPECT_DOUBLE_EQ((*state.objects[0].position_cov_m2)[2], 0.36);
+  EXPECT_FALSE(state.objects[1].heading_source.has_value());
+  EXPECT_FALSE(state.objects[1].position_cov_m2.has_value());
   EXPECT_EQ(state.events[0].vehicle_state, "moving");
   ASSERT_EQ(state.events.size(), 2U);
   ASSERT_TRUE(state.events[0].min_distance_m.has_value());

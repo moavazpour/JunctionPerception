@@ -1,5 +1,6 @@
 #include "jp/twin/world_state_json.hpp"
 
+#include <array>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -33,6 +34,7 @@ std::optional<T> optional_field(const json& j, const char* key) {
 json object_json(const core::WorldObject& o) {
   constexpr int kMetre = 3;
   constexpr int kRadian = 4;
+  constexpr int kCovariance = 4;
   return {
       {"id", o.id},
       {"class", o.object_class},
@@ -50,7 +52,13 @@ json object_json(const core::WorldObject& o) {
       {"turning", o.turning},
       {"validated", o.validated},
       {"length_m", o.length_m ? json(rounded(*o.length_m, kMetre)) : json(nullptr)},
-      {"width_m", o.width_m ? json(rounded(*o.width_m, kMetre)) : json(nullptr)}};
+      {"width_m", o.width_m ? json(rounded(*o.width_m, kMetre)) : json(nullptr)},
+      {"heading_source", optional_value(o.heading_source)},
+      {"position_cov_m2", o.position_cov_m2
+                              ? json::array({rounded((*o.position_cov_m2)[0], kCovariance),
+                                             rounded((*o.position_cov_m2)[1], kCovariance),
+                                             rounded((*o.position_cov_m2)[2], kCovariance)})
+                              : json(nullptr)}};
 }
 
 json event_json(const core::WorldEvent& e) {
@@ -84,6 +92,8 @@ core::WorldObject object_from(const json& j) {
   o.validated = j.value("validated", true);
   o.length_m = optional_field<double>(j, "length_m");
   o.width_m = optional_field<double>(j, "width_m");
+  o.heading_source = optional_field<std::string>(j, "heading_source");
+  o.position_cov_m2 = optional_field<std::array<double, 3>>(j, "position_cov_m2");
   return o;
 }
 

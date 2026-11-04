@@ -106,6 +106,41 @@ sources: {}
   EXPECT_NEAR(*objects.front().heading_rad, std::numbers::pi / 2, 0.2);
 }
 
+TEST(TrackLocalizer, ReportsHeadingSourceAndPositionCovariance) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  car: {length_m: 4.5, width_m: 1.8, height_m: 1.5, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                             options);
+  jp::tracking::TrackedObject track;
+  track.id = 3;
+  track.twin_class = "car";
+  const auto at = [&](int i, float y) {
+    track.detection.box = cv::Rect2f(80, y - 20, 40, 20);
+    return localizer.update({track}, i * kFrameNs).front();
+  };
+  // A new, standing track has no heading, so no source either.
+  const auto first = at(0, 100.0F);
+  EXPECT_FALSE(first.heading_rad.has_value());
+  EXPECT_FALSE(first.heading_source.has_value());
+  EXPECT_GT(first.position_cov.determinant(), 0.0);
+  jp::localization::LocalizedObject object;
+  for (int i = 1; i <= 20; ++i) {
+    object = at(i, 100.0F + (5.0F * static_cast<float>(i)));
+  }
+  EXPECT_EQ(object.heading_source, "motion");
+  for (int i = 21; i <= 60; ++i) {
+    object = at(i, 200.0F);
+  }
+  EXPECT_EQ(object.heading_source, "held");
+  ASSERT_TRUE(object.heading_rad.has_value());
+}
+
 TEST(TrackLocalizer, JitterOfAStandingCarDoesNotTurnIt) {
   const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
 classes:

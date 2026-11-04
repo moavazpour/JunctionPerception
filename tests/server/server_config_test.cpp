@@ -73,6 +73,9 @@ TEST(ServerConfig, SceneDescriptionCarriesCalibrationZonesAndClasses) {
   EXPECT_EQ(description["zones"]["coordinate_frame"], "scene_ground");
   EXPECT_EQ(description["zones"]["features"].size(), 2U);
   EXPECT_EQ(description["classes"].size(), catalog.classes().size());
+  ASSERT_EQ(description["image_to_ground"].size(), 3U);
+  EXPECT_DOUBLE_EQ(description["image_to_ground"][2][2].get<double>(),
+                   scene.ground->image_to_ground(2, 2));
 }
 
 TEST(ReplaySource, PlaysRecordedStatesWithoutZones) {

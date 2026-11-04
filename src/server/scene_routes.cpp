@@ -103,12 +103,19 @@ std::string scene_description(const ServedScene& scene, const core::ClassCatalog
                       {"camera_ground_position_m", nullptr},
                       {"camera_height_m", nullptr},
                       {"geo_anchor", nullptr},
+                      {"image_to_ground", nullptr},
                       {"map", has_map ? json("/map/map.json") : json(nullptr)},
                       {"zones", json::parse(vru::zones_to_geojson(scene.zones))},
                       {"classes", classes}};
   if (scene.ground) {
     description["camera_ground_position_m"] = pair(scene.ground->camera_ground_position_m);
     description["camera_height_m"] = scene.ground->camera_height_m;
+    json h = json::array();
+    for (int r = 0; r < 3; ++r) {
+      const auto& m = scene.ground->image_to_ground;
+      h.push_back({m(r, 0), m(r, 1), m(r, 2)});
+    }
+    description["image_to_ground"] = h;
   }
   if (scene.config.geo_anchor) {
     const auto& a = *scene.config.geo_anchor;

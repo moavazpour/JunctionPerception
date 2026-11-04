@@ -89,6 +89,10 @@ struct LocalizedObject {
   double speed_std_mps = 0.0;  ///< Uncertainty of the speed (filter covariance).
   /// Empty until the object has moved fast enough (or its corners gave it).
   std::optional<double> heading_rad;
+  /// Where this frame's heading came from: "motion", "keypoints" or "held"; empty while unknown.
+  std::optional<std::string> heading_source;
+  /// Position covariance of the filter (m²).
+  Eigen::Matrix2d position_cov = Eigen::Matrix2d::Zero();
   /// Measured footprint size (keypoint models), smoothed over the track.
   std::optional<double> length_m;
   std::optional<double> width_m;
@@ -121,6 +125,8 @@ class TrackLocalizer {
 
     BevKalman filter;
     std::optional<double> heading_rad;
+    /// See LocalizedObject::heading_source.
+    std::optional<std::string> heading_source;
     std::optional<Eigen::Vector2d> size;  ///< Smoothed length and width from the corners.
     int rejected = 0;                     ///< Consecutive measurements outside the innovation gate.
     int reversed = 0;                     ///< Consecutive corner headings against the held one.

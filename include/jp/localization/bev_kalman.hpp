@@ -32,6 +32,7 @@ class BevKalman {
 
   [[nodiscard]] Eigen::Vector2d position() const { return state_.head<2>(); }
   [[nodiscard]] Eigen::Vector2d velocity() const { return state_.tail<2>(); }
+  [[nodiscard]] Eigen::Matrix2d position_cov() const { return covariance_.topLeftCorner<2, 2>(); }
   [[nodiscard]] Eigen::Matrix2d velocity_cov() const { return covariance_.block<2, 2>(2, 2); }
   /// Speed uncertainty: velocity std along the direction of motion, or the largest velocity
   /// std while the object is nearly at rest.

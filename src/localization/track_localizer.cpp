@@ -101,6 +101,8 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     object.speed_mps = speed;
     object.speed_std_mps = state.filter.speed_std();
     object.heading_rad = state.heading_rad;
+    object.heading_source = state.heading_rad ? state.heading_source : std::nullopt;
+    object.position_cov = state.filter.position_cov();
     if (state.size) {
       object.length_m = state.size->x();
       object.width_m = state.size->y();
@@ -125,8 +127,10 @@ void TrackLocalizer::apply_footprint(State& state, const GroundFootprint& footpr
   const double motion = std::atan2(velocity.y(), velocity.x());
   if (speed >= options_.heading_min_speed_mps && !options_.keypoint_heading_when_moving) {
     state.heading_rad = motion;
+    state.heading_source = "motion";
     return;
   }
+  state.heading_source = "keypoints";
   // The corners give the heading with its front. A reversal against a clear motion is a
   // momentary error of the model; against the held heading of a slow road user it counts once
   // it lasts (it turned, or the first frames were wrong).
@@ -158,9 +162,14 @@ void TrackLocalizer::apply_motion(State& state, const Eigen::Vector2d& velocity,
                                   bool vru, std::int64_t timestamp_ns) const {
   const double speed = velocity.norm();
   if (speed < options_.heading_min_speed_mps || speed < options_.heading_speed_sigma * speed_std) {
+    // Too slow to measure: the last heading, if any, is held.
+    if (state.heading_rad) {
+      state.heading_source = "held";
+    }
     return;
   }
   const double motion = std::atan2(velocity.y(), velocity.x());
+  state.heading_source = "motion";
   const std::int64_t last_ns = std::exchange(state.heading_ns, timestamp_ns);
   if (!state.heading_rad) {
     state.heading_rad = motion;

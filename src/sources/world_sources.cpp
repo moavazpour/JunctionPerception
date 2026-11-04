@@ -1,5 +1,6 @@
 #include <Eigen/Geometry>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <opencv2/imgcodecs.hpp>
@@ -152,6 +153,7 @@ class OracleSource final : public WorldSource {
         object.x = center.x();
         object.y = center.y();
         object.heading_rad = std::atan2(forward.y(), forward.x());
+        object.heading_source = "label";
         object.confidence = 1.0;
         frame.objects.push_back(std::move(object));
       }
@@ -273,6 +275,9 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
   out.speed_mps = object.speed_mps;
   out.speed_std_mps = object.speed_std_mps;
   out.heading_rad = object.heading_rad;
+  out.heading_source = object.heading_source;
+  const Eigen::Matrix2d& cov = object.position_cov;
+  out.position_cov_m2 = std::array<double, 3>{cov(0, 0), cov(0, 1), cov(1, 1)};
   out.confidence = object.confidence;
   out.length_m = object.length_m;
   out.width_m = object.width_m;
