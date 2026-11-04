@@ -120,15 +120,19 @@ export class Footprint {
   private build(look: FootprintLook): void {
     this.disposeGeometry();
     this.group.clear();
-    // Unit shapes, scaled to the footprint: a 1 x 1 square or a disc of diameter 1.
+    // Unit shapes, scaled to the footprint: a 1 x 1 square or a disc of diameter 1. The square's
+    // outline ends in a tick inwards from the middle of its front edge (the heading is known),
+    // so outline and tick are one line.
     const points =
       look.shape === 'box'
         ? [
+            new THREE.Vector3(0.5, 0, 0),
             new THREE.Vector3(0.5, 0.5, 0),
-            new THREE.Vector3(0.5, -0.5, 0),
-            new THREE.Vector3(-0.5, -0.5, 0),
             new THREE.Vector3(-0.5, 0.5, 0),
-            new THREE.Vector3(0.5, 0.5, 0),
+            new THREE.Vector3(-0.5, -0.5, 0),
+            new THREE.Vector3(0.5, -0.5, 0),
+            new THREE.Vector3(0.5, 0, 0),
+            new THREE.Vector3(0.25, 0, 0),
           ]
         : Array.from({ length: 41 }, (_, i) => {
             const a = (i / 40) * 2 * Math.PI;
@@ -147,16 +151,5 @@ export class Footprint {
       this.outline.computeLineDistances();
     }
     this.group.add(this.fill, this.outline);
-    if (look.shape === 'box') {
-      // Front edge: a short tick at the front, as the heading is known.
-      const tick = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(0.5, 0, 0),
-          new THREE.Vector3(0.25, 0, 0),
-        ]),
-        this.solid,
-      );
-      this.group.add(tick);
-    }
   }
 }

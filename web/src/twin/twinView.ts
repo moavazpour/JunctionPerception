@@ -1311,8 +1311,13 @@ export class TwinView {
       }
       links.push(new THREE.Vector3(a.x, a.y, 0), new THREE.Vector3(b.x, b.y, 0));
     }
-    site.unmerged.geometry.setFromPoints(links);
-    site.unmerged.computeLineDistances();
+    // Only touched while there are links (or were): no buffer churn in the usual case.
+    const shown = site.unmerged.geometry.getAttribute('position')?.count ?? 0;
+    if (links.length > 0 || shown > 0) {
+      site.unmerged.geometry.dispose();
+      site.unmerged.geometry = new THREE.BufferGeometry().setFromPoints(links);
+      site.unmerged.computeLineDistances();
+    }
     const conflict = new Set<string>();
     const any = new Set<string>();
     const occupied = new Set<string>();

@@ -176,3 +176,119 @@ not reported: for tracks that are being lost, the association to a label was not
   increases the apparent offset.
 - The ground-truth matching is greedy with fixed gates and ignores unmatched objects; fusion
   ground-truth figures rest on about 1 000 samples.
+
+## After the corrections (priorities 1–4)
+
+Same harness, same data and scenarios, run against the build of branch `feature/3d-fidelity`
+(no backend change). "Before" is the first measurement above on the production build.
+
+**What changed in the 3D view**
+
+1. Every camera observation has a flat **footprint** on the ground at the backend position and
+   heading — solid outline for a measured size, dashed for the class size, a disc without heading,
+   grey and dashed when lost. **Analysis** in the toolbar makes the models translucent (opacity ×
+   0.22), so the footprints can be compared with the BEV.
+2. The **top-down mode** draws with an orthographic camera once it looks straight down; the tilted
+   3D view keeps its perspective camera and controls.
+3. Camera tracks captured more than **`fusionMaxSkewMs`** apart (default 100 ms, `?fusionSkewMs=`
+   on the twin page, `inf` merges regardless as before) are not merged. Both stay drawn, are linked
+   by a dashed line, named in the tooltip ("not merged with …: N ms apart") and counted. A merged
+   group never spans more than the threshold.
+4. A road user no longer observed stays **frozen at its last measured position** for `lostHoldS`
+   (default 1 s, `?lostHoldS=`), drawn translucent with a grey footprint, then goes. The backend's
+   tracking is unchanged.
+
+**Footprints and lost tracks against the backend world state** (every rendered frame):
+
+| | n | mean / median / P90 (m) |
+|---|---|---|
+| footprint − backend position, observed road users | 106 585 | 0.000 / 0.000 / 0.000 |
+| footprint heading − backend heading (deg) | 79 850 | 0.000 / 0.000 / 0.000 |
+| footprint − backend position, lost road users | 8 069 | 0.000 / 0.000 / 0.000 |
+| lost model − last measured position | 8 069 | 0.000 / 0.000 / 0.000 |
+| lost model − last measured position, **before** | 6 799 | 2.37 / 1.16 / 6.23 |
+
+25 % of the footprints are discs (no backend heading). In the browser, on frame 230 of s03 with
+both cameras, the 38 footprints of 35 drawn road users and the BEV's 38 tracks coincide (0.000 m).
+Lost road users are shown 1 s instead of fading over 0.9 s, so 7.0 % of drawn road users are lost
+ones (before 6.0 %).
+
+**Perspective** (apparent ground offset of what the eye reads as the road user, m):
+
+| View | Body centre before | Body centre after | Roof before | Roof after |
+|---|---|---|---|---|
+| top-down, vehicles | 0.24 / 0.24 / 0.34 | 0.001 / 0.000 / 0.000 | 0.49 / 0.48 / 0.68 | 0.001 / 0.000 / 0.000 |
+| top-down, VRUs | 0.30 / 0.29 / 0.38 | 0.001 / 0.000 / 0.003 | 0.60 / 0.57 / 0.76 | 0.001 / 0.000 / 0.003 |
+| tilted 3D, vehicles | 1.60 / 1.38 / 3.04 | 1.60 / 1.42 / 2.47 | 3.25 / 2.80 / 6.25 | 3.25 / 2.88 / 5.07 |
+
+The tilted view keeps its parallax by design (it is the 3D view); there, the footprint is what
+shows the position. The ground point projected and back-projected by the orthographic camera
+returns to itself (0.000 m), so coordinates and picking match in both modes.
+
+**Interpolation and heading** are unchanged (not part of priorities 1–4): drawn − backend while
+moving 0.27 / 0.11 / 0.76 m; heading axis error 6.85 / 3.79 / 9.66° in 3D against 5.36 / 3.44 /
+9.29° in the BEV.
+
+### Fusion threshold
+
+Two cameras, every second rendered frame; "both" are frames in which a labelled road user is
+matched in both cameras' latest states. Duplicates: share of those frames in which it is drawn as
+two road users. Identity changes: a labelled road user drawn under a new key that shares no camera
+track with the previous one, per minute, over all 117 labelled road users. Ground-truth errors of
+the drawn models at display time (all drawn ones; "best": the one closer to the truth).
+
+| Cameras | Threshold | Pairs merged / rejected | Duplicates | Identity changes / min | Error all drawn (m) | Error best drawn (m) |
+|---|---|---|---|---|---|---|
+| in step | ∞ (before) | 12 032 / 0 | 0 % | 1.67 | 1.34 / 1.28 / 1.43 | 1.34 / 1.28 / 1.43 |
+| in step | 200 ms | 9 614 / 73 | 1.5 % | 2.01 | 1.34 / 1.28 / 1.49 | 1.34 / 1.28 / 1.43 |
+| in step | 100 ms | 7 752 / 1 302 | 20.6 % | 5.89 | 1.35 / 1.28 / 1.84 | 1.24 / 1.26 / 1.42 |
+| in step | 50 ms | 6 061 / 3 090 | 45.5 % | 7.51 | 1.37 / 1.28 / 1.86 | 1.12 / 1.18 / 1.42 |
+| south1 300 ms late | ∞ (before) | 13 738 / 0 | 0 % | 1.62 | 1.35 / 1.28 / 1.43 | 1.35 / 1.28 / 1.43 |
+| south1 300 ms late | 200 ms | 956 / 10 658 | 91 % | 5.01 | 1.38 / 1.37 / 1.91 | 0.88 / 0.75 / 1.27 |
+| south1 300 ms late | 100 ms | 186 / 11 559 | 98 % | 1.82 | 1.38 / 1.78 / 1.91 | 0.84 / 0.75 / 0.78 |
+| south1 300 ms late | 50 ms | 118 / 11 638 | 99 % | 1.77 | 1.38 / 1.78 / 1.91 | 0.83 / 0.75 / 0.77 |
+
+- Cameras "in step" are not simultaneous: their latest frames are up to about 110 ms apart (P90),
+  because a frame lasts 116 ms at 8.6 fps. A 100 ms threshold therefore splits a fifth of the
+  overlap observations, and as the offset drifts around the threshold the same road user is merged
+  and split again — identity changes rise from 1.7 to 5.9 per minute. At 200 ms the in-step case
+  behaves as before (1.5 % duplicates, 2.0 changes per minute).
+- With a 300 ms offset, any threshold below it keeps the two observations apart: the road user is
+  drawn twice, linked and labelled with the offset, instead of at an average neither camera saw.
+  One of the two is then markedly closer to the truth (0.75 m median) than the average was
+  (1.28 m); the other is further away (1.78 m). Which one is better is not known to the browser —
+  choosing needs each observation's uncertainty, that is, fusion with covariances.
+- The ground-truth columns rest on few road users: 321–325 object-frames, 3–4 distinct labelled
+  road users seen by both cameras at once. Merges, duplicates and identity changes come from all
+  tracks. Treat the error columns as indicative.
+
+**Recommendation.** Keep the threshold configurable and set it to about 1.5–2 frame intervals of
+the slower camera (200 ms for these 8.6 fps cameras) rather than 100 ms: 100 ms is below the
+natural offset of unsynchronised cameras and costs continuity without a measured gain in accuracy.
+The lasting fix remains backend fusion that predicts each observation to a common time and weights
+it by its covariance.
+
+### Rendering cost of the footprints
+
+Synchronous frame cost (CPU and GPU, `gl.finish()`), 150 frames, three rounds each, footprints
+shown or hidden in the same page: 15 road users 5.7 ms with, 4.9 ms without; 200 road users
+16.2 ms with, 15.6 ms without — within the run-to-run scatter (about ±1 ms). Each footprint adds
+1.6–2 draw calls (fill and outline).
+
+### Trade-offs and remaining limitations
+
+- The model and its footprint can be apart: the model is interpolated (about one state behind),
+  merged across cameras and turned at a limited rate; the footprint is not. That gap is the
+  measured rendering discrepancy, now visible instead of hidden.
+- Two footprints under one merged model show the cameras' disagreement (median about 1 m in the
+  overlap): information, but more marks in the overlap.
+- A lost road user jumps back from its interpolated position to its last measured one (≤ 0.76 m
+  P90 while moving) and stays 1 s; its absence is marked, not predicted.
+- The tilted 3D view keeps its parallax (body 1.4 m, roof 2.9 m median); the footprints, the
+  analysis mode or the top-down mode show positions.
+- With the 100 ms default, unsynchronised cameras show duplicates and alternate between merged and
+  split in the overlap (see the sweep); 200 ms is the measured better setting for these cameras.
+- Not addressed (priorities 5–7): interpolation by capture time, the heading's origin in 3D, the
+  `?? 0` fallback in the interpolator.
+- The browser check was done on the scene graph (positions, camera type, opacity, BEV match), not
+  by screenshots: the browser pane was hidden during the session.
