@@ -44,12 +44,13 @@ void serve_file(const std::filesystem::path& root, const std::string& path,
 
 struct TwinServer::Impl {
   Impl(ServerOptions server_options, ServedScene served_scene, core::ClassCatalog class_catalog,
-       std::unique_ptr<sources::WorldSource> world_source, vru::EventDetector detector);
+       std::unique_ptr<sources::WorldSource> world_source,
+       std::optional<localization::ValidatedRegion> validated_region);
 
   ServerOptions options;
   core::ClassCatalog catalog;
   std::unique_ptr<sources::WorldSource> source;
-  vru::EventDetector events;
+  std::optional<localization::ValidatedRegion> validated;  // empty: all positions validated
   std::filesystem::path map_dir;
 
   crow::SimpleApp app;
@@ -65,7 +66,6 @@ struct TwinServer::Impl {
   std::mutex control_mutex;
   bool playing = true;
   std::optional<std::int64_t> pending_seek;
-  std::optional<std::vector<vru::Zone>> pending_zones;
   std::optional<sources::DetectionRegions> pending_regions;
 
   std::mutex status_mutex;
@@ -78,7 +78,6 @@ struct TwinServer::Impl {
     std::int64_t frame = 0;
     std::int64_t timestamp_ns = 0;
     std::size_t objects = 0;
-    std::size_t active_events = 0;
     double processing_ms = 0.0;
   };
 

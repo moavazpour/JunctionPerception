@@ -6,8 +6,8 @@ endforeach()
 target_link_libraries(jp_calibrate PRIVATE jp::benchmark jp::calibration opencv_imgcodecs
     spdlog::spdlog)
 target_link_libraries(jp_run PRIVATE jp::io jp::benchmark jp::calibration jp::detection
-    jp::tracking jp::localization jp::sources jp::twin jp::vru spdlog::spdlog)
-target_link_libraries(jp_server PRIVATE jp::calibration jp::io jp::sources jp::server jp::vru
+    jp::tracking jp::localization jp::sources jp::twin spdlog::spdlog)
+target_link_libraries(jp_server PRIVATE jp::calibration jp::io jp::sources jp::server jp::zones
     nlohmann_json::nlohmann_json spdlog::spdlog)
-target_link_libraries(jp_eval PRIVATE jp::benchmark jp::calibration jp::evaluation jp::twin jp::vru
+target_link_libraries(jp_eval PRIVATE jp::benchmark jp::calibration jp::evaluation jp::twin
     nlohmann_json::nlohmann_json yaml-cpp::yaml-cpp spdlog::spdlog)

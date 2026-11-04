@@ -16,8 +16,7 @@
 #include "jp/io/frame_source.hpp"
 #include "jp/server/twin_server.hpp"
 #include "jp/sources/world_source.hpp"
-#include "jp/vru/event_detector.hpp"
-#include "jp/vru/zones.hpp"
+#include "jp/zones/zones.hpp"
 
 namespace {
 
@@ -101,7 +100,7 @@ void run(const ServerArgs& args) {
   if (std::filesystem::exists(scene.config.calibration_path())) {
     scene.ground = jp::calibration::load_ground_calibration(scene.config.calibration_path());
   }
-  scene.zones = jp::vru::load_scene_zones(scene.config);
+  scene.zones = jp::zones::load_scene_zones(scene.config);
   spdlog::info("scene {}: {}, {} zones; source {} from {}", scene.config.scene_id,
                scene.ground ? "calibrated" : "not calibrated", scene.zones.size(), startup.mode,
                input.string());
@@ -113,17 +112,16 @@ void run(const ServerArgs& args) {
                  regions.lines.size(), regions.signals.size());
     source->set_regions(regions);
   }
-  jp::vru::EventDetector events(scene.zones, jp::vru::event_options(pipeline.events, catalog));
+  std::optional<jp::localization::ValidatedRegion> validated;
   if (scene.ground) {
-    if (auto region = jp::sources::validated_region(scene.config, *scene.ground, pipeline.events)) {
-      spdlog::info("events limited to the validated region ({} control points outline)",
-                   region->outline().size());
-      events.set_validated_region(
-          [region = std::move(*region)](const Eigen::Vector2d& p) { return region.contains(p); });
+    validated = jp::sources::validated_region(scene.config, *scene.ground, pipeline.validation);
+    if (validated) {
+      spdlog::info("positions validated within the control points outline ({} points)",
+                   validated->outline().size());
     }
   }
   jp::server::TwinServer server(config.server, std::move(scene), catalog, std::move(source),
-                                std::move(events));
+                                std::move(validated));
   server.run();
 }
 

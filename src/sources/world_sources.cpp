@@ -1,6 +1,7 @@
 #include <Eigen/Geometry>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <opencv2/imgcodecs.hpp>
@@ -34,17 +35,25 @@ class LiveSource final : public WorldSource {
         catalog_(catalog),
         signal_settings_(config.signals),
         pipeline_(config, catalog, ground),
-        frames_(std::make_unique<io::VideoFileSource>(video_)) {}
+        frames_(std::make_unique<io::VideoFileSource>(video_)),
+        stream_(video_.string().find("://") != std::string::npos) {}
 
   std::optional<SourceFrame> next(bool with_image) override {
     auto frame = frames_->next();
     if (!frame) {
       return std::nullopt;
     }
+    if (stream_) {
+      // A stream's decoder clock is not a capture time: the frame is stamped when it arrives.
+      frame->timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+    }
     const auto result = pipeline_.process(*frame);
     SourceFrame out;
     out.index = frame->index;
     out.timestamp_ns = frame->timestamp_ns;
+    out.time_source = stream_ ? "arrival" : "media";
     for (const auto& object : result.objects) {
       out.objects.push_back(to_world_object(object, catalog_));
     }
@@ -120,6 +129,7 @@ class LiveSource final : public WorldSource {
   PerceptionPipeline pipeline_;
   std::unique_ptr<io::VideoFileSource> frames_;
   std::map<std::string, SignalFilter> filters_;
+  bool stream_;  // a camera stream (URL), not a recording
 };
 
 class OracleSource final : public WorldSource {
@@ -138,6 +148,7 @@ class OracleSource final : public WorldSource {
       SourceFrame frame;
       frame.index = static_cast<std::int64_t>(i);
       frame.timestamp_ns = image.timestamp_ns;
+      frame.time_source = "capture";  // TUMTraf image file names hold the capture time
       for (const auto& gt : truth.frames[i]) {
         const auto twin_class = catalog.map("tumtraf", gt.box.category);
         if (!twin_class) {
@@ -228,10 +239,7 @@ class ReplaySource final : public WorldSource {
       frame.index = state->frame;
       frame.timestamp_ns = state->timestamp_ns;
       frame.objects = std::move(state->objects);
-      for (auto& object : frame.objects) {
-        object.zones.clear();
-        object.turning = false;
-      }
+      frame.time_source = state->time_source;
       frames_.push_back(std::move(frame));
     }
   }
@@ -286,7 +294,7 @@ core::WorldObject to_world_object(const localization::LocalizedObject& object,
 
 std::optional<localization::ValidatedRegion> validated_region(
     const core::SceneConfig& scene, const calibration::GroundCalibration& ground,
-    const core::EventSettings& settings) {
+    const core::ValidationSettings& settings) {
   const auto path = scene.control_points_path();
   if (!scene.geo_anchor || !std::filesystem::exists(path)) {
     return std::nullopt;
@@ -294,10 +302,16 @@ std::optional<localization::ValidatedRegion> validated_region(
   // Only points the calibration agrees with (a mis-clicked point validates nothing).
   const auto points = calibration::load_control_points(path, core::GeoAnchor(*scene.geo_anchor));
   const auto fit = calibration::fit_control_points(points, scene.width_px, scene.height_px);
-  return localization::ValidatedRegion(
-      calibration::agreeing_points(points, fit), ground.image_to_ground,
-      ground.camera_ground_position_m,
-      {settings.validated_margin_m, settings.validated_max_ground_m_per_px});
+  return localization::ValidatedRegion(calibration::agreeing_points(points, fit),
+                                       ground.image_to_ground, ground.camera_ground_position_m,
+                                       {settings.margin_m, settings.max_ground_m_per_px});
+}
+
+void mark_validated(std::vector<core::WorldObject>& objects,
+                    const std::optional<localization::ValidatedRegion>& region) {
+  for (auto& object : objects) {
+    object.validated = !region || region->contains({object.x, object.y});
+  }
 }
 
 std::unique_ptr<WorldSource> make_live_source(

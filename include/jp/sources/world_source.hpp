@@ -19,11 +19,13 @@
 
 namespace jp::sources {
 
-/// One frame of a world source: objects in the world frame (zones, turning flags and events are
-/// added downstream) and, if requested and available, the camera image.
+/// One frame of a world source: objects in the world frame and, if requested and available, the
+/// camera image.
 struct SourceFrame {
   std::int64_t index = 0;
   std::int64_t timestamp_ns = 0;
+  /// What timestamp_ns counts: "media", "capture" or "arrival" (see core::WorldState).
+  std::string time_source = "media";
   std::vector<core::WorldObject> objects;
   cv::Mat image;      ///< BGR for display (live: with tracked boxes); empty if not requested.
   cv::Mat raw_image;  ///< BGR without overlays, for calibration; empty if not requested.
@@ -31,7 +33,7 @@ struct SourceFrame {
 };
 
 /// Producer of world frames: "live" (camera pipeline), "oracle" (benchmark ground truth) or
-/// "replay" (recorded JSONL). All feed the same zone, event and output code.
+/// "replay" (recorded JSONL). All feed the same output code.
 class WorldSource {
  public:
   WorldSource() = default;
@@ -64,11 +66,15 @@ class WorldSource {
                                                 const core::ClassCatalog& catalog);
 
 /// Region of validated positions of a scene calibrated from control points (their outline and
-/// the ground resolution limit of the events settings); empty for scenes calibrated otherwise
-/// (e.g. benchmark scenes registered to LiDAR labels), whose events are not restricted.
+/// the ground resolution limit of the settings); empty for scenes calibrated otherwise (e.g.
+/// benchmark scenes registered to LiDAR labels), whose positions are all validated.
 [[nodiscard]] std::optional<localization::ValidatedRegion> validated_region(
     const core::SceneConfig& scene, const calibration::GroundCalibration& ground,
-    const core::EventSettings& settings);
+    const core::ValidationSettings& settings);
+
+/// Marks each object validated if it lies in `region` (all of them without a region).
+void mark_validated(std::vector<core::WorldObject>& objects,
+                    const std::optional<localization::ValidatedRegion>& region);
 
 /// Camera video through the perception pipeline; without a ground calibration (a scene not yet
 /// calibrated) objects are tracked in the image only and no world objects are produced.
@@ -82,7 +88,7 @@ class WorldSource {
     const std::filesystem::path& sequence_dir, const core::ClassCatalog& catalog,
     const calibration::GroundCalibration& ground);
 
-/// Recorded world states (JSONL); zones and events are recomputed downstream.
+/// Recorded camera observations (JSONL, schema version 1 or 2).
 [[nodiscard]] std::unique_ptr<WorldSource> make_replay_source(const std::filesystem::path& jsonl);
 
 }  // namespace jp::sources

@@ -6,8 +6,3 @@ displaced_gate_m: 5.0             # second pass: a missed label and a false posi
 velocity_window_s: 1.0            # label speed and direction from positions over this window
 moving_speed_mps: 1.0             # heading errors of labelled vehicles moving at least this fast
 range_bins_m: [0, 20, 40, 60, 80, 120]  # distance from the camera
-# A label conflict: the smallest gap between the vehicle footprint and the VRU within the horizon
-# is below the gap while it closes at least this fast (as configs/pipeline.yaml events).
-conflict_gap_m: 1.0
-conflict_horizon_s: 3.0
-conflict_min_closing_speed_mps: 0.3

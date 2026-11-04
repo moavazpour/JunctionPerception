@@ -6,7 +6,7 @@
 #include <stdexcept>
 
 #include "jp/calibration/control_points.hpp"
-#include "jp/vru/zones.hpp"
+#include "jp/zones/zones.hpp"
 #include "server_impl.hpp"
 
 namespace jp::server {
@@ -105,7 +105,7 @@ std::string scene_description(const ServedScene& scene, const core::ClassCatalog
                       {"geo_anchor", nullptr},
                       {"image_to_ground", nullptr},
                       {"map", has_map ? json("/map/map.json") : json(nullptr)},
-                      {"zones", json::parse(vru::zones_to_geojson(scene.zones))},
+                      {"zones", json::parse(zones::zones_to_geojson(scene.zones))},
                       {"classes", classes}};
   if (scene.ground) {
     description["camera_ground_position_m"] = pair(scene.ground->camera_ground_position_m);
@@ -203,21 +203,17 @@ void TwinServer::Impl::register_scene_routes() {
       });
   CROW_ROUTE(app, "/api/zones").methods(crow::HTTPMethod::POST)([this](const crow::request& r) {
     try {
-      auto zones = vru::parse_zones(r.body);  // world frame, "coordinate_frame" declared
+      auto zones = zones::parse_zones(r.body);  // world frame, "coordinate_frame" declared
       const std::scoped_lock lock(scene_mutex);
       std::optional<core::GeoAnchor> anchor;
       if (scene.config.geo_anchor) {
         anchor.emplace(*scene.config.geo_anchor);
       }
       write_text(scene.config.zones_path(),
-                 vru::zones_to_geojson(zones, anchor ? &*anchor : nullptr));
-      scene.zones = zones;
-      {
-        const std::scoped_lock control(control_mutex);
-        pending_zones = std::move(zones);
-      }
+                 zones::zones_to_geojson(zones, anchor ? &*anchor : nullptr));
+      scene.zones = std::move(zones);
       spdlog::info("saved {} zones of {}", scene.zones.size(), scene.config.scene_id);
-      return json_response(json::parse(vru::zones_to_geojson(scene.zones)));
+      return json_response(json::parse(zones::zones_to_geojson(scene.zones)));
     } catch (const std::exception& error) {
       return json_response({{"error", error.what()}}, 400);
     }

@@ -36,18 +36,11 @@ struct PredictedObject {
   bool measured_size = false;  ///< Size measured by the detector (else the class size).
 };
 
-/// A VRU-vehicle conflict reported by the system, at the frame it started.
-struct PredictedConflict {
-  std::int64_t vehicle_id = 0;
-  std::int64_t vru_id = 0;
-};
-
 struct Frame {
   std::int64_t index = 0;
   std::int64_t timestamp_ns = 0;
   std::vector<TruthObject> truth;
   std::vector<PredictedObject> predicted;
-  std::vector<PredictedConflict> conflicts_started;
 };
 
 /// One evaluated recording (e.g. one sequence seen by one camera).
@@ -68,11 +61,6 @@ struct Options {
   double velocity_window_s = 1.0;
   double moving_speed_mps = 1.0;  ///< Heading errors are evaluated above this label speed.
   std::vector<double> range_bins_m = {0.0, 20.0, 40.0, 60.0, 80.0, 120.0};
-  /// Label conflicts: smallest gap between the vehicle footprint and the VRU within the horizon
-  /// below `conflict_gap_m`, shrinking on average by at least `conflict_min_closing_speed_mps`.
-  double conflict_gap_m = 1.0;
-  double conflict_horizon_s = 3.0;
-  double conflict_min_closing_speed_mps = 0.3;
   /// Predictions matched to no label and farther than `displaced_gate_m` from every label (also
   /// labels outside the image) are road users the labels miss: neither true nor false positives.
   bool ignore_unlabelled = false;
@@ -108,15 +96,6 @@ struct TrackingMetrics {
   std::size_t id_switches = 0;
   double mota = 0.0;
   double idf1 = 0.0;
-};
-
-struct ConflictMetrics {
-  std::size_t truth_episodes = 0;  ///< Label pairs in conflict (consecutive frames: one).
-  std::size_t truth_detected = 0;  ///< ... of which the system reported.
-  std::size_t predicted = 0;       ///< Conflicts reported by the system.
-  std::size_t confirmed = 0;       ///< ... that match a label conflict.
-  /// Smallest label gap ever seen between a vehicle and a VRU (both visible); empty if none.
-  std::optional<double> closest_truth_gap_m;
 };
 
 /// Orientation, size and footprint of matched labelled vehicles, against the label box.
@@ -155,15 +134,14 @@ struct Metrics {
   FootprintMetrics footprint;
   std::map<std::string, FootprintMetrics> footprint_by_class;  ///< By label class.
   TrackingMetrics tracking;
-  ConflictMetrics conflicts;
 
   [[nodiscard]] double precision() const;
   [[nodiscard]] double recall() const;
 };
 
 /// Matching per frame (Hungarian on ground distance, gated by the label's class group), then
-/// detection, localization, motion, tracking (CLEAR MOT, IDF1) and conflict metrics over all
-/// frames of all sequences.
+/// detection, localization, motion and tracking (CLEAR MOT, IDF1) metrics over all frames of all
+/// sequences.
 [[nodiscard]] Metrics evaluate(const std::vector<const Sequence*>& sequences,
                                const Options& options);
 

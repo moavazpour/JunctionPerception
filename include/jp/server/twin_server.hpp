@@ -8,8 +8,9 @@
 #include "jp/calibration/ground_calibration.hpp"
 #include "jp/core/class_catalog.hpp"
 #include "jp/core/scene_config.hpp"
+#include "jp/localization/validated_region.hpp"
 #include "jp/sources/world_source.hpp"
-#include "jp/vru/event_detector.hpp"
+#include "jp/zones/zones.hpp"
 
 namespace jp::server {
 
@@ -47,7 +48,7 @@ struct ServerConfig {
 struct ServedScene {
   core::SceneConfig config;
   std::optional<calibration::GroundCalibration> ground;
-  std::vector<vru::Zone> zones;  ///< World frame.
+  std::vector<zones::Zone> zones;  ///< World frame.
 };
 
 /// JSON description of a scene for the frontend: image size, calibration summary, geo anchor,
@@ -59,20 +60,21 @@ struct ServedScene {
 ///   GET  /api/scene                scene description
 ///   GET  /api/status               playback, frame rate and latency
 ///   POST /api/playback             {"action": "play" | "pause" | "seek", "frame": n}
-///   WS   /ws/world                 one world state (JSON) per frame
+///   WS   /ws/world                 one camera observation (JSON, schema 2) per frame
 ///   WS   /ws/video                 camera images: 8-byte little-endian frame index + JPEG
 ///   GET  /api/frame                latest camera image without overlays (JPEG)
 ///   GET  /api/calibration          stored control points (world frame)
 ///   POST /api/calibration/fit      fit a homography to control points, errors in metres
 ///   POST /api/calibration/save     store control points and the ground calibration
-///   POST /api/zones                store zones (GeoJSON in the world frame) and apply them
+///   POST /api/zones                store zones (GeoJSON in the world frame)
 ///   POST /api/restart              exit, so that the service restarts with the new calibration
 ///   GET  /map/...                  map layers of the scene
 ///   GET  /...                      static files of the built frontend
 class TwinServer {
  public:
   TwinServer(ServerOptions options, ServedScene scene, core::ClassCatalog catalog,
-             std::unique_ptr<sources::WorldSource> source, vru::EventDetector events);
+             std::unique_ptr<sources::WorldSource> source,
+             std::optional<localization::ValidatedRegion> validated);
   ~TwinServer();
   TwinServer(const TwinServer&) = delete;
   TwinServer& operator=(const TwinServer&) = delete;

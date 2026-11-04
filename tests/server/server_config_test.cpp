@@ -10,7 +10,7 @@
 #include "jp/server/twin_server.hpp"
 #include "jp/sources/world_source.hpp"
 #include "jp/twin/world_state_json.hpp"
-#include "jp/vru/zones.hpp"
+#include "jp/zones/zones.hpp"
 
 namespace {
 
@@ -62,7 +62,7 @@ TEST(ServerConfig, SceneDescriptionCarriesCalibrationZonesAndClasses) {
   jp::server::ServedScene scene;
   scene.config = jp::core::load_scene_config(JP_SOURCE_DIR "/scenes/tumtraf_s110_south1");
   scene.ground = jp::calibration::load_ground_calibration(scene.config.calibration_path());
-  scene.zones = jp::vru::load_scene_zones(scene.config);
+  scene.zones = jp::zones::load_scene_zones(scene.config);
   const auto catalog = jp::core::ClassCatalog::load(JP_SOURCE_DIR "/configs/classes.yaml");
   const auto description =
       nlohmann::json::parse(jp::server::scene_description(scene, catalog, false));
@@ -78,10 +78,10 @@ TEST(ServerConfig, SceneDescriptionCarriesCalibrationZonesAndClasses) {
                    scene.ground->image_to_ground(2, 2));
 }
 
-TEST(ReplaySource, PlaysRecordedStatesWithoutZones) {
+TEST(ReplaySource, PlaysRecordedStatesWithTheirTimeSource) {
   const auto path = std::filesystem::temp_directory_path() / "jp_replay_test.jsonl";
   {
-    std::ifstream in(JP_SOURCE_DIR "/tests/fixtures/world_state_v1.json");
+    std::ifstream in(JP_SOURCE_DIR "/tests/fixtures/camera_observation_v2.json");
     std::ostringstream text;
     text << in.rdbuf();
     auto state = jp::twin::world_state_from_json(text.str());
@@ -97,7 +97,8 @@ TEST(ReplaySource, PlaysRecordedStatesWithoutZones) {
   const auto frame = source->next(false);
   ASSERT_TRUE(frame.has_value());
   EXPECT_EQ(frame->index, 2);
-  EXPECT_TRUE(frame->objects[1].zones.empty());
+  EXPECT_EQ(frame->time_source, "capture");
+  EXPECT_EQ(frame->objects.size(), 2U);
   EXPECT_FALSE(source->next(false).has_value());
   std::filesystem::remove(path);
 }

@@ -3,25 +3,32 @@
 #include <gtest/gtest.h>
 
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
 
 namespace {
 
-std::string fixture() {
-  std::ifstream in(JP_SOURCE_DIR "/tests/fixtures/world_state_v1.json");
+std::string read(const char* name) {
+  std::ifstream in(std::string(JP_SOURCE_DIR "/tests/fixtures/") + name);
   std::ostringstream text;
   text << in.rdbuf();
   return text.str();
 }
 
+// The camera observation the manager's world model reads (manager/tests/test_world_model.py
+// feeds the same file).
+std::string fixture() { return read("camera_observation_v2.json"); }
+
 TEST(WorldStateJson, ParsesSharedExample) {
   const auto state = jp::twin::world_state_from_json(fixture());
-  EXPECT_EQ(state.scene_id, "tumtraf_s110_south1");
+  EXPECT_EQ(state.schema_version, 2);
+  EXPECT_EQ(state.scene_id, "tumtraf_s110");
+  EXPECT_EQ(state.camera_id, "south1");
+  EXPECT_EQ(state.time_source, "capture");
   ASSERT_EQ(state.objects.size(), 2U);
   EXPECT_EQ(state.objects[0].object_class, "car");
   EXPECT_FALSE(state.objects[1].heading_rad.has_value());
-  EXPECT_EQ(state.objects[1].zones, std::vector<std::string>{"crosswalk_n"});
   EXPECT_DOUBLE_EQ(state.objects[0].speed_std_mps.value_or(0.0), 0.12);
   EXPECT_FALSE(state.objects[1].speed_std_mps.has_value());
   EXPECT_FALSE(state.objects[1].validated);
@@ -30,29 +37,33 @@ TEST(WorldStateJson, ParsesSharedExample) {
   EXPECT_DOUBLE_EQ((*state.objects[0].position_cov_m2)[2], 0.36);
   EXPECT_FALSE(state.objects[1].heading_source.has_value());
   EXPECT_FALSE(state.objects[1].position_cov_m2.has_value());
-  EXPECT_EQ(state.events[0].vehicle_state, "moving");
-  ASSERT_EQ(state.events.size(), 2U);
-  ASSERT_TRUE(state.events[0].min_distance_m.has_value());
-  EXPECT_DOUBLE_EQ(*state.events[0].min_distance_m, 1.4);
-  EXPECT_FALSE(state.events[1].time_to_closest_s.has_value());
   ASSERT_EQ(state.signals.size(), 1U);
   EXPECT_EQ(state.signals[0].state, "red");
   EXPECT_EQ(state.signals[0].since_ns, 1651673058000000000);
 }
 
-TEST(WorldStateJson, RoundTripKeepsEveryField) {
+TEST(WorldStateJson, WritesTheFixtureExactly) {
+  // Field order and rounding are part of the contract: the serializer reproduces the fixture.
   const auto state = jp::twin::world_state_from_json(fixture());
-  const auto again = jp::twin::world_state_from_json(jp::twin::to_json(state));
-  EXPECT_EQ(jp::twin::to_json(again), jp::twin::to_json(state));
-  EXPECT_EQ(again.timestamp_ns, 1651673060123456789);
-  ASSERT_TRUE(again.objects[0].heading_rad.has_value());
-  EXPECT_NEAR(*again.objects[0].heading_rad, 1.5708, 1e-9);
+  const auto expected = nlohmann::ordered_json::parse(fixture());
+  EXPECT_EQ(nlohmann::ordered_json::parse(jp::twin::to_json(state)), expected);
+}
+
+TEST(WorldStateJson, ReadsVersion1Recordings) {
+  // Recordings before the site world model: events, zones and turning flags are ignored, the
+  // timestamps are media times.
+  const auto state = jp::twin::world_state_from_json(read("world_state_v1.json"));
+  EXPECT_EQ(state.schema_version, 2);
+  EXPECT_EQ(state.time_source, "media");
+  EXPECT_TRUE(state.camera_id.empty());
+  ASSERT_EQ(state.objects.size(), 2U);
+  EXPECT_EQ(state.objects[0].heading_source, "keypoints");
 }
 
 TEST(WorldStateJson, RejectsOtherSchemaVersion) {
   std::string text = fixture();
-  const std::string version = "\"schema_version\": 1";
-  text.replace(text.find(version), version.size(), "\"schema_version\": 2");
+  const std::string version = "\"schema_version\": 2";
+  text.replace(text.find(version), version.size(), "\"schema_version\": 3");
   EXPECT_THROW(static_cast<void>(jp::twin::world_state_from_json(text)), std::runtime_error);
 }
 

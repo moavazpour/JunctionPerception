@@ -1,4 +1,4 @@
-#include "jp/vru/zones.hpp"
+#include "jp/zones/zones.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -6,7 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace jp::vru {
+namespace jp::zones {
 
 namespace {
 
@@ -123,4 +123,4 @@ std::string zones_to_geojson(const std::vector<Zone>& zones, const core::GeoAnch
   return doc.dump(2);
 }
 
-}  // namespace jp::vru
+}  // namespace jp::zones

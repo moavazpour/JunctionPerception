@@ -101,22 +101,9 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
       l.keypoint_position_weight = keypoints["position_weight"].as<double>();
     }
 
-    const YAML::Node events = section(root, "events");
-    EventSettings& e = config.events;
-    e.crosswalk_min_frames = events["crosswalk_min_frames"].as<int>();
-    e.conflict_horizon_s = events["conflict_horizon_s"].as<double>();
-    e.conflict_step_s = events["conflict_step_s"].as<double>();
-    e.conflict_gap_m = events["conflict_gap_m"].as<double>();
-    e.conflict_min_closing_speed_mps = events["conflict_min_closing_speed_mps"].as<double>();
-    e.conflict_max_speed_std_mps = events["conflict_max_speed_std_mps"].as<double>();
-    e.stopped_speed_mps = events["stopped_speed_mps"].as<double>();
-    e.starting_window_s = events["starting_window_s"].as<double>();
-    e.validated_margin_m = events["validated_margin_m"].as<double>();
-    e.validated_max_ground_m_per_px = events["validated_max_ground_m_per_px"].as<double>();
-    e.conflict_min_frames = events["conflict_min_frames"].as<int>();
-    e.end_frames = events["end_frames"].as<int>();
-    e.turning_window_s = events["turning_window_s"].as<double>();
-    e.turning_threshold_deg = events["turning_threshold_deg"].as<double>();
+    const YAML::Node validation = section(root, "validation");
+    config.validation.margin_m = validation["margin_m"].as<double>();
+    config.validation.max_ground_m_per_px = validation["max_ground_m_per_px"].as<double>();
 
     if (const YAML::Node signals = root["signals"]) {
       SignalSettings& s = config.signals;

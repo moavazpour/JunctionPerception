@@ -4,14 +4,11 @@
 #include <cmath>
 #include <numbers>
 #include <numeric>
-#include <set>
-#include <tuple>
 #include <unordered_map>
 #include <utility>
 
 #include "jp/core/assignment.hpp"
 #include "jp/core/statistics.hpp"
-#include "jp/vru/event_detector.hpp"
 
 namespace jp::evaluation {
 
@@ -83,13 +80,6 @@ double footprint_iou(const Polygon& a, const Polygon& b) {
   const double overlap = area(intersection(a, b));
   const double united = area(a) + area(b) - overlap;
   return united > 0.0 ? overlap / united : 0.0;
-}
-
-// Gap between a labelled vehicle's footprint and a labelled VRU (disc).
-double truth_gap(const TruthObject& vehicle, const TruthObject& vru) {
-  return vru::rectangle_disc_gap(vehicle.position, vehicle.yaw_rad,
-                                 {vehicle.length_m, vehicle.width_m}, vru.position,
-                                 0.5 * std::min(vru.length_m, vru.width_m));
 }
 
 // Label positions of every track over the frames of a sequence.
@@ -247,7 +237,6 @@ class SequenceEvaluator {
       evaluate_frame(f);
     }
     finish_identities();
-    evaluate_conflicts();
   }
 
  private:
@@ -260,12 +249,10 @@ class SequenceEvaluator {
     if (options_->ignore_unlabelled) {
       ignore_unlabelled(frame, matches, dont_care);
     }
-    auto& prediction_to_track = prediction_to_track_.emplace_back();
     for (std::size_t t = 0; t < frame.truth.size(); ++t) {
       const TruthObject& truth = frame.truth[t];
       const std::size_t p = matches[t];
       if (p != kNone) {
-        prediction_to_track[frame.predicted[p].id] = truth.track_id;
         if (truth.visible) {
           matched_visible[p] = true;
         } else {
@@ -470,114 +457,6 @@ class SequenceEvaluator {
     }
   }
 
-  // Whether a label pair is in conflict at frame f: the gap observed over the horizon.
-  [[nodiscard]] bool truth_conflict(std::size_t f, const TruthObject& vehicle,
-                                    const TruthObject& vru) const {
-    const double t0 = seconds(sequence_->frames[f].timestamp_ns);
-    const double gap0 = truth_gap(vehicle, vru);
-    double best = gap0;
-    double best_t = 0.0;
-    for (std::size_t g = f + 1; g < sequence_->frames.size(); ++g) {
-      const double dt = seconds(sequence_->frames[g].timestamp_ns) - t0;
-      if (dt > options_->conflict_horizon_s) {
-        break;
-      }
-      const TruthObject* a = tracks_.at(g, vehicle.track_id);
-      const TruthObject* b = tracks_.at(g, vru.track_id);
-      if (a == nullptr || b == nullptr) {
-        continue;
-      }
-      const double gap = truth_gap(*a, *b);
-      if (gap < best) {
-        best = gap;
-        best_t = dt;
-      }
-    }
-    return best < options_->conflict_gap_m && best_t > 0.0 &&
-           (gap0 - best) / best_t >= options_->conflict_min_closing_speed_mps;
-  }
-
-  using Episodes = std::map<std::pair<std::int64_t, std::int64_t>,
-                            std::vector<std::pair<std::size_t, std::size_t>>>;
-
-  void evaluate_conflicts() {
-    const Episodes episodes = truth_episodes();
-    check_reported_conflicts(episodes);
-  }
-
-  // Label conflict episodes: runs of consecutive conflict frames per (vehicle, VRU) pair.
-  Episodes truth_episodes() {
-    Episodes episodes;
-    auto& conflicts = metrics_->conflicts;
-    for (std::size_t f = 0; f < sequence_->frames.size(); ++f) {
-      for (const auto& vru : sequence_->frames[f].truth) {
-        if (!vru.vru || !vru.visible) {
-          continue;
-        }
-        for (const auto& vehicle : sequence_->frames[f].truth) {
-          if (vehicle.vru || !vehicle.visible) {
-            continue;
-          }
-          const double gap = truth_gap(vehicle, vru);
-          conflicts.closest_truth_gap_m =
-              std::min(conflicts.closest_truth_gap_m.value_or(gap), gap);
-          if (!truth_conflict(f, vehicle, vru)) {
-            continue;
-          }
-          auto& runs = episodes[{vehicle.track_id, vru.track_id}];
-          if (!runs.empty() && runs.back().second + 1 == f) {
-            runs.back().second = f;
-          } else {
-            runs.emplace_back(f, f);
-            ++conflicts.truth_episodes;
-          }
-        }
-      }
-    }
-    return episodes;
-  }
-
-  // Index of an episode within the horizon of time t, or kNone.
-  [[nodiscard]] std::size_t overlapping_episode(
-      const std::vector<std::pair<std::size_t, std::size_t>>& runs, double t) const {
-    for (std::size_t e = 0; e < runs.size(); ++e) {
-      const double start = seconds(sequence_->frames[runs[e].first].timestamp_ns);
-      const double end = seconds(sequence_->frames[runs[e].second].timestamp_ns);
-      if (t >= start - options_->conflict_horizon_s && t <= end + options_->conflict_horizon_s) {
-        return e;
-      }
-    }
-    return kNone;
-  }
-
-  // Reported conflicts: confirmed if both objects match the labels of an episode around then.
-  void check_reported_conflicts(const Episodes& episodes) {
-    auto& conflicts = metrics_->conflicts;
-    std::set<std::tuple<std::int64_t, std::int64_t, std::size_t>> detected;
-    for (std::size_t f = 0; f < sequence_->frames.size(); ++f) {
-      for (const auto& conflict : sequence_->frames[f].conflicts_started) {
-        ++conflicts.predicted;
-        const auto& to_track = prediction_to_track_[f];
-        const auto vehicle = to_track.find(conflict.vehicle_id);
-        const auto vru = to_track.find(conflict.vru_id);
-        if (vehicle == to_track.end() || vru == to_track.end()) {
-          continue;
-        }
-        const auto it = episodes.find({vehicle->second, vru->second});
-        if (it == episodes.end()) {
-          continue;
-        }
-        const double t = seconds(sequence_->frames[f].timestamp_ns);
-        const auto e = overlapping_episode(it->second, t);
-        if (e != kNone) {
-          ++conflicts.confirmed;
-          detected.emplace(vehicle->second, vru->second, e);
-        }
-      }
-    }
-    conflicts.truth_detected += detected.size();
-  }
-
   const Sequence* sequence_;
   const Options* options_;
   Metrics* metrics_;
@@ -585,7 +464,6 @@ class SequenceEvaluator {
   TruthTracks tracks_;
   std::map<std::int64_t, std::int64_t> last_match_;
   std::map<std::pair<std::int64_t, std::int64_t>, std::size_t> co_occurrence_;
-  std::vector<std::unordered_map<std::int64_t, std::int64_t>> prediction_to_track_;
 };
 
 }  // namespace

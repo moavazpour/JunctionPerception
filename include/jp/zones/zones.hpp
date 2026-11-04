@@ -9,7 +9,7 @@
 #include "jp/core/geodesy.hpp"
 #include "jp/core/scene_config.hpp"
 
-namespace jp::vru {
+namespace jp::zones {
 
 /// A named area of the scene in world coordinates (metres).
 struct Zone {
@@ -38,4 +38,4 @@ struct Zone {
 [[nodiscard]] std::string zones_to_geojson(const std::vector<Zone>& zones,
                                            const core::GeoAnchor* anchor = nullptr);
 
-}  // namespace jp::vru
+}  // namespace jp::zones

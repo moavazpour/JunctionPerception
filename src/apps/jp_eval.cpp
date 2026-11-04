@@ -22,7 +22,6 @@
 #include "jp/core/version.hpp"
 #include "jp/evaluation/evaluation.hpp"
 #include "jp/twin/world_state_json.hpp"
-#include "jp/vru/event_detector.hpp"
 
 namespace {
 
@@ -59,9 +58,6 @@ jp::evaluation::Options load_options(const std::filesystem::path& path) {
   o.velocity_window_s = root["velocity_window_s"].as<double>();
   o.moving_speed_mps = root["moving_speed_mps"].as<double>();
   o.range_bins_m = root["range_bins_m"].as<std::vector<double>>();
-  o.conflict_gap_m = root["conflict_gap_m"].as<double>();
-  o.conflict_horizon_s = root["conflict_horizon_s"].as<double>();
-  o.conflict_min_closing_speed_mps = root["conflict_min_closing_speed_mps"].as<double>();
   return o;
 }
 
@@ -121,7 +117,6 @@ jp::evaluation::Sequence load_run(const RunSpec& run, const jp::core::ClassCatal
   sequence.condition = run.condition;
   sequence.camera_position = ground.camera_ground_position_m;
   jp::twin::JsonlReader reader(run.world);
-  std::set<std::int64_t> seen_events;
   while (const auto state = reader.next()) {
     const auto index = static_cast<std::size_t>(state->frame);
     if (state->frame < 0 || index >= truth.size()) {
@@ -139,12 +134,6 @@ jp::evaluation::Sequence load_run(const RunSpec& run, const jp::core::ClassCatal
                                             : Eigen::Vector2d(cls.length_m, cls.width_m);
       frame.predicted.push_back(
           {o.id, o.object_class, o.vru, {o.x, o.y}, o.heading_rad, o.speed_mps, size, measured});
-    }
-    for (const auto& e : state->events) {
-      if (e.type == jp::vru::kVruVehicleConflict && e.object_ids.size() == 2 &&
-          seen_events.insert(e.id).second) {
-        frame.conflicts_started.push_back({e.object_ids[0], e.object_ids[1]});
-      }
     }
     sequence.frames.push_back(std::move(frame));
   }
@@ -203,7 +192,6 @@ json metrics_json(const Metrics& m) {
   for (const auto& [name, f] : m.footprint_by_class) {
     footprint_classes[name] = footprint_json(f);
   }
-  const auto& c = m.conflicts;
   return {{"frames", m.frames},
           {"truth", m.truth},
           {"matched", m.matched},
@@ -225,13 +213,6 @@ json metrics_json(const Metrics& m) {
            {{"mota", m.tracking.mota},
             {"idf1", m.tracking.idf1},
             {"id_switches", m.tracking.id_switches}}},
-          {"conflicts",
-           {{"truth_episodes", c.truth_episodes},
-            {"truth_detected", c.truth_detected},
-            {"predicted", c.predicted},
-            {"confirmed", c.confirmed},
-            {"closest_truth_gap_m",
-             c.closest_truth_gap_m ? json(*c.closest_truth_gap_m) : json(nullptr)}}},
           {"footprint", footprint_json(m.footprint)},
           {"footprint_by_class", footprint_classes},
           {"by_class", classes},
@@ -345,14 +326,6 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
                       r.max_m, r.truth, ratio(r.matched, r.truth), r.position_m.mean,
                       r.position_m.median, r.position_m.p90);
   }
-  const auto& c = overall.conflicts;
-  md += std::format(
-      "\n## VRU-vehicle conflicts (all runs)\n\nLabel conflicts: smallest footprint gap within "
-      "{:.1f} s below {:.1f} m while closing. Label episodes: {}, detected: {}. Reported by the "
-      "system: {}, confirmed by the labels: {}. Closest labelled vehicle-VRU gap: {}.\n",
-      options.conflict_horizon_s, options.conflict_gap_m, c.truth_episodes, c.truth_detected,
-      c.predicted, c.confirmed,
-      c.closest_truth_gap_m ? std::format("{:.2f} m", *c.closest_truth_gap_m) : "none");
   md +=
       "\n## Class confusion (all runs, matched labels)\n\n| Label \\ predicted | Count "
       "|\n|---|---|\n";
@@ -444,8 +417,7 @@ int main(int argc, char** argv) {
                            {{"vehicle_gate_m", options.vehicle_gate_m},
                             {"vru_gate_m", options.vru_gate_m},
                             {"moving_speed_mps", options.moving_speed_mps},
-                            {"ignore_unlabelled", options.ignore_unlabelled},
-                            {"conflict_gap_m", options.conflict_gap_m}}},
+                            {"ignore_unlabelled", options.ignore_unlabelled}}},
                           {"overall", metrics_json(overall)},
                           {"by_condition", by_condition},
                           {"by_run", by_run}};

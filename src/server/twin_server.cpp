@@ -121,11 +121,11 @@ crow::response json_response(const json& body, int code) {
 TwinServer::Impl::Impl(ServerOptions server_options, ServedScene served_scene,
                        core::ClassCatalog class_catalog,
                        std::unique_ptr<sources::WorldSource> world_source,
-                       vru::EventDetector detector)
+                       std::optional<localization::ValidatedRegion> validated_region)
     : options(std::move(server_options)),
       catalog(std::move(class_catalog)),
       source(std::move(world_source)),
-      events(std::move(detector)),
+      validated(std::move(validated_region)),
       map_dir(options.map_cache / served_scene.config.scene_id),
       scene(std::move(served_scene)) {}
 
@@ -178,9 +178,11 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
   state.scene_id = scene.config.scene_id;
   state.frame = frame.index;
   state.timestamp_ns = frame.timestamp_ns;
+  state.time_source = frame.time_source;
+  state.camera_id = scene.config.camera_id;
   state.source = source->kind();
   state.objects = std::move(frame.objects);
-  state.events = events.update(state.objects, frame.timestamp_ns);
+  sources::mark_validated(state.objects, validated);
   state.signals = std::move(frame.signals);
   Prepared prepared;
   prepared.world = twin::to_json(state);
@@ -198,8 +200,6 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
   prepared.frame = state.frame;
   prepared.timestamp_ns = state.timestamp_ns;
   prepared.objects = state.objects.size();
-  prepared.active_events = static_cast<std::size_t>(
-      std::ranges::count(state.events, std::string("active"), &core::WorldEvent::state));
   prepared.processing_ms =
       std::chrono::duration<double, std::milli>(Clock::now() - started).count();
   return prepared;
@@ -214,7 +214,6 @@ void TwinServer::Impl::send(const Prepared& prepared) {
   status["frame"] = prepared.frame;
   status["timestamp_ns"] = prepared.timestamp_ns;
   status["objects"] = prepared.objects;
-  status["active_events"] = prepared.active_events;
   status["latency_ms"] = prepared.processing_ms;
 }
 
@@ -236,25 +235,19 @@ void TwinServer::Impl::wait_until_due(std::int64_t timestamp_ns) {
 
 bool TwinServer::Impl::apply_controls() {
   std::optional<std::int64_t> seek;
-  std::optional<std::vector<vru::Zone>> zones;
   std::optional<sources::DetectionRegions> regions;
   bool is_playing = false;
   {
     const std::scoped_lock lock(control_mutex);
     seek = std::exchange(pending_seek, std::nullopt);
-    zones = std::exchange(pending_zones, std::nullopt);
     regions = std::exchange(pending_regions, std::nullopt);
     is_playing = playing;
-  }
-  if (zones) {
-    events.set_zones(std::move(*zones));
   }
   if (regions) {
     source->set_regions(*regions);
   }
   if (seek) {
     source->seek(*seek);
-    events.reset();
     pace_origin.reset();
     // While paused, show the frame at the new position.
     if (!is_playing) {
@@ -382,7 +375,6 @@ void TwinServer::Impl::play_synced(const std::future<void>& server) {
     if (sync.have_last && target + kSyncToleranceNs < sync.last_ns) {
       source->seek(std::max<std::int64_t>(
           0, static_cast<std::int64_t>(static_cast<double>(target) * 1e-9 * sync.rate) - 1));
-      events.reset();
       sync.have_last = false;
       sync.at_end = false;
     }
@@ -438,9 +430,10 @@ void TwinServer::Impl::play_loop(const std::future<void>& server) {
 }
 
 TwinServer::TwinServer(ServerOptions options, ServedScene scene, core::ClassCatalog catalog,
-                       std::unique_ptr<sources::WorldSource> source, vru::EventDetector events)
+                       std::unique_ptr<sources::WorldSource> source,
+                       std::optional<localization::ValidatedRegion> validated)
     : impl_(std::make_unique<Impl>(std::move(options), std::move(scene), std::move(catalog),
-                                   std::move(source), std::move(events))) {
+                                   std::move(source), std::move(validated))) {
   const std::scoped_lock lock(impl_->status_mutex);
   // Camera streams have no frame count and cannot seek.
   const auto frame_count = impl_->source->frame_count();

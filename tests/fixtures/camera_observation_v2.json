@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "scene_id": "tumtraf_s110",
+  "frame": 1234,
+  "timestamp_ns": 1651673060123456789,
+  "time_source": "capture",
+  "camera_id": "south1",
+  "source": "live",
+  "objects": [
+    {
+      "id": 17,
+      "class": "car",
+      "vru": false,
+      "rider": false,
+      "x": 12.31,
+      "y": -4.02,
+      "vx": 0.0,
+      "vy": 6.2,
+      "heading_rad": 1.5708,
+      "speed_mps": 6.2,
+      "speed_std_mps": 0.12,
+      "confidence": 0.81,
+      "validated": true,
+      "length_m": 4.42,
+      "width_m": 1.83,
+      "heading_source": "keypoints",
+      "position_cov_m2": [0.09, 0.012, 0.36]
+    },
+    {
+      "id": 42,
+      "class": "pedestrian",
+      "vru": true,
+      "rider": false,
+      "x": 14.0,
+      "y": -2.5,
+      "vx": -1.1,
+      "vy": 0.0,
+      "heading_rad": null,
+      "speed_mps": 1.1,
+      "speed_std_mps": null,
+      "confidence": 0.66,
+      "validated": false,
+      "length_m": null,
+      "width_m": null,
+      "heading_source": null,
+      "position_cov_m2": null
+    }
+  ],
+  "signals": [
+    {
+      "id": "signal_1",
+      "name": "North approach",
+      "state": "red",
+      "confidence": 0.93,
+      "since_ns": 1651673058000000000
+    }
+  ]
+}

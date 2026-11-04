@@ -69,26 +69,12 @@ localization:
     position: true                 # position from the corner centre (else from the box fit)
     position_weight: 1.0           # weight of the corner centre against the box fit
 
-# VRU zones and events.
-events:
-  crosswalk_min_frames: 3          # VRU_ON_CROSSWALK: frames inside a crosswalk zone to start
-  conflict_horizon_s: 3.0          # VRU_VEHICLE_CONFLICT: constant-velocity prediction horizon
-  conflict_step_s: 0.1
-  conflict_gap_m: 1.0              # predicted gap between vehicle footprint and VRU below which
-                                   # a pair is in conflict
-  conflict_min_closing_speed_mps: 0.3  # the gap must shrink at least this fast (not merely close)
-  conflict_max_speed_std_mps: 0.5  # velocities less certain than this are not extrapolated
-  stopped_speed_mps: 0.5           # vehicle state: stopped below this speed
-  starting_window_s: 2.0           # vehicle state: starting when moving within this time of a stop
-  # Scenes calibrated from control points: events only where positions are validated, i.e.
-  # within this margin of the control points and where one pixel along the camera ray is at
-  # most this much ground. Objects elsewhere are tracked and shown, without events.
-  validated_margin_m: 10.0
-  validated_max_ground_m_per_px: 0.2
-  conflict_min_frames: 2           # frames in conflict to start the event
-  end_frames: 3                    # frames without the condition before an event ends
-  turning_window_s: 2.0            # a vehicle is turning if its heading changed by more than
-  turning_threshold_deg: 20.0      # this over the window
+# Scenes calibrated from control points: positions are marked validated within this margin of
+# the control points and where one pixel along the camera ray is at most this much ground.
+# Road users elsewhere are tracked and shown, marked as not validated.
+validation:
+  margin_m: 10.0
+  max_ground_m_per_px: 0.2
 
 # Traffic lights: colour of the lit lamp inside each signal area drawn on a camera image
 # (Calibration, "Areas and lines"). A lit pixel is bright, clearly brighter than the rest of the

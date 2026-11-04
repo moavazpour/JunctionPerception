@@ -37,7 +37,7 @@ PredictedObject predicted(std::int64_t id, bool vru, double x, double y) {
 
 Sequence one_frame(std::vector<TruthObject> labels, std::vector<PredictedObject> predictions) {
   Sequence s;
-  s.frames.push_back({0, 0, std::move(labels), std::move(predictions), {}});
+  s.frames.push_back({0, 0, std::move(labels), std::move(predictions)});
   return s;
 }
 
@@ -81,7 +81,7 @@ TEST(Evaluation, IdentitySwitchesMotaAndIdf1) {
   // One labelled car, predicted as track 7 twice, then as track 8.
   for (int f = 0; f < 3; ++f) {
     s.frames.push_back(
-        {f, f * kFrameNs, {truth(1, false, 0, 0)}, {predicted(f < 2 ? 7 : 8, false, 0, 0)}, {}});
+        {f, f * kFrameNs, {truth(1, false, 0, 0)}, {predicted(f < 2 ? 7 : 8, false, 0, 0)}});
   }
   const auto m = jp::evaluation::evaluate({&s}, {});
   EXPECT_EQ(m.tracking.id_switches, 1U);
@@ -97,36 +97,12 @@ TEST(Evaluation, HeadingAndSpeedAgainstLabelMotion) {
     auto p = predicted(7, false, f, 0);
     p.speed_mps = 9.0;
     p.heading_rad = std::numbers::pi / 2;
-    s.frames.push_back({f, f * kFrameNs, {truth(1, false, f, 0)}, {p}, {}});
+    s.frames.push_back({f, f * kFrameNs, {truth(1, false, f, 0)}, {p}});
   }
   const auto m = jp::evaluation::evaluate({&s}, {});
   ASSERT_GT(m.speed_mps.count, 0U);
   EXPECT_NEAR(m.speed_mps.median, 1.0, 1e-9);
   EXPECT_NEAR(m.heading_deg.median, 90.0, 1e-9);
-}
-
-TEST(Evaluation, ConflictsAreCheckedAgainstLabelledCloseApproaches) {
-  Sequence s;
-  // Car along +x at 10 m/s towards a pedestrian standing at x = 20 in its lane; the system
-  // reports the conflict at frame 2.
-  for (int f = 0; f < 30; ++f) {
-    Frame frame{f,
-                f * kFrameNs,
-                {truth(1, false, f, 0), truth(2, true, 20, 0)},
-                {predicted(7, false, f, 0), predicted(8, true, 20, 0)},
-                {}};
-    if (f == 2) {
-      frame.conflicts_started.push_back({7, 8});
-    }
-    s.frames.push_back(std::move(frame));
-  }
-  const auto m = jp::evaluation::evaluate({&s}, {});
-  EXPECT_EQ(m.conflicts.truth_episodes, 1U);
-  EXPECT_EQ(m.conflicts.predicted, 1U);
-  EXPECT_EQ(m.conflicts.confirmed, 1U);
-  EXPECT_EQ(m.conflicts.truth_detected, 1U);
-  ASSERT_TRUE(m.conflicts.closest_truth_gap_m.has_value());
-  EXPECT_LT(*m.conflicts.closest_truth_gap_m, 0.0);
 }
 
 TEST(Evaluation, UnlabelledRoadUsersCanBeIgnored) {
@@ -154,8 +130,7 @@ TEST(Evaluation, FootprintHeadingSizeAndIou) {
     p.measured_size = true;
     auto q = predicted(8, false, 0, 10);
     q.size_m = {4.0, 1.8};
-    s.frames.push_back(
-        {f, f * kFrameNs, {truth(1, false, 0, 0), truth(2, false, 0, 10)}, {p, q}, {}});
+    s.frames.push_back({f, f * kFrameNs, {truth(1, false, 0, 0), truth(2, false, 0, 10)}, {p, q}});
   }
   const auto m = jp::evaluation::evaluate({&s}, {});
   const auto& fp = m.footprint;

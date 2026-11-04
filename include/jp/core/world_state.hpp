@@ -8,8 +8,9 @@
 
 namespace jp::core {
 
-/// Version of the world-state schema (docs/architecture.md).
-inline constexpr int kWorldStateSchemaVersion = 1;
+/// Version of the camera observation schema (docs/architecture.md). Version 2 dropped events,
+/// zones and turning flags (no longer computed) and added camera_id and time_source.
+inline constexpr int kWorldStateSchemaVersion = 2;
 
 /// One road user in the world frame (metres, ground plane z = 0).
 struct WorldObject {
@@ -34,25 +35,9 @@ struct WorldObject {
   /// Measured footprint (keypoint models), else empty: the twin uses the class size then.
   std::optional<double> length_m;
   std::optional<double> width_m;
-  std::vector<std::string> zones;  ///< Zones containing the object.
-  bool turning = false;            ///< Vehicle heading changed strongly over the last seconds.
-  /// Inside the region where the calibration is validated and fine enough for safety events;
-  /// objects outside are tracked and shown but take part in no events.
+  /// Inside the region where the calibration is validated (near its control points, fine ground
+  /// sampling); positions outside are less trustworthy.
   bool validated = true;
-};
-
-/// A detected situation involving one or more objects.
-struct WorldEvent {
-  std::int64_t id = 0;
-  std::string type;   ///< "VRU_ON_CROSSWALK" or "VRU_VEHICLE_CONFLICT".
-  std::string state;  ///< "active" or "ended" (sent once when the event ends).
-  std::vector<std::int64_t> object_ids;
-  std::optional<double> min_distance_m;     ///< Conflicts: predicted smallest footprint gap.
-  std::optional<double> time_to_closest_s;  ///< Conflicts: time until the closest approach.
-  std::optional<double> closing_speed_mps;  ///< Conflicts: speed at which the gap shrinks.
-  /// Conflicts: motion of the vehicle, "moving", "stopped" or "starting".
-  std::optional<std::string> vehicle_state;
-  std::optional<std::string> zone;
 };
 
 /// State of a traffic light watched by a camera (a signal area drawn on its image).
@@ -64,15 +49,20 @@ struct SignalState {
   std::int64_t since_ns = 0;  ///< Timestamp of the frame the state began.
 };
 
-/// Everything the twin knows at one frame.
+/// What one camera observes at one frame: its tracks in the site world frame.
 struct WorldState {
   int schema_version = kWorldStateSchemaVersion;
   std::string scene_id;
   std::int64_t frame = 0;
+  /// Time of the frame; what it counts is said by time_source.
   std::int64_t timestamp_ns = 0;
-  std::string source;  ///< "live", "oracle" or "replay".
+  /// "media": since the start of the recording (videos, image sequences without times);
+  /// "capture": absolute capture time, Unix ns (sequences with timestamps, e.g. TUMTraf);
+  /// "arrival": absolute time the frame was received, Unix ns (live streams).
+  std::string time_source = "media";
+  std::string camera_id;  ///< Camera folder of a site; empty for single-camera scenes.
+  std::string source;     ///< "live", "oracle" or "replay".
   std::vector<WorldObject> objects;
-  std::vector<WorldEvent> events;
   std::vector<SignalState> signals;  ///< Traffic lights of the camera (live sources).
 };
 

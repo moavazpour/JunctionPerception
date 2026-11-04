@@ -66,22 +66,10 @@ struct LocalizationSettings {
   double keypoint_position_weight = 1.0;
 };
 
-/// VRU zone and event detection (see configs/pipeline.yaml).
-struct EventSettings {
-  int crosswalk_min_frames = 3;
-  double conflict_horizon_s = 3.0;
-  double conflict_step_s = 0.1;
-  double conflict_gap_m = 1.0;
-  double conflict_min_closing_speed_mps = 0.3;
-  double conflict_max_speed_std_mps = 0.5;
-  double stopped_speed_mps = 0.5;
-  double starting_window_s = 2.0;
-  double validated_margin_m = 10.0;
-  double validated_max_ground_m_per_px = 0.2;
-  int conflict_min_frames = 2;
-  int end_frames = 3;
-  double turning_window_s = 2.0;
-  double turning_threshold_deg = 20.0;
+/// Region where camera positions are trusted (see configs/pipeline.yaml, validation).
+struct ValidationSettings {
+  double margin_m = 10.0;            ///< Around the outline of the calibration control points.
+  double max_ground_m_per_px = 0.2;  ///< Coarsest ground sampling along the camera ray.
 };
 
 /// Settings of configs/pipeline.yaml.
@@ -102,7 +90,7 @@ struct PipelineConfig {
   RiderSettings riders;
   TrackingSettings tracking;
   LocalizationSettings localization;
-  EventSettings events;
+  ValidationSettings validation;
   SignalSettings signals;
 };
 

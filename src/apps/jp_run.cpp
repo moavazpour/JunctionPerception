@@ -32,8 +32,6 @@
 #include "jp/twin/bev_plot.hpp"
 #include "jp/twin/debug_overlay.hpp"
 #include "jp/twin/world_state_json.hpp"
-#include "jp/vru/event_detector.hpp"
-#include "jp/vru/zones.hpp"
 
 namespace {
 
@@ -249,57 +247,40 @@ class RunStatistics {
   std::map<std::int64_t, std::string> track_classes_;
 };
 
-// World states with zones and events, one JSON line per frame (source "live").
+// Camera observations, one JSON line per frame (source "live", the stream jp_server publishes).
 class WorldOutput {
  public:
   WorldOutput(const std::filesystem::path& path, const std::filesystem::path& scene_dir,
-              const jp::core::EventSettings& events, jp::core::ClassCatalog catalog,
+              const jp::core::ValidationSettings& validation, jp::core::ClassCatalog catalog,
               const jp::calibration::GroundCalibration& ground)
-      : writer_(path),
-        scene_id_(scene_dir.filename().string()),
-        events_(jp::vru::load_scene_zones(jp::core::load_scene_config(scene_dir)),
-                jp::vru::event_options(events, catalog)),
-        catalog_(std::move(catalog)) {
+      : writer_(path), catalog_(std::move(catalog)) {
     const auto scene = jp::core::load_scene_config(scene_dir);
-    if (auto region = jp::sources::validated_region(scene, ground, events)) {
-      events_.set_validated_region(
-          [region = std::move(*region)](const Eigen::Vector2d& p) { return region.contains(p); });
-    }
+    scene_id_ = scene.scene_id;
+    camera_id_ = scene.camera_id;
+    validated_ = jp::sources::validated_region(scene, ground, validation);
   }
 
   void write(const jp::io::Frame& frame,
              const std::vector<jp::localization::LocalizedObject>& objects) {
     jp::core::WorldState state;
     state.scene_id = scene_id_;
+    state.camera_id = camera_id_;
     state.frame = frame.index;
     state.timestamp_ns = frame.timestamp_ns;
     state.source = "live";
     for (const auto& object : objects) {
       state.objects.push_back(jp::sources::to_world_object(object, catalog_));
     }
-    state.events = events_.update(state.objects, frame.timestamp_ns);
-    for (const auto& event : state.events) {
-      if (event.state == "ended") {
-        ++events_per_type_[event.type];
-      }
-    }
+    jp::sources::mark_validated(state.objects, validated_);
     writer_.write(state);
-  }
-
-  void log() const {
-    spdlog::info("  {} zones; completed events{}", events_.zones().size(),
-                 events_per_type_.empty() ? ": none" : ":");
-    for (const auto& [type, count] : events_per_type_) {
-      spdlog::info("    {:<24} {:6d}", type, count);
-    }
   }
 
  private:
   jp::twin::JsonlWriter writer_;
   std::string scene_id_;
-  jp::vru::EventDetector events_;
+  std::string camera_id_;
+  std::optional<jp::localization::ValidatedRegion> validated_;
   jp::core::ClassCatalog catalog_;
-  std::map<std::string, std::size_t> events_per_type_;
 };
 
 void run(const RunArgs& args) {
@@ -324,7 +305,7 @@ void run(const RunArgs& args) {
   std::optional<WorldOutput> world;
   if (!args.world_jsonl.empty() && ground) {
     const std::filesystem::path scene_dir(args.scene);
-    world.emplace(args.world_jsonl, scene_dir, config.events, catalog, *ground);
+    world.emplace(args.world_jsonl, scene_dir, config.validation, catalog, *ground);
   }
 
   jp::sources::PerceptionPipeline pipeline(config, catalog, ground);
@@ -358,7 +339,6 @@ void run(const RunArgs& args) {
   }
   statistics.log(pipeline.detector().backend());
   if (world) {
-    world->log();
     spdlog::info("wrote {}", args.world_jsonl);
   }
   sinks.log_paths();
@@ -386,7 +366,7 @@ int main(int argc, char** argv) {
   app.add_option("--reference-csv", args.reference_csv,
                  "Write the --reference labels per frame as ground-plane footprints (CSV)");
   app.add_option("--world-jsonl", args.world_jsonl,
-                 "Write world states with zones and events per frame (JSONL)");
+                 "Write camera observations per frame (JSONL, as jp_server publishes them)");
   app.add_option("--bias-correction", args.bias_correction,
                  "Override the contact model of the config: box_fit, ray_offset or none")
       ->check(CLI::IsMember({"box_fit", "ray_offset", "none"}));
