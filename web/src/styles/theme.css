@@ -28,7 +28,6 @@
   --warn-soft: rgb(246 180 67 / 14%);
   --danger: #ff5d6c;
   --danger-soft: rgb(255 93 108 / 14%);
-  --violet: #a68bfa;
 
   --radius-s: 6px;
   --radius: 10px;
@@ -840,7 +839,6 @@ input[type='range'] {
   --warn-soft: rgb(212 136 6 / 12%);
   --danger: #e5364a;
   --danger-soft: rgb(229 54 74 / 10%);
-  --violet: #7c5ce6;
 
   --shadow: 0 1px 2px rgb(16 30 54 / 5%), 0 6px 20px rgb(16 30 54 / 6%);
   --shadow-float: 0 14px 40px rgb(16 30 54 / 16%);

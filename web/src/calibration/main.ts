@@ -41,7 +41,7 @@ import { PanZoomCanvas, type View2D } from './panZoom';
 
 type Mode = 'points' | 'zones' | 'regions' | 'camera';
 
-const ZONE_TYPES = ['crosswalk', 'lane', 'intersection'] as const;
+const ZONE_TYPES = ['crosswalk', 'lane'] as const;
 type ZoneType = (typeof ZONE_TYPES)[number];
 
 interface EditableZone {
@@ -293,7 +293,7 @@ class CalibrationApp {
       points:
         'Click a point in the camera image, then the same point on the map (road markings, kerb corners). Use at least 8 points spread over the scene; every fourth point is a check point. Wheel: zoom, drag: pan.',
       zones:
-        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Zones (lanes, crosswalks, intersection) are drawn in the twin.',
+        'Click the corners of a zone on the map, then "Finish zone" (or Enter). Zones (lanes, crosswalks) are drawn in the twin.',
       regions:
         'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. Lines with a band keep only road users that close to the line. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:

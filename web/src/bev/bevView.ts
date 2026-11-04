@@ -75,7 +75,6 @@ interface Colors {
   muted: string;
   border: string;
   accent: string;
-  violet: string;
   cyan: string;
 }
 
@@ -445,7 +444,6 @@ export class BevView {
       muted: cssVar('--text-3', '#6b7a92'),
       border: cssVar('--border-strong', '#2a3a57'),
       accent: cssVar('--accent', '#3d9bff'),
-      violet: cssVar('--violet', '#a68bfa'),
       cyan: cssVar('--cyan', '#2fd4f0'),
     };
   }
@@ -752,12 +750,7 @@ export class BevView {
     const first = [...site.cameras.values()][0];
     for (const f of first?.description.zones.features ?? []) {
       const ring = (f.geometry.coordinates[0] ?? []).map(([x = 0, y = 0]): Vec => [x, y]);
-      const color =
-        f.properties.type === 'crosswalk'
-          ? colors.cyan
-          : f.properties.type === 'intersection'
-            ? colors.violet
-            : colors.accent;
+      const color = f.properties.type === 'crosswalk' ? colors.cyan : colors.accent;
       this.path(ring);
       ctx.closePath();
       ctx.fillStyle = color;
