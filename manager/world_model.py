@@ -38,6 +38,8 @@ HEADING_PRIORITY = {"label": 4, "keypoints": 3, "motion": 2, "held": 1}
 class FusionSettings:
     """Association and lifecycle parameters (configs/manager.yaml, world_model)."""
 
+    # False: never associate tracks of different cameras (explicit unfused mode).
+    fuse_cameras: bool = True
     # A camera whose latest state is this much older than the newest camera's is stale: its
     # tracks are not used and do not hold back the site time.
     stale_after_s: float = 0.5
@@ -290,6 +292,8 @@ class SiteWorldModel:
         live = [c for c, f in self.feeds.items() if f.states]
         if len(self.feeds) <= 1:
             return "single", None
+        if not self.settings.fuse_cameras:
+            return "unfused", "fusion of cameras switched off (world_model.fuse_cameras)"
         kinds = {clock_kind(self.feeds[c].time_source) for c in live}
         if len(kinds) > 1:
             return "unfused", "cameras on different clocks (recording time and live time)"

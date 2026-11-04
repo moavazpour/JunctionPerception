@@ -20,6 +20,7 @@ from world_model import (  # noqa: E402
 )
 
 FIXTURE = ROOT / "tests" / "fixtures" / "site_state_v1.json"
+OBSERVATION = ROOT / "tests" / "fixtures" / "camera_observation_v2.json"
 SIZES = {"car": ClassSize(4.5, 1.8), "pedestrian": ClassSize(0.5, 0.5)}
 
 
@@ -190,6 +191,12 @@ class TwoCameras(unittest.TestCase):
         self.assertEqual(steps[-1]["fusion"]["mode"], "unfused")
         self.assertIsNotNone(steps[-1]["fusion"]["reason"])
 
+    def test_fusion_can_be_switched_off(self):
+        model = SiteWorldModel("s", ["a", "b"], FusionSettings(fuse_cameras=False))
+        steps = run(model, {"a": moving_car(1, 0.0, 10), "b": moving_car(2, 0.0, 10)})
+        self.assertEqual(steps[-1]["fusion"]["mode"], "unfused")
+        self.assertEqual(len(steps[-1]["road_users"]), 2)
+
     def test_recordings_without_one_clock_run_unfused(self):
         model = SiteWorldModel("s", ["a", "b"], shared_media_clock=False)
         steps = run(model, {"a": moving_car(1, 0.0, 5), "b": moving_car(2, 0.0, 5)})
@@ -238,6 +245,20 @@ class Contract(unittest.TestCase):
         self.assertEqual(set(produced["cameras"][0]), set(fixture["cameras"][0]))
         self.assertEqual(set(produced["fusion"]), set(fixture["fusion"]))
         self.assertEqual(produced["schema_version"], fixture["schema_version"])
+
+    def test_reads_the_camera_observation_fixture(self):
+        """The observation jp_server publishes (tests/fixtures/camera_observation_v2.json, which
+        the C++ serializer reproduces exactly) is the model's input."""
+        observation = json.loads(OBSERVATION.read_text(encoding="utf-8"))
+        model = SiteWorldModel("s", ["south1"], class_sizes=SIZES)
+        model.observe("south1", observation)
+        users = model.step()["road_users"]
+        self.assertEqual([u["observed_by"][0]["track_id"] for u in users], [17, 42])
+        self.assertEqual(model.step(), None)  # nothing new
+        pedestrian = users[1]
+        self.assertIsNone(pedestrian["heading_rad"])
+        self.assertFalse(pedestrian["validated"])
+        self.assertEqual(model.clock(), "unix")  # "capture" is absolute time
 
     def test_rejects_unknown_camera_schema(self):
         model = SiteWorldModel("s", ["a"])

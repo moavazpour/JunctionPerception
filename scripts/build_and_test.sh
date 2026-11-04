@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds, lints and tests the C++ code and the frontend. Runs inside the development image.
-# Usage: scripts/build_and_test.sh [cpp|web|all] [debug|release]
+# Builds, lints and tests the C++ code, the Python manager and the frontend. Runs inside the
+# development image (scripts/in_docker.sh).
+# Usage: scripts/build_and_test.sh [cpp|python|web|all] [debug|release]
 set -euo pipefail
 
 target="${1:-all}"
@@ -16,6 +17,11 @@ build_cpp() {
     run-clang-tidy-18 -quiet -p "build/${preset}" "${repo_root}/src/"
 }
 
+test_python() {
+    # The site world model and its contract with the C++ observations and the frontend.
+    python3 -m unittest discover -s manager/tests -v
+}
+
 build_web() {
     cd "${repo_root}/web"
     npm ci --no-audit --no-fund
@@ -26,8 +32,9 @@ build_web() {
 
 case "${target}" in
     cpp) build_cpp ;;
+    python) test_python ;;
     web) build_web ;;
     # Separate commands: `set -e` does not apply inside functions called from an `&&` list.
-    all) build_cpp; build_web ;;
-    *) echo "unknown target '${target}' (expected cpp, web or all)" >&2; exit 2 ;;
+    all) build_cpp; test_python; build_web ;;
+    *) echo "unknown target '${target}' (expected cpp, python, web or all)" >&2; exit 2 ;;
 esac
