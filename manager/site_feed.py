@@ -1,5 +1,6 @@
 """Live glue of the site world model: follows the camera servers of a site, runs its
-SiteWorldModel and serves the resulting site state on /sites/<id>/ws/site.
+SiteWorldModel, adds the lane traffic (traffic.py) and serves the resulting site state on
+/sites/<id>/ws/site.
 
 It runs whether or not a browser is connected (headless), and every client receives the same
 state. The model itself (world_model.py) holds all association and fusion logic.
@@ -16,6 +17,7 @@ from typing import Any
 import aiohttp
 from aiohttp import web
 
+from traffic import Lane, LaneTraffic, TrafficSettings
 from world_model import ClassSize, FusionSettings, SiteWorldModel
 
 RECONNECT_S = 1.0
@@ -31,9 +33,10 @@ class SiteFeed:
     """World model and clients of one site."""
 
     def __init__(self, site_id: str, settings: FusionSettings, class_sizes: dict[str, ClassSize],
-                 log: Callable[[str, str], None]) -> None:
+                 traffic: TrafficSettings, log: Callable[[str, str], None]) -> None:
         self.site_id = site_id
         self.settings = settings
+        self.traffic = LaneTraffic([], traffic)
         self.class_sizes = class_sizes
         self.log = log
         self.cameras: dict[str, FeedCamera] = {}
@@ -64,6 +67,13 @@ class SiteFeed:
             if task is None or task.done():
                 self.tasks[camera_id] = asyncio.create_task(self.follow(session, camera_id, camera.port))
 
+    def set_lanes(self, lanes: list[Lane]) -> None:
+        """Lanes of the site's cameras; changed lanes start their counts over."""
+        if lanes != self.traffic.lanes:
+            self.traffic = LaneTraffic(lanes, self.traffic.settings)
+            self.log("info", f"traffic: {len(lanes)} lane(s), "
+                             f"{sum(lane.direction is None for lane in lanes)} without a direction")
+
     async def close(self) -> None:
         for task in self.tasks.values():
             task.cancel()
@@ -92,6 +102,7 @@ class SiteFeed:
         self.model.observe(camera_id, state)
         site_state = self.model.step()
         if site_state is not None:
+            site_state["traffic"] = self.traffic.update(site_state)
             self.latest_state = site_state
             self.latest = json.dumps(site_state, separators=(",", ":"))
             for client in list(self.clients):

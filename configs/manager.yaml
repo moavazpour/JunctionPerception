@@ -18,3 +18,6 @@ probe_timeout_s: 20       # opening a video or stream to read its size (jp_serve
 # Site world model (manager/world_model.py, FusionSettings): association gates, staleness and
 # coasting. Omitted keys keep their defaults, e.g. {stale_after_s: 0.5, coast_vehicle_s: 1.0}.
 world_model: {}
+# Lane traffic (manager/traffic.py, TrafficSettings): queue and passing vehicles of the lanes the
+# cameras outline, e.g. {queue_speed_mps: 1.5, min_travel_m: 3.0}.
+traffic: {}

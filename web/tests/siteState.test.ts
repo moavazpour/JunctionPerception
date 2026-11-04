@@ -42,6 +42,17 @@ describe('site state contract', () => {
     expect(isSiteState(wrong)).toBe(false);
   });
 
+  it('carries the lane traffic of the backend', () => {
+    const state = copy();
+    expect(state.traffic.lanes[0]?.passed).toBe(37);
+    const missing = copy() as Partial<SiteState>;
+    delete missing.traffic;
+    expect(isSiteState(missing)).toBe(false);
+    const negative = copy();
+    negative.traffic.present_by_class['car'] = -1;
+    expect(isSiteState(negative)).toBe(false);
+  });
+
   it('requires a covariance for every road user', () => {
     const state = copy();
     (state.road_users[0] as { position_cov_m2: unknown }).position_cov_m2 = null;

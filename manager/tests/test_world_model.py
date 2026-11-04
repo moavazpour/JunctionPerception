@@ -233,12 +233,13 @@ class TwoCameras(unittest.TestCase):
 class Contract(unittest.TestCase):
     def test_site_state_matches_the_fixture(self):
         """The fixture is the contract the frontend tests against (web/tests/siteState.test.ts):
-        the model must produce exactly its fields."""
+        the model must produce exactly its fields; the site feed adds "traffic"
+        (test_traffic.py)."""
         fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
         model = SiteWorldModel("s", ["a"], class_sizes=SIZES)
         model.observe("a", state(0.0, [obj(1, 0.0, 0.0)]))
         produced = model.step()
-        self.assertEqual(set(produced), set(fixture))
+        self.assertEqual(set(produced) | {"traffic"}, set(fixture))
         self.assertEqual(set(produced["road_users"][0]), set(fixture["road_users"][0]))
         self.assertEqual(set(produced["road_users"][0]["observed_by"][0]),
                          set(fixture["road_users"][0]["observed_by"][0]))

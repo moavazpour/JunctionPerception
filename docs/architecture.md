@@ -18,7 +18,8 @@ flowchart LR
     O -- "/ws/world" --> F
     subgraph manager["manager (Python, one process)"]
         F[site_feed.py<br/>follows the running cameras] --> W[world_model.py<br/>time alignment, association,<br/>fusion, global IDs, lifecycle]
-        W --> SS[site state v1]
+        W --> TR[traffic.py<br/>lane queue, passing vehicles]
+        TR --> SS[site state v1]
         C[site clock, config,<br/>calibration files, processes]
     end
     SS -- "/sites/&lt;id&gt;/ws/site" --> B[browser: BEV view<br/>draws only]
@@ -45,11 +46,12 @@ same site state.
 | calibration fit, homography, camera pose | C++ | `src/calibration`, served by `jp_server` |
 | time alignment of cameras, association, fusion, global IDs, coasting | Python | `manager/world_model.py` |
 | site/camera configuration, calibration files, playback clock, processes, logs | Python | `manager/jp_manager.py` |
+| lanes from the cameras' regions, lane queue, passing vehicles per lane | Python | `manager/traffic.py` |
 | live feeding of the world model, site-state stream | Python | `manager/site_feed.py` |
 | drawing, video, calibration and configuration UI | TypeScript | `web/src` |
 
-Not owned by anyone (removed): 3D twin, VRU/conflict events, warnings, lane/queue analytics,
-traffic statistics. See ADR 0003.
+Not owned by anyone (removed): 3D twin, VRU/conflict events, warnings, risk, waiting times.
+See ADR 0003; lane queue and passing counts came back in ADR 0004.
 
 ## 3. Contracts
 
@@ -74,7 +76,7 @@ events, zones, turning flags) are still read; those fields are ignored.
 ### 3.2 Site state (`site_state` v1)
 
 The only physical road-user state clients see. Producer `manager/world_model.py`
-(`SiteWorldModel.site_state`), consumer `web/src/net/siteState.ts` (`isSiteState`), fixture
+(`SiteWorldModel.site_state`) plus `traffic` from `manager/traffic.py` (added by the site feed), consumer `web/src/net/siteState.ts` (`isSiteState`), fixture
 [`tests/fixtures/site_state_v1.json`](../tests/fixtures/site_state_v1.json) tested on both sides.
 
 | Field | Meaning |
@@ -87,6 +89,7 @@ The only physical road-user state clients see. Producer `manager/world_model.py`
 | `cameras[]` | per camera: `state` (`ok`, `stale`, `offline`), `time_source`, `offset_ms`, `last_t_ns`, `lag_ms`, `frame`, `objects` |
 | `road_users[]` | `id` (global, never reused within a run), `class`, `vru`, `rider`, `confidence`, `status` (`tracked`, `coasting`), `x`, `y`, `position_cov_m2`, `vx`, `vy`, `speed_mps`, `speed_std_mps`, `heading_rad` + `heading_source` (unknown stays `null`), `length_m`, `width_m`, `size_source` (`measured`, `class`), `validated`, `first_seen_ns`, `last_observed_ns`, `observed_by[]` (`camera`, `track_id`, `t_ns`, `dt_ms`) |
 | `signals[]` | the cameras' traffic lights, with `camera` |
+| `traffic` | `since_ns` (start of the run: counts start over with it), `present_by_class` (road users now), `lanes[]`: `id` (`<camera>/<line id>`), `camera`, `name`, `direction_set`, `vehicles` (in the lane now), `queue` (of them slower than `queue_speed_mps`), `passed` and `passed_by_class` (drove through in the lane direction) |
 
 ## 4. Time
 
@@ -132,6 +135,24 @@ Per step, deterministic (cameras in id order, tracks in id order):
 
 Parameters: `FusionSettings` in `manager/world_model.py`, overridable in `configs/manager.yaml`
 (`world_model:`).
+
+## 5a. Lane traffic
+
+A lane is a line with three or more points that the user drew in a camera image
+(`regions.json`), with the direction of travel the user set there (two clicks, tail and head).
+The manager projects it into the site frame with that camera's homography (`ground_homography`:
+the scale whose `w` is positive at the image's bottom centre, as in the frontend) and
+`manager/traffic.py` measures it on every site state, vehicles only (`vru: false`):
+
+- **in the lane**: the road user's position lies inside the lane polygon;
+- **queue**: vehicles in the lane slower than `queue_speed_mps`;
+- **passed**: a vehicle that left the lane (or the site) having travelled at least
+  `min_travel_m` along the lane direction since it entered; once per global ID and lane, so a
+  vehicle seen by several cameras counts once. Lanes without a direction count nothing.
+
+Counts start over with each run (`run` changes on seek, loop or restart) and are not stored.
+Lanes two cameras both outline are separate lanes and both count. Thresholds: `TrafficSettings`,
+`configs/manager.yaml` (`traffic:`).
 
 ## 6. Frontend
 

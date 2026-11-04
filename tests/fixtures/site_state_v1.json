@@ -91,5 +91,21 @@
       "confidence": 0.94,
       "since_ns": 39000000000
     }
-  ]
+  ],
+  "traffic": {
+    "since_ns": 0,
+    "present_by_class": { "car": 1, "pedestrian": 1 },
+    "lanes": [
+      {
+        "id": "south1/line_2",
+        "camera": "south1",
+        "name": "West approach, left",
+        "direction_set": true,
+        "vehicles": 1,
+        "queue": 0,
+        "passed": 37,
+        "passed_by_class": { "bus": 1, "car": 33, "truck": 3 }
+      }
+    ]
+  }
 }

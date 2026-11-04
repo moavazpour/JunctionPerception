@@ -32,7 +32,7 @@ purpose), keeps their logs and reports the host.
   POST /manager/api/videos                    upload a video (multipart "file") below the data root
   GET  /manager/api/logs?source=&lines=       recent log lines (manager, a site or site/camera)
   GET  /manager/api/logs/stream?source=       the same as server-sent events
-  WS   /sites/<id>/ws/site                    site state stream: fused road users of the site
+  WS   /sites/<id>/ws/site                    site state stream: fused road users and lane traffic
   *    /sites/<id>/map/...                    map layers (also while the site is stopped)
   *    /sites/<id>/cameras/<c>/...            proxied to the camera's jp_server (HTTP, WebSockets)
   *    /sites/<id>/...                        proxied to the site's first camera
@@ -66,6 +66,7 @@ import yaml
 from aiohttp import web
 
 from site_feed import FeedCamera, SiteFeed
+from traffic import Lane, TrafficSettings, lanes_from_regions
 from world_model import ClassSize, FusionSettings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -184,6 +185,7 @@ class ManagerConfig:
     probe_timeout_s: float
     data_root: Path
     world_model: dict[str, Any]
+    traffic: dict[str, Any]
 
     @staticmethod
     def load(path: Path) -> ManagerConfig:
@@ -211,6 +213,7 @@ class ManagerConfig:
             upload_max_bytes=int(float(raw.get("upload_max_gb", 20)) * 1024**3),
             probe_timeout_s=float(raw.get("probe_timeout_s", 20)),
             world_model=dict(raw.get("world_model") or {}),
+            traffic=dict(raw.get("traffic") or {}),
         )
 
 
@@ -1012,7 +1015,10 @@ class Manager:
         self.session: aiohttp.ClientSession | None = None
         self.fusion = FusionSettings.from_dict(config.world_model)
         self.class_sizes = load_class_sizes(REPO_ROOT / "configs" / "classes.yaml")
+        self.traffic = TrafficSettings.from_dict(config.traffic)
         self.feeds: dict[str, SiteFeed] = {}
+        # Lanes of each camera folder, with the modification times of the files they come from.
+        self.lanes: dict[Path, tuple[tuple[int | None, ...], list[Lane]]] = {}
 
     @staticmethod
     def _version() -> str:
@@ -1116,7 +1122,7 @@ class Manager:
         feed = self.feeds.get(site_id)
         if feed is None:
             feed = SiteFeed(
-                site_id, self.fusion, self.class_sizes,
+                site_id, self.fusion, self.class_sizes, self.traffic,
                 lambda level, message, s=site_id: self.logs.add(s, level, message),
             )
             self.feeds[site_id] = feed
@@ -1134,7 +1140,31 @@ class Manager:
                 if c.runtime.state == "running" and c.runtime.port is not None
             }
             if cameras or site.id in self.feeds:
-                self.feed(site.id).configure(self.session, cameras, site.synced())
+                feed = self.feed(site.id)
+                feed.configure(self.session, cameras, site.synced())
+                feed.set_lanes([lane for c in site.cameras.values() if c.id in cameras
+                                for lane in self.camera_lanes(site.id, c)])
+
+    def camera_lanes(self, site_id: str, camera: Camera) -> list[Lane]:
+        """Lanes of a camera from its regions.json and calibration, read again when either
+        file changes."""
+        files = (camera.dir / "regions.json", camera.dir / "ground_homography.yaml")
+        key = tuple(f.stat().st_mtime_ns if f.is_file() else None for f in files)
+        cached = self.lanes.get(camera.dir)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        lanes: list[Lane] = []
+        if all(k is not None for k in key):
+            try:
+                calibration = read_yaml(files[1])
+                width, height = calibration["image_size_px"]
+                lanes = lanes_from_regions(
+                    camera.id, json.loads(files[0].read_text(encoding="utf-8")),
+                    calibration["image_to_ground"], (float(width), float(height)))
+            except (ValueError, KeyError, TypeError) as error:
+                self.logs.add(site_id, "warning", f"lanes of {camera.id} not read ({error})")
+        self.lanes[camera.dir] = (key, lanes)
+        return lanes
 
     def system(self) -> dict[str, Any]:
         sites = list(self.sites.values())

@@ -15,11 +15,11 @@ video → detection → tracking → ground-plane localization → heading → m
 
 In scope: recorded and live camera sources, single- and multi-camera sites, synchronized
 playback, camera calibration (homography, control points, map placement), zones as site
-geometry, traffic-light state, the site world model, the BEV console, benchmark evaluation
-against TUMTraf labels.
+geometry, traffic-light state, the site world model, lane traffic (queue and passing vehicles per
+lane, live, ADR 0004), the BEV console, benchmark evaluation against TUMTraf labels.
 
 Out of scope (removed on purpose, recoverable from git tag `checkpoint/pre-bev-refactor`): the 3D
-twin, conflict and safety events, warnings, risk assessment, lane/queue/waiting-time analytics,
+twin, conflict and safety events, warnings, risk assessment, waiting-time analytics, stored
 traffic statistics and reports. Do not reintroduce them without an architecture decision record
 (ADR, §8).
 
@@ -29,6 +29,7 @@ traffic statistics and reports. Do not reintroduce them without an architecture 
 |---|---|---|---|
 | Camera perception (C++) | `src/`, `include/jp/` → `jp_server`, `jp_run` | frames and their timestamps + time source, detection, tracking, camera-local track IDs, ground localization, motion, heading and its source, position/speed uncertainty, validation flag, traffic-light colour; publishes **camera observations** (`/ws/world`, schema 2) | associate tracks across cameras; assign site IDs |
 | Site world model (Python) | `manager/world_model.py` | time alignment of cameras, association, fusion, **global road-user IDs**, lifecycle (tracked/coasting/dropped), unfused/degraded mode; produces the **site state** (schema `site_state` v1) | re-run perception; invent headings or sizes |
+| Lane traffic (Python) | `manager/traffic.py` | lanes from the cameras' regions (site frame), lane queue, vehicles passing each lane once per global ID; the `traffic` block of the site state | associate or re-identify; derive a lane direction (the user sets it) |
 | Manager / API (Python) | `manager/jp_manager.py`, `manager/site_feed.py` | sites, cameras, configuration and calibration files, process orchestration, site playback clock, serving the site state (`/sites/<id>/ws/site`), proxying camera servers, logs, health | contain association or fusion logic outside `world_model.py` |
 | Frontend (TypeScript) | `web/src/` | drawing the site state in the BEV, camera video, configuration and calibration UIs, playback controls, zoom/pan/selection | fuse, deduplicate, re-identify, estimate headings/speeds/sizes, compute traffic measures, read `/ws/world` |
 
@@ -43,6 +44,7 @@ space; they never change a road user's state.
 |---|---|
 | change detection, tracking, localization, heading or their uncertainty | C++ module (`detection`, `tracking`, `localization`), exposed through `core::WorldObject` |
 | change how cameras are aligned, matched, fused or how IDs live | `manager/world_model.py` (+ tests in `manager/tests/test_world_model.py`) |
+| change lane measures (queue, passing vehicles) | `manager/traffic.py` (+ tests in `manager/tests/test_traffic.py`) |
 | add a site/camera setting or API endpoint | `manager/jp_manager.py`; frontend client in `web/src/net/manager.ts` |
 | add something drawn in the BEV | `web/src/bev/bevView.ts`, from fields the site state already carries |
 | need a new physical quantity in the BEV | add it to the producer (C++ or world model) and to the schema first (§5), then draw it |

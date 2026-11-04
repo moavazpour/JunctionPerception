@@ -1,7 +1,8 @@
 /**
  * Site state, schema version 1: the authoritative road users of one site, produced by the site
- * world model of the manager (manager/world_model.py) and streamed on /sites/<id>/ws/site.
- * The frontend only draws it; it never fuses, re-identifies or re-estimates road users.
+ * world model of the manager (manager/world_model.py) with the lane traffic of its site feed
+ * (manager/traffic.py), streamed on /sites/<id>/ws/site. The frontend only draws it; it never
+ * fuses, re-identifies or re-estimates road users, nor counts or measures traffic.
  * Contract fixture: tests/fixtures/site_state_v1.json (tested here and in the manager).
  */
 export const SITE_STATE_SCHEMA = 'site_state';
@@ -72,6 +73,30 @@ export interface SiteSignal {
   since_ns: number;
 }
 
+/** Measures of a lane a camera outlines (manager/traffic.py), on the global road-user IDs. */
+export interface LaneTraffic {
+  /** "<camera>/<line id>". */
+  id: string;
+  camera: string;
+  name: string;
+  /** Without a direction of travel set by the user, nothing is counted as passing. */
+  direction_set: boolean;
+  /** Vehicles in the lane now, and those of them slower than the queue speed. */
+  vehicles: number;
+  queue: number;
+  /** Vehicles that drove through the lane in its direction since `since_ns`, and by class. */
+  passed: number;
+  passed_by_class: Record<string, number>;
+}
+
+/** Lane traffic of the site, added to the state by the manager's site feed. */
+export interface SiteTraffic {
+  /** Site time the counts started at: the start of this run. */
+  since_ns: number;
+  present_by_class: Record<string, number>;
+  lanes: LaneTraffic[];
+}
+
 export interface SiteState {
   schema: typeof SITE_STATE_SCHEMA;
   schema_version: number;
@@ -86,6 +111,7 @@ export interface SiteState {
   cameras: SiteCamera[];
   road_users: RoadUser[];
   signals: SiteSignal[];
+  traffic: SiteTraffic;
 }
 
 type Check = (value: unknown) => boolean;
@@ -106,6 +132,11 @@ const arrayOf =
   (v) =>
     Array.isArray(v) && v.every(check);
 const triple: Check = (v) => Array.isArray(v) && v.length === 3 && v.every(isNumber);
+const counts: Check = (v) =>
+  typeof v === 'object' &&
+  v !== null &&
+  !Array.isArray(v) &&
+  Object.values(v).every((n) => Number.isInteger(n) && (n as number) >= 0);
 
 /** Exactly these fields, each passing its check. */
 function record<T>(fields: Record<keyof T, Check>): Check {
@@ -174,6 +205,17 @@ const siteSignal = record<SiteSignal>({
   since_ns: isNumber,
 });
 
+const laneTraffic = record<LaneTraffic>({
+  id: isString,
+  camera: isString,
+  name: isString,
+  direction_set: isBoolean,
+  vehicles: isNumber,
+  queue: isNumber,
+  passed: isNumber,
+  passed_by_class: counts,
+});
+
 const siteState = record<SiteState>({
   schema: oneOf(SITE_STATE_SCHEMA),
   schema_version: oneOf(SITE_STATE_SCHEMA_VERSION),
@@ -190,6 +232,11 @@ const siteState = record<SiteState>({
   cameras: arrayOf(siteCamera),
   road_users: arrayOf(roadUser),
   signals: arrayOf(siteSignal),
+  traffic: record<SiteTraffic>({
+    since_ns: isNumber,
+    present_by_class: counts,
+    lanes: arrayOf(laneTraffic),
+  }),
 });
 
 /** Runtime check that a parsed message is a site state of the supported version. */
