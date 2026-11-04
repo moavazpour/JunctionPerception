@@ -5,6 +5,7 @@ export type WorldSource = 'live' | 'oracle' | 'replay';
 export type EventType = 'VRU_ON_CROSSWALK' | 'VRU_VEHICLE_CONFLICT';
 export type EventState = 'active' | 'ended';
 export type VehicleState = 'moving' | 'stopped' | 'starting';
+export type HeadingSource = 'motion' | 'keypoints' | 'held' | 'label';
 
 export interface WorldObject {
   id: number;
@@ -27,6 +28,10 @@ export interface WorldObject {
   /** Footprint measured from the box corners (keypoint models); absent or null otherwise. */
   length_m?: number | null;
   width_m?: number | null;
+  /** Where the heading comes from; null while unknown or for sources that do not say. */
+  heading_source?: HeadingSource | null;
+  /** Position covariance of the tracking filter: xx, xy, yy (m²); null if not estimated. */
+  position_cov_m2?: [number, number, number] | null;
 }
 
 export interface WorldEvent {
@@ -101,9 +106,11 @@ const objectFields: Record<keyof WorldObject, FieldCheck> = {
   validated: isBoolean,
   length_m: nullable(isNumber),
   width_m: nullable(isNumber),
+  heading_source: nullable(oneOf('motion', 'keypoints', 'held', 'label')),
+  position_cov_m2: nullable((v) => Array.isArray(v) && v.length === 3 && v.every(isNumber)),
 };
 // Fields added after version 1 was published; older recordings lack them.
-const optionalObjectFields = new Set(['length_m', 'width_m']);
+const optionalObjectFields = new Set(['length_m', 'width_m', 'heading_source', 'position_cov_m2']);
 
 const eventFields: Record<keyof WorldEvent, FieldCheck> = {
   id: isNumber,

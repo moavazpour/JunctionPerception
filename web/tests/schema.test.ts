@@ -53,3 +53,25 @@ describe('traffic lights in the world state', () => {
     expect(isWorldState({ ...state, signals: wrong })).toBe(false);
   });
 });
+
+describe('heading source and position covariance', () => {
+  it('accepts the new fields, older objects without them, and rejects bad values', () => {
+    const state = structuredClone(fixture) as Record<string, unknown>;
+    const objects = structuredClone(state['objects']) as Record<string, unknown>[];
+    for (const o of objects) {
+      delete o['heading_source'];
+      delete o['position_cov_m2'];
+    }
+    expect(isWorldState({ ...state, objects })).toBe(true);
+    const wrong = structuredClone(state['objects']) as Record<string, unknown>[];
+    if (wrong[0]) {
+      wrong[0]['heading_source'] = 'guess';
+    }
+    expect(isWorldState({ ...state, objects: wrong })).toBe(false);
+    const short = structuredClone(state['objects']) as Record<string, unknown>[];
+    if (short[0]) {
+      short[0]['position_cov_m2'] = [1, 2];
+    }
+    expect(isWorldState({ ...state, objects: short })).toBe(false);
+  });
+});

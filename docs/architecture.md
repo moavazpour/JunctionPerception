@@ -81,7 +81,11 @@ the tracking filter, `null` where not estimated), `confidence`, `zones` (IDs of 
 containing the object), `turning` (vehicle heading changed by more than the configured angle over
 the configured window), `validated` (inside the region validated for safety events; see below),
 `length_m`, `width_m` (footprint measured from the box corners of a keypoint model, smoothed over
-the track; `null` or absent otherwise, then the twin uses the class size).
+the track; `null` or absent otherwise, then the twin uses the class size), `heading_source`
+(`motion`, `keypoints`, `held`: the last measured heading kept while the road user is too slow to
+measure it, `label` for ground truth; `null` while the heading is unknown), `position_cov_m2`
+(position covariance of the tracking filter, `[xx, xy, yy]` in m²; `null` where not estimated). The
+last four are absent in older recordings.
 
 Event fields: `id`, `type` (`VRU_VEHICLE_CONFLICT`, `VRU_ON_CROSSWALK`), `state` (`active` or
 `ended`), `object_ids` (conflicts: vehicle, then VRU), `min_distance_m` and `time_to_closest_s`
@@ -175,7 +179,7 @@ events. Benchmark scenes, registered to LiDAR labels, are not restricted.
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/scene` | Scene description: camera, image size, camera ground position, zones, class catalog |
+| `GET /api/scene` | Scene description: camera, image size, camera ground position, image-to-ground homography (`image_to_ground`), zones, class catalog |
 | `GET /api/status` | Playback state, frame, frame rate, processing latency, road users, active events, clients |
 | `POST /api/playback` | `{"action": "play"}`, `{"action": "pause"}`, `{"action": "seek", "frame": n}` |
 | `WS /ws/world` | World state per frame (text) |

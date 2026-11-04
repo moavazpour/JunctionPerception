@@ -1,5 +1,6 @@
 import '../styles/twin.css';
 
+import { BevMode } from '../bev/bevMode';
 import { loadMapData, type MapData } from '../map/mapData';
 import { attributionLines } from '../map/mapLayers';
 import { fetchRegions, type Regions, saveRegions } from '../net/calibrationApi';
@@ -162,12 +163,14 @@ class TwinPage {
   private status: ServerStatus | null = null;
   private missed = 0;
   private framed = false;
+  private hasAerial = false;
   private readonly attributions = new Map<string, { text: string; url: string }[]>();
   // Regions (with the traffic lights) of each followed camera, by "site/camera".
   private readonly regions = new Map<string, { base: string; regions: Regions }>();
 
   constructor(
     private readonly view: TwinView,
+    private readonly bev: BevMode,
     private readonly shell: Shell,
     focus: string | null,
     camera: string | null,
@@ -185,6 +188,7 @@ class TwinPage {
       }
     };
     view.onHover = (object, x, y) => this.tooltip(object, x, y);
+    bev.view.onHover = (object, x, y) => this.tooltip(object, x, y);
     view.onSignalPlaced = (site, camera, id, position, heading) =>
       this.placeSignal(site, camera, id, position, heading);
     setInterval(() => this.renderPanel(), PANEL_INTERVAL_MS);
@@ -200,6 +204,9 @@ class TwinPage {
     }
     for (const site of sites) {
       this.place(site);
+      if (this.placed.has(site.id) && !site.georeferenced && site.map_transform) {
+        this.bev.view.setMapTransform(site.id, site.map_transform);
+      }
       for (const camera of site.cameras) {
         this.follow(site, camera);
       }
@@ -233,14 +240,21 @@ class TwinPage {
       return;
     }
     this.placed.add(site.id);
+    this.bev.view.addSite(spec);
     this.view.addSite(spec);
     if (spec.transform) {
       this.view.setMapTransform(site.id, spec.transform);
+      this.bev.view.setMapTransform(site.id, spec.transform);
     }
     if (site.has_map) {
       void loadMapData(`/sites/${encodeURIComponent(site.id)}/map/map.json`)
         .then((map: MapData) => {
           this.view.setMap(site.id, map);
+          this.bev.view.setMap(site.id, map);
+          if (map.ortho) {
+            this.hasAerial = true;
+          }
+          this.bev.renderOptions(this.hasAerial);
           this.attributions.set(site.id, attributionLines(map));
           this.renderAttribution();
         })
@@ -271,18 +285,24 @@ class TwinPage {
     void fetchScene(base)
       .then((description) => {
         this.view.addCamera(site.id, camera.id, description);
+        this.bev.view.addCamera(site.id, camera.id, description);
         // Traffic lights of the camera: where they stand, and their colour from its stream.
         void fetchRegions(base)
           .then((regions) => {
             this.regions.set(key, { base, regions });
             this.view.setSignals(site.id, camera.id, regions.signals);
+            this.bev.view.setSignals(site.id, camera.id, regions.signals);
+            this.bev.view.setLines(site.id, camera.id, regions.lines);
             this.renderSignalBar(site.id);
           })
           .catch(() => undefined);
         this.world.set(
           key,
           subscribeWorld(
-            (state) => this.view.push(site.id, camera.id, state),
+            (state) => {
+              this.view.push(site.id, camera.id, state);
+              this.bev.view.push(site.id, camera.id, state);
+            },
             () => undefined,
             base,
           ),
@@ -302,10 +322,29 @@ class TwinPage {
     }
     if (this.focus === ALL) {
       this.view.overview();
+      this.bev.view.overview();
     } else {
       this.view.focus(this.focus);
+      this.bev.view.focus(this.focus);
     }
+    this.bev.view.setHome(this.focus === ALL ? null : this.focus);
     this.framed = true;
+  }
+
+  /** Site the BEV card reports on: the focused one, else none (the BEV takes the central one). */
+  panelSite(): string | null {
+    return this.focus === ALL ? null : this.focus;
+  }
+
+  siteName(siteId: string): string {
+    return this.sites.find((s) => s.id === siteId)?.name ?? siteId;
+  }
+
+  cameraName(siteId: string, cameraId: string): string {
+    return (
+      this.sites.find((s) => s.id === siteId)?.cameras.find((c) => c.id === cameraId)?.name ??
+      cameraId
+    );
   }
 
   private focusedSite(): Site | undefined {
@@ -400,7 +439,10 @@ class TwinPage {
         event,
       })),
     );
-    this.panel.showWorld(this.view.objects(siteId), events);
+    const objects =
+      this.bev.current() === 'bev' ? this.bev.view.objects(siteId) : this.view.objects(siteId);
+    this.panel.showWorld(objects, events);
+    this.bev.render();
     this.panel.showSignals(
       states.flatMap(({ site, camera, state }) =>
         (state.signals ?? []).map((s) => ({
@@ -582,6 +624,7 @@ class TwinPage {
     this.controlsKey = key;
     setupControls(
       this.view,
+      this.bev,
       anyOrtho,
       canAlign && site ? site : null,
       site && signals > 0 ? this.signalButton(site) : null,
@@ -713,6 +756,7 @@ class TwinPage {
     try {
       entry.regions = await saveRegions(entry.regions, entry.base);
       this.view.setSignals(siteId, cameraId, entry.regions.signals);
+      this.bev.view.setSignals(siteId, cameraId, entry.regions.signals);
       this.renderSignalBar(siteId);
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -782,6 +826,7 @@ class TwinPage {
 
 function setupControls(
   view: TwinView,
+  bev: BevMode,
   hasMap: boolean,
   alignSite: Site | null,
   signals: HTMLElement | null = null,
@@ -807,19 +852,27 @@ function setupControls(
     'map',
     (value) => view.showLayer(value),
   );
-  fill(
-    controls,
+  // Controls of the 3D twin only; the BEV has its own options bar.
+  const twinOnly = [
     mode.root,
     hasMap ? layer.root : null,
     hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
     alignSite ? alignButton(view, alignSite) : null,
     signals,
+  ].filter((e): e is HTMLElement => e !== null);
+  for (const e of twinOnly) {
+    e.classList.add('twin-only');
+  }
+  fill(
+    controls,
+    bev.switchControl(),
+    twinOnly,
     h(
       'button',
       {
         type: 'button',
-        class: 'btn ghost small icon-only',
+        class: 'btn ghost small icon-only twin-only',
         title: 'Reset view',
         onclick: () => view.recenter(),
       },
@@ -883,14 +936,20 @@ function alignButton(view: TwinView, site: Site): HTMLElement {
 }
 
 /** A single jp_server without the manager: its one scene and camera. */
-async function startSingle(view: TwinView): Promise<void> {
+async function startSingle(view: TwinView, bev: BevMode): Promise<void> {
   const scene = await fetchScene();
   const id = scene.scene_id;
-  view.addSite({ id, name: id, offset: { x: 0, y: 0 }, transform: null });
+  const spec = { id, name: id, offset: { x: 0, y: 0 }, transform: null };
+  view.addSite(spec);
   view.addCamera(id, 'main', scene);
+  bev.view.addSite(spec);
+  bev.view.addCamera(id, 'main', scene);
+  bev.view.setHome(id);
   if (scene.map) {
     const map = await loadMapData(scene.map);
     view.setMap(id, map);
+    bev.view.setMap(id, map);
+    bev.renderOptions(map.ortho !== null);
     document
       .querySelector<HTMLElement>('#attribution')
       ?.replaceChildren(
@@ -900,12 +959,15 @@ async function startSingle(view: TwinView): Promise<void> {
       );
   }
   view.focus(id);
-  setupControls(view, scene.map !== null, null);
+  bev.view.focus(id);
+  bev.view.onHover = () => undefined;
+  setupControls(view, bev, scene.map !== null, null);
   const panel = new SidePanel();
   panel.setCameras([{ id: 'main', name: 'Camera', base: '', running: true }], 'main');
   subscribeWorld(
     (state) => {
       view.push(id, 'main', state);
+      bev.view.push(id, 'main', state);
       panel.showFrame(state.frame, state.timestamp_ns);
     },
     () => undefined,
@@ -913,13 +975,14 @@ async function startSingle(view: TwinView): Promise<void> {
   subscribeVideo((frame) => panel.showVideo(frame));
   setInterval(() => {
     panel.showWorld(
-      view.objects(id),
+      bev.current() === 'bev' ? bev.view.objects(id) : view.objects(id),
       view
         .states(id)
         .flatMap(({ state }) =>
           state.events.map((event) => ({ key: String(event.id), label: '', event })),
         ),
     );
+    bev.render();
   }, PANEL_INTERVAL_MS);
   let missed = 0;
   const refresh = async (): Promise<void> => {
@@ -963,21 +1026,41 @@ async function start(): Promise<void> {
   if (!shell.managed) {
     const scene = await fetchScene();
     const view = new TwinView(canvas, scene.classes, { theme: currentTheme() });
-    onThemeChange((theme) => view.setTheme(theme));
-    await startSingle(view);
+    const bev = new BevMode(
+      element<HTMLElement>('.twin-stage'),
+      view,
+      { panelSite: () => scene.scene_id, siteName: (s) => s, cameraName: () => 'Camera' },
+      scene.classes,
+    );
+    onThemeChange((theme) => {
+      view.setTheme(theme);
+      bev.view.setTheme();
+    });
+    await startSingle(view, bev);
     return;
   }
   const view = new TwinView(canvas, [], { theme: currentTheme() });
-  onThemeChange((theme) => view.setTheme(theme));
-  const page = new TwinPage(view, shell, siteId, param('camera'));
+  // Hooks of the BEV read the page, which needs the BEV: created first, the page set below.
+  let page: TwinPage | null = null;
+  const bev = new BevMode(element<HTMLElement>('.twin-stage'), view, {
+    panelSite: () => page?.panelSite() ?? null,
+    siteName: (s) => page?.siteName(s) ?? s,
+    cameraName: (s, c) => page?.cameraName(s, c) ?? c,
+  });
+  onThemeChange((theme) => {
+    view.setTheme(theme);
+    bev.view.setTheme();
+  });
+  const twinPage = new TwinPage(view, bev, shell, siteId, param('camera'));
+  page = twinPage;
   const sites = await listSites().catch(() => shell.sites());
   const focused = sites.find((s) => s.id === siteId);
   if (focused) {
     shell.setTitle(focused.name);
   }
-  page.sync(sites);
-  page.setActions();
-  shell.onSites((fresh) => page.sync(fresh));
+  twinPage.sync(sites);
+  twinPage.setActions();
+  shell.onSites((fresh) => twinPage.sync(fresh));
 }
 
 void start();

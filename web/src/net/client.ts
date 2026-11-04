@@ -27,6 +27,8 @@ export interface SceneDescription {
   image_size_px: [number, number];
   calibrated: boolean;
   camera_ground_position_m: [number, number] | null;
+  /** Image-to-ground homography (row-major 3 x 3) of a calibrated camera; absent in older servers. */
+  image_to_ground?: number[][] | null;
   camera_height_m: number | null;
   geo_anchor: { lat_deg: number; lon_deg: number; alt_m: number } | null;
   /** URL of the map manifest, or null if the scene has no map layers. */

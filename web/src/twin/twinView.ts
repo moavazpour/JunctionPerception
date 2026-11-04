@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { perf } from '../bev/perf';
 import type { ClassInfo, SceneDescription } from '../net/client';
 import type { MapData } from '../map/mapData';
 import {
@@ -698,6 +699,17 @@ export class TwinView {
       if (!visible) {
         site.trails.clear();
       }
+    }
+  }
+
+  /** Draws (true) or pauses drawing while another view is shown; world states are still taken. */
+  setActive(active: boolean): void {
+    if (active) {
+      this.lastFrame = performance.now();
+      this.renderer.setAnimationLoop(() => this.render());
+    } else {
+      this.renderer.setAnimationLoop(null);
+      perf.twin.pause();
     }
   }
 
@@ -1461,5 +1473,6 @@ export class TwinView {
     }
     this.updateHover();
     this.renderer.render(this.scene, this.rig.camera);
+    perf.twin.record(now, performance.now() - now);
   }
 }
