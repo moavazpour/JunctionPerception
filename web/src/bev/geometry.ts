@@ -47,7 +47,23 @@ export function covarianceEllipse(cov: [number, number, number], sigma = 2): Ell
   };
 }
 
-/** Applies a row-major 3 x 3 homography to a point; null at or behind the horizon. */
+/**
+ * The image-to-ground homography scaled so that ground points have a positive w. A homography
+ * is defined up to scale, and a fit normalised to h33 = 1 has a negative w on the ground when
+ * the image's top-left corner lies above the horizon. The bottom centre of the image is on the
+ * ground for every camera looking down at the road.
+ */
+export function groundHomography(h: number[][], size: [number, number]): number[][] {
+  const [width, height] = size;
+  const r2 = h[2] ?? [];
+  const w = (r2[0] ?? 0) * (width / 2) + (r2[1] ?? 0) * height + (r2[2] ?? 1);
+  return w < 0 ? h.map((row) => row.map((value) => -value)) : h;
+}
+
+/**
+ * Applies a row-major 3 x 3 homography to a point; null at or behind the horizon. The
+ * homography must be oriented with groundHomography.
+ */
 export function homography(h: number[][], u: number, v: number): Vec | null {
   const r0 = h[0] ?? [];
   const r1 = h[1] ?? [];

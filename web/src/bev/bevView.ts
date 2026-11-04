@@ -1,7 +1,7 @@
 import type { MapData } from '../map/mapData';
 import type { SceneDescription } from '../net/client';
 import type { RoadUser, SiteState } from '../net/siteState';
-import { covarianceEllipse, footprintCorners, homography } from './geometry';
+import { covarianceEllipse, footprintCorners, groundHomography, homography } from './geometry';
 import { classCss, mapPalette } from './palette';
 import {
   type MapTransform,
@@ -45,6 +45,8 @@ export interface Picked {
 
 interface CameraLayer {
   description: SceneDescription;
+  /** Image-to-ground homography oriented with groundHomography; null if not calibrated. */
+  ground: number[][] | null;
   position: Vec | null;
   coverage: Vec[];
   lines: Vec[][];
@@ -232,9 +234,12 @@ export class BevView {
       return;
     }
     const position = description.camera_ground_position_m;
-    const h = description.image_to_ground ?? null;
+    const h = description.image_to_ground
+      ? groundHomography(description.image_to_ground, description.image_size_px)
+      : null;
     site.cameras.set(cameraId, {
       description,
+      ground: h,
       position,
       coverage: h ? cameraCoverage(h, description.image_size_px, position) : [],
       lines: [],
@@ -246,7 +251,7 @@ export class BevView {
   /** Detection lines of a camera (image pixels), drawn on the ground through its homography. */
   setLines(siteId: string, cameraId: string, lines: { points: Vec[] }[]): void {
     const camera = this.sites.get(siteId)?.cameras.get(cameraId);
-    const h = camera?.description.image_to_ground;
+    const h = camera?.ground;
     if (!camera || !h) {
       return;
     }

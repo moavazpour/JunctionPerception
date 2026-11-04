@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { drawnSize, headingMeasured } from '../src/bev/bevView';
-import { covarianceEllipse, footprintCorners } from '../src/bev/geometry';
+import {
+  covarianceEllipse,
+  footprintCorners,
+  groundHomography,
+  homography,
+} from '../src/bev/geometry';
 import {
   geoOffset,
   type MapTransform,
@@ -130,5 +135,33 @@ describe('drawing helpers', () => {
     const e = covarianceEllipse([4, 0, 1], 2);
     expect(e?.major).toBeCloseTo(4, 9);
     expect(e?.minor).toBeCloseTo(2, 9);
+  });
+});
+
+describe('ground projection', () => {
+  // TUMTraf south2 as fitted by the console: normalised to h33 = 1, its image corner (0, 0) lies
+  // above the horizon, so every ground pixel has a negative w.
+  const south2 = [
+    [0.05541632877628101, -0.27562359212014115, 140.54657655162288],
+    [-0.12095883376345197, 0.04796235951105448, 196.17497813342987],
+    [-0.0001018849973311642, -0.012981938854761793, 1],
+  ];
+  const size: [number, number] = [1920, 1200];
+
+  it('projects ground pixels of a homography with a negative w on the ground', () => {
+    expect(homography(south2, 960, 900)).toBeNull();
+    const ground = groundHomography(south2, size);
+    const p = homography(ground, 960, 900);
+    expect(p).not.toBeNull();
+    // The same point as the unscaled matrix gives: orientation does not move it.
+    expect(p?.[0]).toBeCloseTo(-54.314980731274375 / -10.781554566723532, 9);
+    expect(p?.[1]).toBeCloseTo(123.22062128046501 / -10.781554566723532, 9);
+    // Above the horizon stays invisible.
+    expect(homography(ground, 0, 0)).toBeNull();
+  });
+
+  it('keeps a homography that is already positive on the ground', () => {
+    const flipped = south2.map((row) => row.map((v) => -v));
+    expect(groundHomography(flipped, size)).toBe(flipped);
   });
 });
