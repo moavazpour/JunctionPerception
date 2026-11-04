@@ -818,6 +818,13 @@ class TwinPage {
           )
         : null,
       object.validated ? null : h('span', { class: 'muted' }, 'outside the validated region'),
+      (drawn.unmerged ?? []).map(({ camera, skewMs }) =>
+        h(
+          'span',
+          { class: 'muted' },
+          `not merged with ${site?.cameras.find((c) => c.id === camera)?.name ?? camera}: ${skewMs.toFixed(0)} ms apart`,
+        ),
+      ),
     );
     tooltip.style.transform = `translate(${x + 16}px, ${y + 12}px)`;
     tooltip.hidden = false;
@@ -858,6 +865,7 @@ function setupControls(
     hasMap ? layer.root : null,
     hasMap ? toggle('Buildings', true, (on) => view.showBuildings(on)) : null,
     toggle('Trails', true, (on) => view.setTrails(on)),
+    analysisToggle(view),
     alignSite ? alignButton(view, alignSite) : null,
     signals,
   ].filter((e): e is HTMLElement => e !== null);
@@ -879,6 +887,17 @@ function setupControls(
       icon('recenter'),
     ),
   );
+}
+
+/**
+ * "Analysis": models translucent, so the ground footprints — where the perception data puts each
+ * road user — can be compared with the BEV.
+ */
+function analysisToggle(view: TwinView): HTMLElement {
+  const label = toggle('Analysis', false, (on) => view.setAnalysis(on));
+  label.title =
+    'Translucent models: the footprints on the ground show the backend positions (dashed: class size, disc: no heading, grey: lost)';
+  return label;
 }
 
 /** "Align map": drag the map onto the road users, then save its placement for the site. */
@@ -999,6 +1018,27 @@ async function startSingle(view: TwinView, bev: BevMode): Promise<void> {
   setInterval(() => void refresh(), STATUS_INTERVAL_MS);
 }
 
+/**
+ * Options of the 3D view; `?fusionSkewMs=` (largest capture-time difference of merged camera
+ * tracks, ms; "inf" merges regardless) and `?lostHoldS=` (how long a lost road user stays, s) are
+ * experimental settings.
+ */
+function viewOptions(): ConstructorParameters<typeof TwinView>[2] {
+  const number = (name: string): number | undefined => {
+    const text = param(name);
+    if (text === null) {
+      return undefined;
+    }
+    const value = text === 'inf' ? Infinity : Number.parseFloat(text);
+    return Number.isNaN(value) || value < 0 ? undefined : value;
+  };
+  return {
+    theme: currentTheme(),
+    fusionMaxSkewMs: number('fusionSkewMs'),
+    lostHoldS: number('lostHoldS'),
+  };
+}
+
 async function start(): Promise<void> {
   const siteId = param('site');
   const shell = await mountShell({
@@ -1025,7 +1065,7 @@ async function start(): Promise<void> {
   }
   if (!shell.managed) {
     const scene = await fetchScene();
-    const view = new TwinView(canvas, scene.classes, { theme: currentTheme() });
+    const view = new TwinView(canvas, scene.classes, viewOptions());
     const bev = new BevMode(
       element<HTMLElement>('.twin-stage'),
       view,
@@ -1039,7 +1079,7 @@ async function start(): Promise<void> {
     await startSingle(view, bev);
     return;
   }
-  const view = new TwinView(canvas, [], { theme: currentTheme() });
+  const view = new TwinView(canvas, [], viewOptions());
   // Hooks of the BEV read the page, which needs the BEV: created first, the page set below.
   let page: TwinPage | null = null;
   const bev = new BevMode(element<HTMLElement>('.twin-stage'), view, {

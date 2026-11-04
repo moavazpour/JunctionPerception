@@ -51,13 +51,38 @@ export function distanceForHeight(heightM: number): number {
   return heightM / 2 / Math.tan(THREE.MathUtils.degToRad(FOV_DEG / 2));
 }
 
+// Elevation from which the top-down mode draws with the orthographic camera (just short of 90°,
+// so the switch happens once the ease into the top-down view has arrived).
+const ORTHO_FROM_ELEVATION = MAX_ELEVATION - THREE.MathUtils.degToRad(0.1);
+// Depth range of the orthographic camera above the ground: covers buildings and the ground.
+const ORTHO_DEPTH_ABOVE_GROUND_M = 300;
+
 /**
- * Perspective camera orbiting a ground point. Left drag pans (the ground point under the cursor
- * stays under it), the wheel zooms towards the cursor, right drag (or shift + drag) rotates and, in
- * 3D, tilts. Changes ease towards their goal.
+ * Frustum of the orthographic top-down camera: the same ground area the perspective camera shows
+ * at the target from `distance` metres, so zoom and pan carry over when the camera switches.
+ */
+export function orthoFrustum(
+  distance: number,
+  aspect: number,
+): { halfWidth: number; halfHeight: number; near: number; far: number } {
+  const halfHeight = distance * Math.tan(THREE.MathUtils.degToRad(FOV_DEG / 2));
+  return {
+    halfHeight,
+    halfWidth: halfHeight * aspect,
+    near: Math.max(0.5, distance - ORTHO_DEPTH_ABOVE_GROUND_M),
+    far: distance + 50,
+  };
+}
+
+/**
+ * Camera orbiting a ground point. Left drag pans (the ground point under the cursor stays under
+ * it), the wheel zooms towards the cursor, right drag (or shift + drag) rotates and, in 3D, tilts.
+ * Changes ease towards their goal. The 3D view is a perspective; the top-down (2D) view is drawn
+ * orthographically once it looks straight down, so tall objects show no parallax there.
  */
 export class OrbitRig {
-  readonly camera = new THREE.PerspectiveCamera(FOV_DEG, 1, 0.5, 6000);
+  private readonly perspective = new THREE.PerspectiveCamera(FOV_DEG, 1, 0.5, 6000);
+  private readonly orthographic = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.5, 6000);
   private readonly current: OrbitView;
   private readonly goal: OrbitView;
   private readonly home: OrbitView;
@@ -89,6 +114,15 @@ export class OrbitRig {
 
   get viewMode(): ViewMode {
     return this.mode;
+  }
+
+  /** The camera to draw with: orthographic in the settled top-down view, else perspective. */
+  get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this.orthographicActive ? this.orthographic : this.perspective;
+  }
+
+  get orthographicActive(): boolean {
+    return this.mode === '2d' && this.current.elevation >= ORTHO_FROM_ELEVATION;
   }
 
   get distance(): number {
@@ -147,8 +181,8 @@ export class OrbitRig {
   resize(): void {
     const { clientWidth: width, clientHeight: height } = this.canvas;
     if (width > 0 && height > 0) {
-      this.camera.aspect = width / height;
-      this.camera.updateProjectionMatrix();
+      this.perspective.aspect = width / height;
+      this.apply();
     }
   }
 
@@ -172,13 +206,26 @@ export class OrbitRig {
 
   private apply(): void {
     const { position, up } = orbitPose(this.current);
-    this.camera.position.set(...position);
-    this.camera.up.set(...up);
-    this.camera.lookAt(this.current.targetX, this.current.targetY, 0);
-    this.camera.near = Math.max(0.5, this.current.distance / 200);
-    this.camera.far = this.current.distance * 30;
-    this.camera.updateProjectionMatrix();
-    this.camera.updateMatrixWorld();
+    for (const camera of [this.perspective, this.orthographic]) {
+      camera.position.set(...position);
+      camera.up.set(...up);
+      camera.lookAt(this.current.targetX, this.current.targetY, 0);
+    }
+    this.perspective.near = Math.max(0.5, this.current.distance / 200);
+    this.perspective.far = this.current.distance * 30;
+    const frustum = orthoFrustum(this.current.distance, this.perspective.aspect);
+    Object.assign(this.orthographic, {
+      left: -frustum.halfWidth,
+      right: frustum.halfWidth,
+      top: frustum.halfHeight,
+      bottom: -frustum.halfHeight,
+      near: frustum.near,
+      far: frustum.far,
+    });
+    for (const camera of [this.perspective, this.orthographic]) {
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+    }
   }
 
   private onPointerDown(e: PointerEvent): void {

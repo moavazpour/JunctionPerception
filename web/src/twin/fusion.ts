@@ -7,6 +7,12 @@ const VRU_GATE_M = 1.5;
 const KEEP_FACTOR = 1.6;
 // Tracks moving this differently (m/s) are not the same road user.
 const MAX_VELOCITY_DIFFERENCE_MPS = 4;
+/**
+ * Largest difference of the capture times of two cameras' tracks that are merged (ms). An initial,
+ * experimental threshold: further apart, the two observations describe different moments and
+ * their average is a position neither camera saw. Timestamp-aware fusion belongs in the backend.
+ */
+export const DEFAULT_MAX_SKEW_MS = 100;
 
 /** A track of one camera at its drawn (interpolated) position in the site frame. */
 export interface CameraTrack {
@@ -15,6 +21,8 @@ export interface CameraTrack {
   x: number;
   y: number;
   heading: number;
+  /** Capture time of the camera's world state the track comes from; absent: not checked. */
+  timestampNs?: number;
 }
 
 /** A road user of the site: one or more camera tracks of it, merged. */
@@ -27,6 +35,18 @@ export interface FusedTrack {
   y: number;
   heading: number;
   cameras: string[];
+  /** The camera tracks merged into this road user (one when not merged). */
+  members: CameraTrack[];
+}
+
+/**
+ * Two tracks of different cameras that would have been merged (close, same kind, moving alike)
+ * but were captured too far apart in time. Both stay separate road users; the pair is reported.
+ */
+export interface RejectedPair {
+  a: CameraTrack;
+  b: CameraTrack;
+  skewMs: number;
 }
 
 export function trackKey(camera: string, id: number): string {
@@ -42,8 +62,16 @@ export function trackKey(camera: string, id: number): string {
 export class CameraFusion {
   // Track key -> key of the road user it belongs to.
   private readonly alias = new Map<string, string>();
+  /** Pairs of the latest fuse() not merged because of their time difference. */
+  rejected: RejectedPair[] = [];
+  /** Merged pairs and pairs rejected for time since the start (for evaluation). */
+  readonly counts = { merged: 0, rejected: 0 };
+
+  /** `maxSkewMs`: largest capture-time difference of tracks that are merged (Infinity: any). */
+  constructor(public maxSkewMs: number = DEFAULT_MAX_SKEW_MS) {}
 
   fuse(tracks: CameraTrack[]): FusedTrack[] {
+    this.rejected = [];
     const keys = tracks.map((t) => trackKey(t.camera, t.object.id));
     const parent = tracks.map((_, i) => i);
     const find = (i: number): number => {
@@ -70,12 +98,20 @@ export class CameraFusion {
         const distance = Math.hypot(ta.x - tb.x, ta.y - tb.y);
         const dv = Math.hypot(ta.object.vx - tb.object.vx, ta.object.vy - tb.object.vy);
         if (distance < gate && dv < MAX_VELOCITY_DIFFERENCE_MPS) {
+          const skewMs = this.skewMs(ta, tb);
+          if (skewMs > this.maxSkewMs) {
+            // Same road user, probably, but seen at different moments: kept apart, reported.
+            this.rejected.push({ a: ta, b: tb, skewMs });
+            continue;
+          }
           // Established matches go first.
           pairs.push({ a, b, cost: distance / gate - (known ? 1 : 0) });
         }
       }
     }
     pairs.sort((p, q) => p.cost - q.cost);
+    // Capture times spanned by each group: a group never spans more than maxSkewMs.
+    const span = tracks.map((t) => [t.timestampNs, t.timestampNs]);
     for (const { a, b } of pairs) {
       const ra = find(a);
       const rb = find(b);
@@ -87,7 +123,15 @@ export class CameraFusion {
       if ([...cb].some((c) => ca.has(c))) {
         continue;
       }
+      const [loA, hiA] = span[ra] as (number | undefined)[];
+      const [loB, hiB] = span[rb] as (number | undefined)[];
+      const times = [loA, hiA, loB, hiB].filter((t): t is number => t !== undefined);
+      if (times.length > 0 && (Math.max(...times) - Math.min(...times)) / 1e6 > this.maxSkewMs) {
+        continue;
+      }
       parent[rb] = ra;
+      span[ra] =
+        times.length > 0 ? [Math.min(...times), Math.max(...times)] : [undefined, undefined];
       for (const c of cb) {
         ca.add(c);
       }
@@ -144,14 +188,27 @@ export class CameraFusion {
         y: y / weight,
         heading: top.heading,
         cameras: members.map((i) => (tracks[i] as CameraTrack).camera),
+        members: members.map((i) => tracks[i] as CameraTrack),
       });
+      if (members.length > 1) {
+        this.counts.merged += members.length - 1;
+      }
     }
+    this.counts.rejected += this.rejected.length;
     for (const k of [...this.alias.keys()]) {
       if (!present.has(k)) {
         this.alias.delete(k);
       }
     }
     return fused;
+  }
+
+  /** Capture-time difference of two tracks (ms); 0 when either does not say. */
+  private skewMs(a: CameraTrack, b: CameraTrack): number {
+    if (a.timestampNs === undefined || b.timestampNs === undefined) {
+      return 0;
+    }
+    return Math.abs(a.timestampNs - b.timestampNs) / 1e6;
   }
 
   /** Key of the road user a camera track belongs to (after the latest fuse). */

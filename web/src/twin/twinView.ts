@@ -11,7 +11,8 @@ import {
 } from '../map/mapLayers';
 import type { WorldObject, WorldState } from '../net/schema';
 import { alignAxis, FlowField, laneDirection, type RoadAxis, roadAxis } from './flowField';
-import { type CameraTrack, CameraFusion } from './fusion';
+import { Footprint, footprintOf } from './footprint';
+import { type CameraTrack, CameraFusion, DEFAULT_MAX_SKEW_MS } from './fusion';
 import { angleDelta, WorldInterpolator } from './interpolation';
 import {
   buildClassMesh,
@@ -45,9 +46,15 @@ const SUN_DISTANCE_M = 900;
 // A camera whose last world state is older than this shows no road users (stopped, lost).
 const STALE_AFTER_MS = 2500;
 
-// Entering and leaving road users fade instead of popping.
+// Entering road users fade in instead of popping.
 const FADE_IN_S = 0.7;
-const FADE_OUT_S = 0.9;
+// A road user no longer observed stays at its last measured position this long (s), marked as
+// lost, then goes. Its motion is not extrapolated: nothing about it is measured any more.
+export const DEFAULT_LOST_HOLD_S = 1.0;
+// Opacity of the model of a lost road user, and of every model in analysis mode.
+const LOST_OPACITY = 0.35;
+const ANALYSIS_OPACITY = 0.22;
+const UNMERGED_COLOR = 0xa68bfa;
 // Turn rates of the drawn heading (rad/s): vehicles cannot spin on the spot.
 const VEHICLE_TURN_RATE = THREE.MathUtils.degToRad(75);
 const VRU_TURN_RATE = THREE.MathUtils.degToRad(300);
@@ -191,6 +198,8 @@ export interface DrawnObject {
   site: string;
   cameras: string[];
   object: WorldObject;
+  /** Tracks of other cameras close to it that were not merged: too far apart in time. */
+  unmerged?: { camera: string; skewMs: number }[];
 }
 
 /** East and north metres of a geographic position from an origin (local tangent plane). */
@@ -223,6 +232,12 @@ interface TrackedMesh {
   cameras: string[];
   x: number;
   y: number;
+  /** One flat footprint per camera observation, at the backend position. */
+  footprints: Footprint[];
+  /** Last observations (camera and object) the footprints show; kept while lost. */
+  observed: { camera: string; object: WorldObject }[];
+  /** Opacity last applied to the model (fade, lost, analysis mode). */
+  opacity: number;
 }
 
 interface ZoneMesh {
@@ -264,6 +279,8 @@ interface SiteLayer {
   /** Traffic lights by "camera:id". */
   signals: Map<string, SignalMesh>;
   transform: MapTransform;
+  /** Dashed links between close tracks of two cameras not merged because of their time difference. */
+  unmerged: THREE.LineSegments;
 }
 
 /** Ids of the objects in active conflict events and in any active event. */
@@ -339,6 +356,9 @@ export class TwinView {
     vru: false,
   };
   private showTrails = true;
+  private analysis = false;
+  private fusionMaxSkewMs: number;
+  private lostHoldS: number;
   private lastFrame = performance.now();
   private lastFlowSave = performance.now();
   private shadowExtent = 0;
@@ -375,8 +395,10 @@ export class TwinView {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     classes: ClassInfo[],
-    options: { theme?: Theme } = {},
+    options: { theme?: Theme; fusionMaxSkewMs?: number; lostHoldS?: number } = {},
   ) {
+    this.fusionMaxSkewMs = options.fusionMaxSkewMs ?? DEFAULT_MAX_SKEW_MS;
+    this.lostHoldS = options.lostHoldS ?? DEFAULT_LOST_HOLD_S;
     for (const info of classes) {
       this.classes.set(info.name, info);
     }
@@ -448,13 +470,25 @@ export class TwinView {
       zonesLoaded: false,
       center: null,
       cameras: new Map(),
-      fusion: new CameraFusion(),
+      fusion: new CameraFusion(this.fusionMaxSkewMs),
       flow: new FlowField(`jp-flow-${spec.id}`),
       meshes: new Map(),
       drawn: new Map(),
       signals: new Map(),
       transform: spec.transform ?? { yaw_deg: 0, x_m: 0, y_m: 0 },
+      unmerged: new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineDashedMaterial({
+          color: UNMERGED_COLOR,
+          dashSize: 0.6,
+          gapSize: 0.4,
+          transparent: true,
+          opacity: 0.9,
+        }),
+      ),
     };
+    site.unmerged.position.z = 0.15;
+    group.add(site.unmerged);
     this.sites.set(spec.id, site);
     this.scene.add(group);
     this.placeSite(site);
@@ -560,9 +594,7 @@ export class TwinView {
       site.trails.clear();
       for (const [key, tracked] of site.meshes) {
         if (tracked.cameras.includes(cameraId)) {
-          site.group.remove(tracked.root);
-          disposeObject(tracked.root);
-          site.meshes.delete(key);
+          this.removeMesh(site, key, tracked);
         }
       }
     }
@@ -690,6 +722,37 @@ export class TwinView {
         site.buildings.visible = visible;
       }
     }
+  }
+
+  /**
+   * Analysis mode: models translucent, so the footprints — the backend positions — can be read
+   * and compared with the BEV. The footprints are drawn in both modes.
+   */
+  setAnalysis(on: boolean): void {
+    this.analysis = on;
+  }
+
+  /** Largest capture-time difference (ms) of two cameras' tracks merged into one road user. */
+  setFusionMaxSkewMs(ms: number): void {
+    this.fusionMaxSkewMs = ms;
+    for (const site of this.sites.values()) {
+      site.fusion.maxSkewMs = ms;
+    }
+  }
+
+  get fusionMaxSkew(): number {
+    return this.fusionMaxSkewMs;
+  }
+
+  /** How long a road user no longer observed stays, frozen and marked lost (s). */
+  setLostHold(seconds: number): void {
+    this.lostHoldS = seconds;
+  }
+
+  /** Merged and time-rejected camera pairs of a site since it was added (for evaluation). */
+  fusionCounts(siteId: string): { merged: number; rejected: number } | null {
+    const fusion = this.sites.get(siteId)?.fusion;
+    return fusion ? { ...fusion.counts } : null;
   }
 
   setTrails(visible: boolean): void {
@@ -1104,6 +1167,51 @@ export class TwinView {
     return own;
   }
 
+  /** Sets the opacity of a road user's model (fade, lost, analysis mode) when it changed. */
+  private applyOpacity(tracked: TrackedMesh, opacity: number): void {
+    if (Math.abs(tracked.opacity - opacity) > 1e-3) {
+      tracked.opacity = opacity;
+      setFade(tracked.root, opacity);
+    }
+  }
+
+  /** One footprint per observation of the road user, at the backend's position and heading. */
+  private updateFootprints(site: SiteLayer, tracked: TrackedMesh, lost: boolean): void {
+    while (tracked.footprints.length < tracked.observed.length) {
+      const footprint = new Footprint();
+      site.group.add(footprint.group);
+      tracked.footprints.push(footprint);
+    }
+    while (tracked.footprints.length > tracked.observed.length) {
+      const footprint = tracked.footprints.pop() as Footprint;
+      site.group.remove(footprint.group);
+      footprint.dispose();
+    }
+    tracked.observed.forEach(({ object }, i) => {
+      const f = footprintOf(object, this.classInfo(object.class), lost);
+      (tracked.footprints[i] as Footprint).update(
+        object.x,
+        object.y,
+        f.heading,
+        f.length,
+        f.width,
+        f.look,
+        object.class,
+      );
+    });
+  }
+
+  /** Removes a road user: its model and its footprints. */
+  private removeMesh(site: SiteLayer, key: string, tracked: TrackedMesh): void {
+    site.group.remove(tracked.root);
+    disposeObject(tracked.root);
+    for (const footprint of tracked.footprints) {
+      site.group.remove(footprint.group);
+      footprint.dispose();
+    }
+    site.meshes.delete(key);
+  }
+
   private ensureMesh(
     site: SiteLayer,
     key: string,
@@ -1127,8 +1235,8 @@ export class TwinView {
       existing.heading.add(model);
       existing.model = model;
       existing.look = lookKey;
-      if (existing.fade < 1) {
-        setFade(model, existing.fade);
+      if (existing.opacity < 1) {
+        setFade(model, existing.opacity);
       }
       return existing;
     }
@@ -1161,8 +1269,12 @@ export class TwinView {
       cameras: [],
       x: pose.x,
       y: pose.y,
+      // A new class keeps the footprints: they show the observations, not the model.
+      footprints: existing?.footprints ?? [],
+      observed: existing?.observed ?? [],
+      opacity: existing?.opacity ?? 0,
     };
-    setFade(root, tracked.fade);
+    setFade(root, tracked.opacity);
     site.meshes.set(key, tracked);
     return tracked;
   }
@@ -1181,11 +1293,26 @@ export class TwinView {
       for (const object of state.objects) {
         const pose = poses.get(object.id);
         if (pose) {
-          tracks.push({ camera: feed.id, object, ...pose });
+          tracks.push({ camera: feed.id, object, ...pose, timestampNs: state.timestamp_ns });
         }
       }
     }
     const fused = site.fusion.fuse(tracks);
+    // Close tracks of two cameras too far apart in time: both drawn, linked, and reported.
+    const unmerged = new Map<string, { camera: string; skewMs: number }[]>();
+    const links: THREE.Vector3[] = [];
+    for (const { a, b, skewMs } of site.fusion.rejected) {
+      for (const [self, other] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        const key = site.fusion.keyOf(self.camera, self.object.id);
+        unmerged.set(key, [...(unmerged.get(key) ?? []), { camera: other.camera, skewMs }]);
+      }
+      links.push(new THREE.Vector3(a.x, a.y, 0), new THREE.Vector3(b.x, b.y, 0));
+    }
+    site.unmerged.geometry.setFromPoints(links);
+    site.unmerged.computeLineDistances();
     const conflict = new Set<string>();
     const any = new Set<string>();
     const occupied = new Set<string>();
@@ -1225,7 +1352,15 @@ export class TwinView {
       tracked.x = track.x;
       tracked.y = track.y;
       tracked.root.position.set(track.x, track.y, 0);
-      site.drawn.set(key, { key, site: site.spec.id, cameras: track.cameras, object });
+      site.drawn.set(key, {
+        key,
+        site: site.spec.id,
+        cameras: track.cameras,
+        object,
+        unmerged: unmerged.get(key),
+      });
+      tracked.observed = track.members.map((m) => ({ camera: m.camera, object: m.object }));
+      this.updateFootprints(site, tracked, false);
 
       // Heading: turn towards the target at a limited rate.
       const target = this.targetHeading(site, object, tracked, now);
@@ -1245,8 +1380,8 @@ export class TwinView {
 
       if (tracked.fade < 1) {
         tracked.fade = Math.min(1, tracked.fade + dt / FADE_IN_S);
-        setFade(tracked.root, tracked.fade);
       }
+      this.applyOpacity(tracked, tracked.fade * (this.analysis ? ANALYSIS_OPACITY : 1));
       if (
         !object.vru &&
         moving(object) &&
@@ -1275,21 +1410,31 @@ export class TwinView {
       }
     }
 
-    // Road users that left keep going along their last velocity while they fade out.
+    // Road users no longer observed stay where they were last measured — their motion is not
+    // extrapolated —, marked as lost, for a short time; then they go.
     for (const [key, tracked] of site.meshes) {
       if (site.drawn.has(key)) {
         continue;
       }
-      tracked.lost ??= now;
-      tracked.x += tracked.last.vx * dt;
-      tracked.y += tracked.last.vy * dt;
-      tracked.root.position.set(tracked.x, tracked.y, 0);
-      tracked.fade = Math.max(0, tracked.fade - dt / FADE_OUT_S);
-      setFade(tracked.root, tracked.fade);
-      if (tracked.fade <= 0) {
-        site.group.remove(tracked.root);
-        disposeObject(tracked.root);
-        site.meshes.delete(key);
+      if (tracked.lost === null) {
+        tracked.lost = now;
+        tracked.x = tracked.last.x;
+        tracked.y = tracked.last.y;
+        tracked.root.position.set(tracked.x, tracked.y, 0);
+        if (tracked.halo) {
+          tracked.root.remove(tracked.halo);
+          disposeObject(tracked.halo);
+          tracked.halo = null;
+        }
+        this.updateFootprints(site, tracked, true);
+      }
+      this.applyOpacity(
+        tracked,
+        Math.min(tracked.fade, LOST_OPACITY) *
+          (this.analysis ? ANALYSIS_OPACITY / LOST_OPACITY : 1),
+      );
+      if ((now - tracked.lost) / 1000 >= this.lostHoldS) {
+        this.removeMesh(site, key, tracked);
       }
     }
     if (this.showTrails) {
