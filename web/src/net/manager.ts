@@ -105,6 +105,9 @@ export interface Camera {
   source: SiteSource;
   playback: PlaybackSettings;
   video: VideoSettings;
+  /** Added to the camera's timestamps on the site clock (ms): aligns recordings that did not
+   * start together, or the latency of a live stream. */
+  time_offset_ms: number;
   runtime: CameraRuntime;
 }
 
@@ -152,6 +155,7 @@ export interface CameraPatch {
   source?: SiteSource;
   playback?: PlaybackSettings;
   video?: VideoSettings;
+  time_offset_ms?: number;
 }
 
 export interface NewCamera {

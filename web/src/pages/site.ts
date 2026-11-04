@@ -232,6 +232,7 @@ class CameraPanel {
         source: camera.source,
         playback: camera.playback,
         video: camera.video,
+        time_offset_ms: camera.time_offset_ms,
       },
       this.inputs,
       changed,

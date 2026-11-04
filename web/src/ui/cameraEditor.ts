@@ -136,6 +136,8 @@ export interface CameraValues {
   source: SiteSource;
   playback?: PlaybackSettings;
   video?: VideoSettings;
+  /** Shift of the camera's timestamps on the site clock (ms), see Camera.time_offset_ms. */
+  time_offset_ms?: number;
 }
 
 function select<T extends string | number>(values: T[], current: T, label: (v: T) => string) {
@@ -160,6 +162,7 @@ export class CameraFields {
     fps: HTMLInputElement;
     width: HTMLSelectElement;
     quality: HTMLInputElement;
+    offset: HTMLInputElement;
   } | null = null;
 
   constructor(
@@ -188,12 +191,22 @@ export class CameraFields {
       const fps = h('input', { class: 'input num', type: 'number', step: 0.5, min: 0.5, max: 30 });
       fps.value = String(initial.video.max_fps);
       fps.addEventListener('input', onChange);
+      const offset = h('input', {
+        class: 'input num',
+        type: 'number',
+        step: 10,
+        min: -60000,
+        max: 60000,
+      });
+      offset.value = String(initial.time_offset_ms ?? 0);
+      offset.addEventListener('input', onChange);
       const fields = {
         loop: initial.playback.loop,
         speed: select(SPEEDS, initial.playback.speed, (v) => `${v}×`),
         fps,
         width: select(WIDTHS, initial.video.width_px, (v) => `${v} px`),
         quality,
+        offset,
       };
       fields.speed.addEventListener('change', onChange);
       fields.width.addEventListener('change', onChange);
@@ -213,6 +226,13 @@ export class CameraFields {
         ),
         h('label', { class: 'field' }, h('span', {}, 'Camera image rate (fps)'), fps),
         h('label', { class: 'field' }, h('span', {}, 'Camera image width'), fields.width),
+        h(
+          'label',
+          { class: 'field' },
+          h('span', {}, 'Time offset (ms)'),
+          offset,
+          h('small', {}, 'Added to its timestamps so that the cameras of the site line up in time'),
+        ),
         h(
           'label',
           { class: 'field' },
@@ -268,6 +288,7 @@ export class CameraFields {
         width_px: Number(this.streaming.width.value),
         jpeg_quality: Number(this.streaming.quality.value),
       };
+      values.time_offset_ms = Number.parseFloat(this.streaming.offset.value) || 0;
     }
     return values;
   }
