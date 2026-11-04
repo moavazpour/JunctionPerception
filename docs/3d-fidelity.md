@@ -190,7 +190,7 @@ Same harness, same data and scenarios, run against the build of branch `feature/
    0.22), so the footprints can be compared with the BEV.
 2. The **top-down mode** draws with an orthographic camera once it looks straight down; the tilted
    3D view keeps its perspective camera and controls.
-3. Camera tracks captured more than **`fusionMaxSkewMs`** apart (default 100 ms, `?fusionSkewMs=`
+3. Camera tracks captured more than **`fusionMaxSkewMs`** apart (default 200 ms since the sweep below, first 100 ms; `?fusionSkewMs=`
    on the twin page, `inf` merges regardless as before) are not merged. Both stay drawn, are linked
    by a dashed line, named in the tooltip ("not merged with …: N ms apart") and counted. A merged
    group never spans more than the threshold.
@@ -262,7 +262,7 @@ the drawn models at display time (all drawn ones; "best": the one closer to the 
   road users seen by both cameras at once. Merges, duplicates and identity changes come from all
   tracks. Treat the error columns as indicative.
 
-**Recommendation.** Keep the threshold configurable and set it to about 1.5–2 frame intervals of
+**Recommendation (applied: the default is now 200 ms).** Keep the threshold configurable and set it to about 1.5–2 frame intervals of
 the slower camera (200 ms for these 8.6 fps cameras) rather than 100 ms: 100 ms is below the
 natural offset of unsynchronised cameras and costs continuity without a measured gain in accuracy.
 The lasting fix remains backend fusion that predicts each observation to a common time and weights
@@ -286,8 +286,9 @@ shown or hidden in the same page: 15 road users 5.7 ms with, 4.9 ms without; 200
   P90 while moving) and stays 1 s; its absence is marked, not predicted.
 - The tilted 3D view keeps its parallax (body 1.4 m, roof 2.9 m median); the footprints, the
   analysis mode or the top-down mode show positions.
-- With the 100 ms default, unsynchronised cameras show duplicates and alternate between merged and
-  split in the overlap (see the sweep); 200 ms is the measured better setting for these cameras.
+- The default is 200 ms after the sweep: at 100 ms unsynchronised cameras showed duplicates and
+  alternated between merged and split in the overlap. Cameras further apart in time than 200 ms
+  are still drawn twice; at other frame rates the threshold needs to follow the frame interval.
 - Not addressed (priorities 5–7): interpolation by capture time, the heading's origin in 3D, the
   `?? 0` fallback in the interpolator.
 - The browser check was done on the scene graph (positions, camera type, opacity, BEV match), not

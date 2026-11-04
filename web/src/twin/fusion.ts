@@ -10,9 +10,11 @@ const MAX_VELOCITY_DIFFERENCE_MPS = 4;
 /**
  * Largest difference of the capture times of two cameras' tracks that are merged (ms). An initial,
  * experimental threshold: further apart, the two observations describe different moments and
- * their average is a position neither camera saw. Timestamp-aware fusion belongs in the backend.
+ * their average is a position neither camera saw. About 1.5–2 frame intervals of 8.6 fps cameras:
+ * below that, unsynchronised cameras that do see the same moment are split and merged in turn
+ * (docs/3d-fidelity.md). Timestamp-aware fusion belongs in the backend.
  */
-export const DEFAULT_MAX_SKEW_MS = 100;
+export const DEFAULT_MAX_SKEW_MS = 200;
 
 /** A track of one camera at its drawn (interpolated) position in the site frame. */
 export interface CameraTrack {
