@@ -65,7 +65,10 @@ export async function run(options = {}) {
   const twin = window.jpBench.twin;
   const bundle = await (await fetch(`${BASE}/bundle.json`)).json();
   const osm = await (await fetch(`${BASE}/osm.json`)).json();
-  const scene = await (await fetch('/sites/tumtraf_s110_south2_s03/cameras/south2/api/scene')).json();
+  // Class catalog of a scene served on this origin.
+  const scene = await (
+    await fetch(window.FIDELITY_SCENE ?? '/sites/tumtraf_s110_south2_s03/cameras/south2/api/scene')
+  ).json();
   const Vector3 = twin.rig.camera.position.constructor;
   twin.ground.geometry.computeBoundingBox();
   const Box3 = twin.ground.geometry.boundingBox.constructor;
@@ -98,8 +101,10 @@ export async function run(options = {}) {
 
   let siteCount = 0;
   let sharedFlow = null;
-  async function replay(name, cameras, delays, measure, fps = 60) {
+  async function replay(name, cameras, delays, measure, fps = 60, skewMs = undefined) {
     const id = `fidelity-${name}-${siteCount++}`;
+    // Fusion threshold of this run (builds with timestamp-gated fusion only).
+    if (skewMs !== undefined) twin.setFusionMaxSkewMs?.(skewMs);
     twin.addSite({ id, name: id, offset: { x: 20000 + siteCount * 2000, y: 20000 }, transform: null });
     for (const c of cameras) twin.addCamera(id, c, description(c));
     twin.setMap(id, map);
@@ -110,7 +115,7 @@ export async function run(options = {}) {
     const arrivals = cameras
       .flatMap((c) => bundle.states[c].map((s) => ({ T: s.timestamp_ns / 1e6 + LATENCY_MS + (delays[c] ?? 0), c, s })))
       .sort((a, b) => a.T - b.T);
-    const recs = { interp: [], fusion: [], lost: [], heading: [], persp: [], bevCheck: [] };
+    const recs = { interp: [], fusion: [], lost: [], heading: [], persp: [], bevCheck: [], footprint: [], fev: [] };
     const lastMatch = new Map();
     let k = 0;
     sim = arrivals[0].T - 50;
@@ -134,7 +139,7 @@ export async function run(options = {}) {
         await yieldNow();
       }
     }
-    twin.removeSiteForTest?.(id);
+    recs.counts = twin.fusionCounts?.(id) ?? null;
     site.group.visible = false;
     return recs;
   }
@@ -148,7 +153,74 @@ export async function run(options = {}) {
     return null;
   }
 
+  /** Footprints (builds that draw them): each must sit exactly at its backend observation. */
+  function checkFootprints(site, recs) {
+    for (const tm of site.meshes.values()) {
+      if (!tm.footprints) return;
+      tm.footprints.forEach((fp, i) => {
+        const o = tm.observed[i]?.object;
+        if (!o) return;
+        const p = fp.group.position;
+        recs.footprint.push({
+          lost: tm.lost !== null,
+          d: Math.hypot(p.x - o.x, p.y - o.y),
+          headingErr: o.heading_rad === null ? null : fullDeg(fp.group.rotation.z, o.heading_rad),
+          disc: o.heading_rad === null,
+          // Lost road users: the model must be frozen at the last measured position.
+          frozen: tm.lost !== null ? Math.hypot(tm.x - tm.last.x, tm.y - tm.last.y) : null,
+          lostAgeS: tm.lost !== null ? (sim - tm.lost) / 1000 : null,
+        });
+      });
+    }
+  }
+
+  /**
+   * Fusion evaluation per labelled road user and frame: which drawn road users (keys) show it,
+   * whether both cameras see it, and how far each drawn model is from the ground truth now.
+   */
+  function evaluateFusion(site, t, recs) {
+    const seen = new Map();
+    for (const [camera, feed] of site.cameras) {
+      const gids = new Set();
+      for (const o of feed.latest?.objects ?? []) {
+        const gid = bundle.matches[`${camera}:${feed.latest.frame}:${o.id}`];
+        if (gid !== undefined) gids.add(gid);
+      }
+      seen.set(camera, gids);
+    }
+    const byGid = new Map();
+    for (const [key, tm] of site.meshes) {
+      if (tm.lost !== null) continue;
+      const observed = tm.observed ?? [{ camera: memberOf(site, key)?.camera, object: tm.last }];
+      for (const { camera, object } of observed) {
+        const feed = site.cameras.get(camera);
+        if (!feed?.latest) continue;
+        const gid = bundle.matches[`${camera}:${feed.latest.frame}:${object.id}`];
+        if (gid === undefined) continue;
+        if (!byGid.has(gid)) byGid.set(gid, new Set());
+        byGid.get(gid).add(key);
+      }
+    }
+    for (const [gid, keys] of byGid) {
+      const g = gtAt(bundle.gt[gid], t * 1e6);
+      recs.fev.push({
+        t,
+        gid,
+        keys: [...keys].sort(),
+        both: [...seen.values()].every((s) => s.has(gid)),
+        errs: g ? [...keys].map((k) => Math.hypot(site.meshes.get(k).x - g.x, site.meshes.get(k).y - g.y)) : [],
+      });
+    }
+  }
+
   function measureFrame(site, t, recs, lastMatch, measure, frame) {
+    if (measure.fusionOnly) {
+      // Light mode for threshold sweeps: the fusion evaluation only, at half the frame rate.
+      if (frame % 2 === 0) evaluateFusion(site, t, recs);
+      return;
+    }
+    checkFootprints(site, recs);
+    if (site.cameras.size > 1) evaluateFusion(site, t, recs);
     const keys = new Map();
     for (const [trackKey, roadUser] of site.fusion.alias) {
       if (!keys.has(roadUser)) keys.set(roadUser, []);
@@ -283,6 +355,26 @@ export async function run(options = {}) {
     for (let i = 0; i < 200; i++) rig.tick(0.05);
   }
 
+  if (options.only === 'sweep') {
+    try {
+      await replay('learn', ['south2', 'south1'], {}, null, 20);
+      for (const skew of options.skews ?? []) {
+        for (const [name, delays] of [
+          ['sync', {}],
+          ['async300', { south1: 300 }],
+        ]) {
+          const r = await replay(`${name}-${skew}`, ['south2', 'south1'], delays, { fusionOnly: true }, 60, skew);
+          results.records[`sweep_${name}_${skew}`] = { fev: r.fev, counts: r.counts };
+        }
+      }
+      results.status = 'done';
+    } catch (error) {
+      results.status = `error: ${error.message}`;
+    } finally {
+      performance.now = realNow;
+    }
+    return results;
+  }
   if (options.only === 'lost') {
     try {
       results.records.lostFix = await replay('lostfix', ['south2'], {}, {});
@@ -306,6 +398,16 @@ export async function run(options = {}) {
       const r = await replay('noflow', ['south2'], {}, {});
       return { heading: r.heading };
     })();
+    // Fusion threshold sweep (Infinity: merge regardless of time, as before the gate).
+    for (const skew of options.skews ?? []) {
+      for (const [name, delays] of [
+        ['sync', {}],
+        ['async300', { south1: 300 }],
+      ]) {
+        const r = await replay(`${name}-${skew}`, ['south2', 'south1'], delays, {}, 60, skew);
+        results.records[`sweep_${name}_${skew}`] = { fev: r.fev, counts: r.counts, fusion: r.fusion };
+      }
+    }
     results.status = 'done';
   } catch (error) {
     results.status = `error: ${error.message}\n${error.stack}`;
