@@ -183,6 +183,81 @@ sources: {}
   EXPECT_GT(worst_error(options), 0.3);
 }
 
+TEST(TrackLocalizer, ShortApparentMotionDoesNotOrientAStandingVehicle) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  bus: {length_m: 12.0, width_m: 2.6, height_m: 3.2, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  // Heading after a standing bus whose box bottom creeps 2.5 m and back over 2 s (TUMTraf
+  // south2: a van passing in front of it covers its lower edge), then stands for 3 s.
+  const auto heading_after = [&](const jp::localization::LocalizerOptions& options) {
+    jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                               options);
+    jp::tracking::TrackedObject track;
+    track.id = 8;
+    track.twin_class = "bus";
+    std::optional<double> heading;
+    for (int i = 0; i < 70; ++i) {
+      const int creep = i < 20 ? 0 : (i < 30 ? i - 20 : std::max(0, 40 - i));
+      const float bottom = 300.0F - (2.5F * static_cast<float>(creep));
+      track.detection.box = cv::Rect2f(80, bottom - 40, 120, 40);
+      heading = localizer.update({track}, i * kFrameNs).front().heading_rad;
+    }
+    return heading;
+  };
+  jp::localization::LocalizerOptions options;
+  options.contact_model = jp::localization::ContactModel::kNone;
+  options.heading_min_speed_mps = 1.0;
+  EXPECT_FALSE(heading_after(options).has_value());
+  // Without the travel gate the creep sets a heading, held while the bus stands.
+  options.heading_min_travel_m = 0.0;
+  EXPECT_TRUE(heading_after(options).has_value());
+}
+
+TEST(TrackLocalizer, BoxBottomCoveredByANearerRoadUserIsTrustedLess) {
+  const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
+classes:
+  bus: {length_m: 12.0, width_m: 2.6, height_m: 3.2, vru: false}
+  van: {length_m: 5.0, width_m: 2.0, height_m: 2.2, vru: false}
+sources: {}
+)yaml");
+  const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
+  // Largest speed of a standing bus while a van in front of it (lower in the image) covers its
+  // box bottom, which therefore moves up 2 m.
+  const auto worst_speed = [&](double noise_scale) {
+    jp::localization::LocalizerOptions options;
+    options.contact_model = jp::localization::ContactModel::kNone;
+    options.occlusion_noise_scale = noise_scale;
+    jp::localization::TrackLocalizer localizer(h, Eigen::Vector2d(0, -50), std::nullopt, catalog,
+                                               options);
+    jp::tracking::TrackedObject bus;
+    bus.id = 8;
+    bus.twin_class = "bus";
+    jp::tracking::TrackedObject van;
+    van.id = 9;
+    van.twin_class = "van";
+    double worst = 0.0;
+    for (int i = 0; i < 40; ++i) {
+      const bool covered = i >= 20 && i < 30;
+      const float bottom = covered ? 280.0F : 300.0F;
+      bus.detection.box = cv::Rect2f(80, bottom - 60, 120, 60);
+      van.detection.box = cv::Rect2f(60 + (4.0F * static_cast<float>(i)), 270, 60, 50);
+      std::vector<jp::tracking::TrackedObject> tracks{bus};
+      if (covered) {
+        tracks.push_back(van);
+      }
+      const auto objects = localizer.update(tracks, i * kFrameNs);
+      if (i >= 20) {
+        worst = std::max(worst, objects.front().speed_mps);
+      }
+    }
+    return worst;
+  };
+  EXPECT_LT(worst_speed(3.0), 0.5 * worst_speed(1.0));
+}
+
 TEST(TrackLocalizer, VehicleHeadingTurnsAtALimitedRate) {
   const auto catalog = jp::core::ClassCatalog::from_yaml(R"yaml(
 classes:

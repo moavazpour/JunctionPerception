@@ -51,6 +51,10 @@ struct LocalizationSettings {
   double heading_speed_sigma = 2.0;
   double heading_smoothing = 0.6;
   double heading_max_turn_rate_dps = 90.0;
+  double heading_min_travel_m = 3.0;
+  /// Measurements whose box bottom a nearer road user covers (localization.occlusion).
+  double occlusion_noise_scale = 3.0;
+  double occlusion_min_overlap = 0.2;
   double forget_after_s = 5.0;
   /// Keypoint models: footprint from the four bottom corners (see configs/pipeline.yaml).
   bool keypoints_enabled = true;

@@ -53,6 +53,15 @@ struct LocalizerOptions {
   double heading_smoothing = 0.6;
   /// Largest turn of a vehicle's motion heading (deg/s; 0: unlimited). VRUs turn freely.
   double heading_max_turn_rate_dps = 90.0;
+  /// A vehicle's motion turns its heading only after it has travelled this far since it last
+  /// stood (or since it was first seen): a box that shrinks and grows again, e.g. while another
+  /// road user passes in front of a standing bus, makes a short apparent motion, not a heading.
+  double heading_min_travel_m = 3.0;
+  /// A measurement whose box bottom another road user's box covers (one whose bottom is lower
+  /// in the image, so nearer to the camera, over at least `occlusion_min_overlap` of the
+  /// width) has its position standard deviation multiplied by this factor (1: off).
+  double occlusion_noise_scale = 3.0;
+  double occlusion_min_overlap = 0.2;
   /// Keypoint models: the footprint from the four bottom corners replaces the contact model, its
   /// front and rear corners give the heading (also of standing objects) and its sides the size.
   bool use_keypoints = true;
@@ -131,6 +140,9 @@ class TrackLocalizer {
     int rejected = 0;                     ///< Consecutive measurements outside the innovation gate.
     int reversed = 0;                     ///< Consecutive corner headings against the held one.
     std::int64_t heading_ns = 0;          ///< Time of the last motion heading update.
+    /// Where the road user last stood (or was first seen): motion turns the heading only after
+    /// `heading_min_travel_m` from there.
+    std::optional<Eigen::Vector2d> travel_origin;
   };
 
   /// Heading of a state from its motion: gated on the speed's certainty, smoothed and turned at

@@ -86,6 +86,11 @@ PipelineConfig parse_pipeline_config(std::string_view yaml_text,
       l.heading_speed_sigma = motion["speed_sigma"].as<double>();
       l.heading_smoothing = motion["smoothing"].as<double>();
       l.heading_max_turn_rate_dps = motion["max_turn_rate_dps"].as<double>();
+      l.heading_min_travel_m = motion["min_travel_m"].as<double>();
+    }
+    if (const YAML::Node occlusion = localization["occlusion"]) {
+      l.occlusion_noise_scale = occlusion["noise_scale"].as<double>();
+      l.occlusion_min_overlap = occlusion["min_overlap"].as<double>();
     }
     if (const YAML::Node keypoints = localization["keypoints"]) {
       l.keypoints_enabled = keypoints["enabled"].as<bool>();

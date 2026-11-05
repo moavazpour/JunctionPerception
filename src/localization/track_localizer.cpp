@@ -13,6 +13,27 @@ namespace {
 
 constexpr double kNanosecondsPerSecond = 1e9;
 
+/// Whether another track's box covers the bottom edge of track `index`'s box: it reaches that
+/// edge, ends lower in the image (nearer to a camera looking down at the road) and overlaps at
+/// least `min_overlap` of the width. The contact point of such a box is not the road user's.
+bool bottom_occluded(const std::vector<tracking::TrackedObject>& tracks, std::size_t index,
+                     double min_overlap) {
+  const cv::Rect2f& box = tracks[index].detection.box;
+  const float bottom = box.y + box.height;
+  for (std::size_t other = 0; other < tracks.size(); ++other) {
+    const cv::Rect2f& nearer = tracks[other].detection.box;
+    if (other == index || nearer.y + nearer.height <= bottom || nearer.y >= bottom) {
+      continue;
+    }
+    const float overlap =
+        std::min(box.x + box.width, nearer.x + nearer.width) - std::max(box.x, nearer.x);
+    if (overlap >= static_cast<float>(min_overlap) * box.width) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 std::optional<ContactModel> parse_contact_model(std::string_view text) {
@@ -41,7 +62,8 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     const std::vector<tracking::TrackedObject>& tracks, std::int64_t timestamp_ns) {
   std::vector<LocalizedObject> objects;
   objects.reserve(tracks.size());
-  for (const auto& track : tracks) {
+  for (std::size_t index = 0; index < tracks.size(); ++index) {
+    const auto& track = tracks[index];
     const auto contact = ground_contact(track.detection.box, image_to_ground_);
     if (!contact) {
       continue;
@@ -60,10 +82,13 @@ std::vector<LocalizedObject> TrackLocalizer::update(
     // The corners can give the footprint centre directly; otherwise it is estimated from the box
     // (with the heading the corners keep for standing road users).
     const bool corner_position = footprint && options_.keypoint_position;
-    const Eigen::Matrix2d cov =
+    Eigen::Matrix2d cov =
         corner_position
             ? measurement_cov(footprint->pixel_center, options_.keypoint_floor_std_m)
             : measurement_cov(contact_pixel(track.detection.box), options_.measurement_floor_std_m);
+    if (bottom_occluded(tracks, index, options_.occlusion_min_overlap)) {
+      cov *= options_.occlusion_noise_scale * options_.occlusion_noise_scale;
+    }
     const Eigen::Vector2d box_center =
         footprint_center(*contact, track.detection.box, info, held_heading);
     // The corner centre lies slightly towards the camera; weighted with the box fit it keeps
@@ -161,8 +186,16 @@ void TrackLocalizer::apply_footprint(State& state, const GroundFootprint& footpr
 void TrackLocalizer::apply_motion(State& state, const Eigen::Vector2d& velocity, double speed_std,
                                   bool vru, std::int64_t timestamp_ns) const {
   const double speed = velocity.norm();
-  if (speed < options_.heading_min_speed_mps || speed < options_.heading_speed_sigma * speed_std) {
-    // Too slow to measure: the last heading, if any, is held.
+  const Eigen::Vector2d position = state.filter.position();
+  const bool slow =
+      speed < options_.heading_min_speed_mps || speed < options_.heading_speed_sigma * speed_std;
+  if (slow || !state.travel_origin) {
+    state.travel_origin = position;
+  }
+  const bool travelled =
+      vru || (position - *state.travel_origin).norm() >= options_.heading_min_travel_m;
+  if (slow || !travelled) {
+    // Too slow, or not far enough yet, to measure: the last heading, if any, is held.
     if (state.heading_rad) {
       state.heading_source = "held";
     }

@@ -51,6 +51,16 @@ localization:
     speed_sigma: 2.0               # the speed must exceed this many standard deviations
     smoothing: 0.6                 # weight of a new motion direction in the heading
     max_turn_rate_dps: 90          # largest turn of a vehicle (VRUs turn freely)
+    # A vehicle's motion turns its heading only after this much travel since it last stood or
+    # was first seen: a box that another road user covers for a moment (a van passing in front
+    # of a standing bus) makes a short apparent motion that must not orient it.
+    min_travel_m: 3.0
+  # A box whose bottom edge a nearer road user's box covers (it reaches that edge, ends lower in
+  # the image and overlaps min_overlap of its width) measures a contact point that is not the
+  # road user's: its position standard deviation is multiplied by noise_scale (1: off).
+  occlusion:
+    noise_scale: 3.0
+    min_overlap: 0.2
   forget_after_s: 5.0
   # Keypoint models (four bottom corners of the 3D box): the projected corners give the
   # footprint centre, the heading (rear corners 2, 3 to front corners 0, 1, also of standing
