@@ -267,3 +267,33 @@ median car 0.64, van 0.22, truck 0.07.
   mostly calls cars, overlap little.
 - One recording of one camera (1 033 frames, day): no night, no other sequence; thresholds of the
   tracker and the heading were tuned on S1–S4, which include it.
+
+### South1 on s01 (cam1 of the same site)
+
+Same procedure for south1 on s01 (282 frames, 28 s, day), the site camera `cam1`: its control
+points align the labels with 0.49 m RMS (yaw 165.5°, shift 17.9 / −3.5 m). Nearly all labelled
+vehicles stand (884 of 923 matched), so none gets a motion heading and no IoU can be computed.
+
+| | UI calibration, ROI | UI calibration, no ROI | UI homography, camera model from it alone, ROI | Dataset calibration, ROI |
+|---|---|---|---|---|
+| Labels | 2 576 | 2 576 | 2 576 | 2 576 |
+| Found within the gate (recall) | 0.396 | 0.657 | 0.502 | 0.500 |
+| Found within 5 m | 0.512 | 0.839 | 0.512 | 0.512 |
+| Position error, median / P90 (m) | 1.64 / 1.78 | 1.27 / 1.78 | 0.95 / 1.69 | 0.71 / 1.80 |
+| Range bias, median (m) | +1.62 | | +0.87 | +0.70 |
+| IDF1 | 0.52 | 0.66 | 0.65 | 0.65 |
+
+Recall by distance, ROI / no ROI: 0–20 m 0.29 / 0.86, 20–40 m 0.65 / 0.66, 40–60 m 0.03 / 0.60,
+60–80 m 0.00 / 0.73. Vans and trucks (with trailer) 0.00 with the ROI, 0.86 and 0.54 without.
+
+- The cam1 detection area ends about 40 m from the gantry and leaves out the far lanes: two thirds of
+  the labels it misses are outside it.
+- The ground mapping of the UI calibration agrees with the dataset's within 0.2–0.5 m over most
+  of the image (1.2 m in the far upper right). The 1.6 m error comes from the camera model that
+  box fit uses: with the dataset's camera model and the UI homography, the run matches the
+  dataset calibration (recall 0.500, 0.72 m). The console builds that model from the camera
+  position and height entered with the control points (`projection_from_camera_center`); 0.4 m
+  off in position (19.22 / 10.71 against 19.61 / 10.55) and 0.1 m in height tilt it by 2° and
+  place the vehicles 1.6 m too far. Estimating it from the homography alone (square pixels,
+  principal point at the image centre) recovers most of it here (0.95 m), but not on south2 s03
+  (recall 0.384 against 0.400), whose entered position is 5 m off and whose model is skewed.
