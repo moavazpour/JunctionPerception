@@ -153,3 +153,26 @@ Reading:
   of the south LiDAR; it is the same for single cameras and is not a fusion effect.
 - 14 % of overlap instants still show two road users, mostly at the start of a co-observation
   before `merge_after` steps or when the cameras disagree by more than the gate.
+
+## Motion heading: travel gate and covered box bottoms (2026-11-05)
+
+`jp_run` + `jp_eval` on S1–S4, both south cameras, `yolo26l_1280` (boxes only), box fit,
+merged labels, `--ignore-unlabelled`. "Off" is `motion_heading.min_travel_m: 0` and
+`occlusion.noise_scale: 1` (the previous behaviour); "on" the defaults (3 m, 5).
+
+| | Off | Travel gate only | Occlusion only | On |
+|---|---|---|---|---|
+| Heading axis error, all vehicles (mean / median / P90, deg) | 9.0 / 3.8 / 17.7 | 4.4 / 3.1 / 9.2 | 6.2 / 3.7 / 13.6 | 5.3 / 3.4 / 11.0 |
+| ... standing vehicles | 12.3 / 4.5 / 41.0 | 4.2 / 3.8 / 8.4 | 7.1 / 4.3 / 19.7 | 5.8 / 3.9 / 11.5 |
+| Buses with the front correct | 0.68 | 1.00 | 1.00 | 1.00 |
+| Matched vehicles with a heading | 0.66 | 0.61 | 0.64 | 0.60 |
+| Moving labelled vehicles without a heading | 263 | 661 | 371 | 720 |
+| Recall / precision | 0.518 / 0.694 | 0.516 / 0.691 | 0.513 / 0.688 | 0.513 / 0.689 |
+| Bus recall / precision | 0.530 / 0.587 | 0.368 / 0.415 | 0.372 / 0.470 | 0.368 / 0.416 |
+| IDF1 | 0.562 | 0.560 | 0.557 | 0.558 |
+
+The wrong headings are gone (a standing bus on s03 south2 was 130° off from its first seconds),
+at a cost: vehicles get a motion heading only after 3 m, and the standing s03 south2 bus, now
+without a heading, is placed about 4 m from its label (bus matches on s03 south2 174 → 59). Its
+wrong heading had put the box fit closer by chance; the box fit without a heading (best overlap
+of 12 candidate orientations) places a partly covered long vehicle poorly. Not yet addressed.
