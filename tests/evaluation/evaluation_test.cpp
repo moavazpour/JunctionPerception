@@ -147,7 +147,23 @@ TEST(Evaluation, FootprintHeadingSizeAndIou) {
   EXPECT_NEAR(m.range_bias_m.mean, 0.25, 1e-9);
   // Overlap 4.0 x 1.8 of two 4.5 x 1.8 rectangles.
   EXPECT_NEAR(fp.iou.median, 4.0 / 5.0, 1e-9);
+  EXPECT_EQ(fp.iou_3d.count, 0U);  // no heights
   EXPECT_EQ(m.footprint_by_class.at("car").vehicles, 42U);
+}
+
+TEST(Evaluation, BoxIouUsesTheLabelAndTheClassHeight) {
+  // The footprint of the first test (BEV IoU 0.8), the label 1.5 m high, the class 2.0 m: the
+  // boxes overlap 4.0 x 1.8 x 1.5 of 4.5 x 1.8 x 1.5 and 4.5 x 1.8 x 2.0.
+  auto label = truth(1, false, 0, 0);
+  label.height_m = 1.5;
+  auto p = predicted(7, false, 0.5, 0);
+  p.heading_rad = 0.0;
+  p.size_m = {4.5, 1.8};
+  p.height_m = 2.0;
+  const auto s = one_frame({label}, {p});
+  const auto m = jp::evaluation::evaluate({&s}, {});
+  const double overlap = 4.0 * 1.8 * 1.5;
+  EXPECT_NEAR(m.footprint.iou_3d.median, overlap / ((4.5 * 1.8 * 3.5) - overlap), 1e-9);
 }
 
 TEST(Evaluation, TractorAndTrailerBehindItAreOneTruck) {

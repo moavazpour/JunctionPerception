@@ -18,6 +18,7 @@ struct TruthObject {
   double yaw_rad = 0.0;
   double length_m = 0.0;
   double width_m = 0.0;
+  double height_m = 0.0;
   /// Seen by the camera (box centre projects into the image). Others are "don't care": a
   /// prediction matched to them is neither a true nor a false positive.
   bool visible = true;
@@ -34,6 +35,7 @@ struct PredictedObject {
   /// Footprint length and width as the twin shows it (zero: unknown, no footprint metrics).
   Eigen::Vector2d size_m = Eigen::Vector2d::Zero();
   bool measured_size = false;  ///< Size measured by the detector (else the class size).
+  double height_m = 0.0;       ///< Box height the twin assumes (the class height).
 };
 
 struct Frame {
@@ -124,6 +126,9 @@ struct FootprintMetrics {
   ErrorStats length_bias_m;  ///< Signed: predicted minus label.
   ErrorStats width_bias_m;
   ErrorStats iou;  ///< Bird's-eye-view IoU of the footprints (predictions with a heading).
+  /// 3D IoU of the boxes standing on the same ground: the twin places road users on the ground
+  /// plane, so only the footprint and the height (label against class height) differ.
+  ErrorStats iou_3d;
 };
 
 struct Metrics {

@@ -43,6 +43,7 @@ struct RunArgs {
   std::string config = "configs/pipeline.yaml";
   std::string classes = "configs/classes.yaml";
   std::string scene;
+  std::string regions;
   std::string overlay;
   std::string bev;
   std::string reference_sequence;
@@ -309,6 +310,12 @@ void run(const RunArgs& args) {
   }
 
   jp::sources::PerceptionPipeline pipeline(config, catalog, ground);
+  if (!args.regions.empty()) {
+    auto regions = jp::sources::load_regions(args.regions);
+    spdlog::info("{} detection areas and {} lines from {}", regions.areas.size(),
+                 regions.lines.size(), args.regions);
+    pipeline.set_regions(std::move(regions));
+  }
   const auto source = jp::io::open_frame_source(args.source, args.image_sequence_fps);
   spdlog::info("model {} on {}; source {} ({:.2f} fps, {} frames); bias correction {}",
                config.detection.model.string(), pipeline.detector().backend(), args.source,
@@ -358,6 +365,8 @@ int main(int argc, char** argv) {
   app.add_option("--config", args.config, "Pipeline config")->capture_default_str();
   app.add_option("--classes", args.classes, "Class catalog")->capture_default_str();
   app.add_option("--scene", args.scene, "Scene folder with ground_homography.yaml");
+  app.add_option("--regions", args.regions,
+                 "Detection areas and lines (regions.json of a site camera), as the console uses");
   app.add_option("--overlay", args.overlay, "Write a debug overlay video (MP4)");
   app.add_option("--bev", args.bev, "Write a top-down debug video (MP4)");
   app.add_option("--reference", args.reference_sequence,

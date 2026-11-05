@@ -82,6 +82,13 @@ double footprint_iou(const Polygon& a, const Polygon& b) {
   return united > 0.0 ? overlap / united : 0.0;
 }
 
+// Boxes standing on the same ground: their vertical overlap is the lower height.
+double box_iou(const Polygon& a, double height_a, const Polygon& b, double height_b) {
+  const double overlap = area(intersection(a, b)) * std::min(height_a, height_b);
+  const double united = (area(a) * height_a) + (area(b) * height_b) - overlap;
+  return united > 0.0 ? overlap / united : 0.0;
+}
+
 // Label positions of every track over the frames of a sequence.
 class TruthTracks {
  public:
@@ -186,6 +193,7 @@ struct FootprintAccumulator {
   std::vector<double> length;  // signed: predicted minus label
   std::vector<double> width;
   std::vector<double> iou;
+  std::vector<double> iou_3d;
 
   [[nodiscard]] FootprintMetrics finish() const {
     const auto absolute = [](std::vector<double> values) {
@@ -202,6 +210,7 @@ struct FootprintAccumulator {
     m.length_bias_m = error_stats(length);
     m.width_bias_m = error_stats(width);
     m.iou = error_stats(iou);
+    m.iou_3d = error_stats(iou_3d);
     return m;
   }
 };
@@ -326,10 +335,14 @@ class SequenceEvaluator {
         acc->stationary_axis.push_back(axis);
       }
       if (prediction.size_m.x() > 0.0) {
-        acc->iou.push_back(
-            footprint_iou(rectangle(truth.position, truth.yaw_rad, truth.length_m, truth.width_m),
-                          rectangle(prediction.position, *prediction.heading_rad,
-                                    prediction.size_m.x(), prediction.size_m.y())));
+        const Polygon label =
+            rectangle(truth.position, truth.yaw_rad, truth.length_m, truth.width_m);
+        const Polygon predicted = rectangle(prediction.position, *prediction.heading_rad,
+                                            prediction.size_m.x(), prediction.size_m.y());
+        acc->iou.push_back(footprint_iou(label, predicted));
+        if (truth.height_m > 0.0 && prediction.height_m > 0.0) {
+          acc->iou_3d.push_back(box_iou(label, truth.height_m, predicted, prediction.height_m));
+        }
       }
     }
   }
@@ -503,6 +516,7 @@ void merge_articulated(std::vector<TruthObject>& frame, const ArticulatedMerge& 
     tractor.position = 0.5 * (front + back);
     tractor.length_m = (front - back).norm();
     tractor.width_m = std::max(tractor.width_m, trailer.width_m);
+    tractor.height_m = std::max(tractor.height_m, trailer.height_m);
     tractor.visible = tractor.visible || trailer.visible;
     merged[*best] = true;
   }

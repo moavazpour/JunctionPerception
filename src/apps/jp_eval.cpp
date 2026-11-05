@@ -102,6 +102,7 @@ std::vector<std::vector<jp::evaluation::TruthObject>> load_truth(
       t.yaw_rad = std::atan2(forward.y(), forward.x());
       t.length_m = object.box.size.x();
       t.width_m = object.box.size.y();
+      t.height_m = object.box.size.z();
       t.visible = image.z() > 0.0 && pixel.x() >= 0.0 && pixel.y() >= 0.0 &&
                   pixel.x() < ground.width_px && pixel.y() < ground.height_px;
       out.push_back(std::move(t));
@@ -143,8 +144,15 @@ jp::evaluation::Sequence load_run(
       const bool measured = o.length_m && o.width_m;
       const Eigen::Vector2d size = measured ? Eigen::Vector2d(*o.length_m, *o.width_m)
                                             : Eigen::Vector2d(cls.length_m, cls.width_m);
-      frame.predicted.push_back(
-          {o.id, o.object_class, o.vru, {o.x, o.y}, o.heading_rad, o.speed_mps, size, measured});
+      frame.predicted.push_back({o.id,
+                                 o.object_class,
+                                 o.vru,
+                                 {o.x, o.y},
+                                 o.heading_rad,
+                                 o.speed_mps,
+                                 size,
+                                 measured,
+                                 cls.height_m});
     }
     sequence.frames.push_back(std::move(frame));
   }
@@ -174,7 +182,8 @@ json footprint_json(const jp::evaluation::FootprintMetrics& f) {
           {"width_m", stats_json(f.width_m)},
           {"length_bias_m", stats_json(f.length_bias_m)},
           {"width_bias_m", stats_json(f.width_bias_m)},
-          {"iou", stats_json(f.iou)}};
+          {"iou", stats_json(f.iou)},
+          {"iou_3d", stats_json(f.iou_3d)}};
 }
 
 json metrics_json(const Metrics& m) {
@@ -248,13 +257,15 @@ std::string share(std::size_t part, std::size_t whole) {
 std::string footprint_row(const std::string& name, const jp::evaluation::FootprintMetrics& f) {
   return std::format(
       "| {} | {} | {} | {} | {:.1f} / {:.1f} / {:.1f} | {:.1f} / {:.1f} / {:.1f} | {} | {} | "
-      "{:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} |\n",
+      "{:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} | {:.2f} / {:.2f} / {:.2f} | "
+      "{:.2f} / {:.2f} / {:.2f} |\n",
       name, f.vehicles, share(f.with_heading, f.vehicles),
       share(f.stationary_with_heading, f.stationary), f.axis_deg.mean, f.axis_deg.median,
       f.axis_deg.p90, f.stationary_axis_deg.mean, f.stationary_axis_deg.median,
       f.stationary_axis_deg.p90, share(f.front_correct, f.with_heading),
       share(f.measured_size, f.vehicles), f.length_m.mean, f.length_m.median, f.length_m.p90,
-      f.width_m.mean, f.width_m.median, f.width_m.p90, f.iou.mean, f.iou.median, f.iou.p90);
+      f.width_m.mean, f.width_m.median, f.width_m.p90, f.iou.mean, f.iou.median, f.iou.p90,
+      f.iou_3d.mean, f.iou_3d.median, f.iou_3d.p90);
 }
 
 std::string report(const std::string& title, const jp::evaluation::Options& options,
@@ -296,9 +307,11 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
       "label box yaw modulo 180 degrees (axis, 0-90); front correct: within 90 degrees of the "
       "label's front. Standing: label slower than the moving speed. Size: the footprint the twin "
       "shows (measured by the detector, else the class size). IoU: bird's-eye-view footprints of "
-      "predictions with a heading.\n\n| Group | Vehicles | With heading | Standing with heading | "
-      "Axis error (deg) | Standing axis error (deg) | Front correct | Measured size | Length "
-      "error (m) | Width error (m) | BEV IoU |\n|---|---|---|---|---|---|---|---|---|---|---|\n";
+      "predictions with a heading; 3D IoU: the same boxes with the label height and the class "
+      "height, both standing on the ground.\n\n| Group | Vehicles | With heading | Standing with "
+      "heading | Axis error (deg) | Standing axis error (deg) | Front correct | Measured size | "
+      "Length error (m) | Width error (m) | BEV IoU | 3D IoU |\n"
+      "|---|---|---|---|---|---|---|---|---|---|---|---|\n";
   for (const auto& [name, m] : groups) {
     md += footprint_row(name, m.footprint);
   }
@@ -315,8 +328,8 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
   md +=
       "\n### By label class (all runs)\n\n| Class | Vehicles | With heading | Standing with "
       "heading | Axis error (deg) | Standing axis error (deg) | Front correct | Measured size | "
-      "Length error (m) | Width error (m) | BEV IoU |\n|---|---|---|---|---|---|---|---|---|---|"
-      "---|\n";
+      "Length error (m) | Width error (m) | BEV IoU | 3D IoU |\n"
+      "|---|---|---|---|---|---|---|---|---|---|---|---|\n";
   for (const auto& [name, f] : overall.footprint_by_class) {
     md += footprint_row(name, f);
   }
