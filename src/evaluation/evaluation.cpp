@@ -468,6 +468,54 @@ class SequenceEvaluator {
 
 }  // namespace
 
+void merge_articulated(std::vector<TruthObject>& frame, const ArticulatedMerge& merge) {
+  const auto direction = [](const TruthObject& t) {
+    return Eigen::Vector2d(std::cos(t.yaw_rad), std::sin(t.yaw_rad));
+  };
+  std::vector<bool> merged(frame.size(), false);
+  for (std::size_t i = 0; i < frame.size(); ++i) {
+    TruthObject& tractor = frame[i];
+    if (tractor.twin_class != "truck") {
+      continue;
+    }
+    const Eigen::Vector2d rear = tractor.position - (0.5 * tractor.length_m * direction(tractor));
+    std::optional<std::size_t> best;
+    double best_gap = merge.max_gap_m;
+    for (std::size_t j = 0; j < frame.size(); ++j) {
+      const TruthObject& trailer = frame[j];
+      if (trailer.twin_class != "trailer" || merged[j] ||
+          angle_error_deg(trailer.yaw_rad, tractor.yaw_rad) > merge.max_angle_deg) {
+        continue;
+      }
+      const double gap =
+          (trailer.position + (0.5 * trailer.length_m * direction(trailer)) - rear).norm();
+      if (gap <= best_gap) {
+        best_gap = gap;
+        best = j;
+      }
+    }
+    if (!best) {
+      continue;
+    }
+    const TruthObject& trailer = frame[*best];
+    const Eigen::Vector2d front = tractor.position + (0.5 * tractor.length_m * direction(tractor));
+    const Eigen::Vector2d back = trailer.position - (0.5 * trailer.length_m * direction(trailer));
+    tractor.position = 0.5 * (front + back);
+    tractor.length_m = (front - back).norm();
+    tractor.width_m = std::max(tractor.width_m, trailer.width_m);
+    tractor.visible = tractor.visible || trailer.visible;
+    merged[*best] = true;
+  }
+  std::vector<TruthObject> kept;
+  kept.reserve(frame.size());
+  for (std::size_t i = 0; i < frame.size(); ++i) {
+    if (!merged[i]) {
+      kept.push_back(std::move(frame[i]));
+    }
+  }
+  frame = std::move(kept);
+}
+
 ErrorStats error_stats(const std::vector<double>& values) {
   ErrorStats stats;
   stats.count = values.size();

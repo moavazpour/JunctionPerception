@@ -176,3 +176,26 @@ at a cost: vehicles get a motion heading only after 3 m, and the standing s03 so
 without a heading, is placed about 4 m from its label (bus matches on s03 south2 174 → 59). Its
 wrong heading had put the box fit closer by chance; the box fit without a heading (best overlap
 of 12 candidate orientations) places a partly covered long vehicle poorly. Not yet addressed.
+
+### Tractor and trailer as one truck (`jp_eval --merge-trailers`)
+
+TUMTraf labels a tractor (TRUCK) and its trailer (TRAILER) as two boxes; the camera detector sees
+one vehicle whose fitted centre lies between them, so the 2 m gate misses it. With
+`--merge-trailers` each tractor and the trailer behind it (gap ≤ `articulated.max_gap_m`, yaws
+within `max_angle_deg`, `configs/evaluation.yaml`) are one truck label from the trailer's rear to
+the tractor's front. Same world states as "On" above:
+
+| | Labels as boxed | Tractor and trailer merged |
+|---|---|---|
+| Recall / precision | 0.513 / 0.688 | 0.557 / 0.701 |
+| IDF1 | 0.557 | 0.586 |
+| Truck recall (labels) | 0.043 (3169) | 0.264 (3295) |
+| Trailer recall (labels) | 0.231 (4059) | 0.273 (1603, without a tractor in front) |
+
+The detector finds trucks far more often than the separate labels suggested; the measure, not the
+pipeline, changed.
+
+Tried and dropped: summing the overlap of each candidate axis over a headingless vehicle's
+uncovered frames (instead of the best axis per frame). On synthetic covered boxes it lowered the
+mean centre error from 1.9 to 1.5 m with large scatter; on TUMTraf it changed nothing (bus recall
+0.354 vs 0.368, the standing s03 south2 bus 56 vs 59 matches), so its error is not the axis choice.

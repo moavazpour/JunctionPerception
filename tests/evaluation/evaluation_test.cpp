@@ -150,6 +150,35 @@ TEST(Evaluation, FootprintHeadingSizeAndIou) {
   EXPECT_EQ(m.footprint_by_class.at("car").vehicles, 42U);
 }
 
+TEST(Evaluation, TractorAndTrailerBehindItAreOneTruck) {
+  const auto vehicle = [](std::int64_t id, const char* cls, double x, double y, double yaw,
+                          double length) {
+    TruthObject t = truth(id, false, x, y);
+    t.twin_class = cls;
+    t.yaw_rad = yaw;
+    t.length_m = length;
+    t.width_m = 2.5;
+    return t;
+  };
+  // Tractor 6 m long heading +x with its rear at x = 7; its trailer (13 m) starts 0.5 m behind.
+  // Another trailer stands across the road, a lone tractor further away.
+  std::vector<TruthObject> frame = {vehicle(1, "truck", 10.0, 0.0, 0.0, 6.0),
+                                    vehicle(2, "trailer", 0.0, 0.0, 0.05, 13.0),
+                                    vehicle(3, "trailer", 5.0, 3.0, std::numbers::pi / 2, 13.0),
+                                    vehicle(4, "truck", 40.0, 20.0, 0.0, 6.0)};
+  jp::evaluation::merge_articulated(frame, {});
+  ASSERT_EQ(frame.size(), 3U);
+  const TruthObject& merged = frame[0];
+  EXPECT_EQ(merged.track_id, 1);
+  EXPECT_EQ(merged.twin_class, "truck");
+  // From the trailer's rear (about x = -6.5) to the tractor's front (x = 13).
+  EXPECT_NEAR(merged.length_m, 19.5, 0.1);
+  EXPECT_NEAR(merged.position.x(), 3.25, 0.1);
+  EXPECT_DOUBLE_EQ(merged.yaw_rad, 0.0);
+  EXPECT_EQ(frame[1].track_id, 3);
+  EXPECT_EQ(frame[2].track_id, 4);
+}
+
 TEST(Evaluation, ErrorsByDistanceFromTheCamera) {
   const auto s =
       one_frame({truth(1, false, 10, 0), truth(2, false, 70, 0)}, {predicted(7, false, 10.2, 0)});

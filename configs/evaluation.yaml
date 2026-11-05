@@ -6,3 +6,8 @@ displaced_gate_m: 5.0             # second pass: a missed label and a false posi
 velocity_window_s: 1.0            # label speed and direction from positions over this window
 moving_speed_mps: 1.0             # heading errors of labelled vehicles moving at least this fast
 range_bins_m: [0, 20, 40, 60, 80, 120]  # distance from the camera
+# jp_eval --merge-trailers: a labelled tractor (TRUCK) and the trailer (TRAILER) behind it are one
+# truck label, as the camera detector sees one vehicle.
+articulated:
+  max_gap_m: 2.0                  # tractor rear to trailer front
+  max_angle_deg: 30               # between their yaws

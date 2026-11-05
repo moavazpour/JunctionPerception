@@ -61,11 +61,17 @@ jp::evaluation::Options load_options(const std::filesystem::path& path) {
   return o;
 }
 
+jp::evaluation::ArticulatedMerge load_articulated(const std::filesystem::path& path) {
+  const YAML::Node articulated = YAML::LoadFile(path.string())["articulated"];
+  return {articulated["max_gap_m"].as<double>(), articulated["max_angle_deg"].as<double>()};
+}
+
 // Labels of every frame in the scene's ground frame, flagged visible if the box centre projects
 // into the camera image.
 std::vector<std::vector<jp::evaluation::TruthObject>> load_truth(
     const std::filesystem::path& sequence_dir, const jp::calibration::GroundCalibration& ground,
-    const jp::core::ClassCatalog& catalog, jp::benchmark::GroundTruthLabels labels) {
+    const jp::core::ClassCatalog& catalog, jp::benchmark::GroundTruthLabels labels,
+    const std::optional<jp::evaluation::ArticulatedMerge>& articulated) {
   if (!ground.sensor_from_ground || !ground.ground_projection) {
     throw std::runtime_error("the scene has no benchmark calibration (sensor_from_ground)");
   }
@@ -100,6 +106,9 @@ std::vector<std::vector<jp::evaluation::TruthObject>> load_truth(
                   pixel.x() < ground.width_px && pixel.y() < ground.height_px;
       out.push_back(std::move(t));
     }
+    if (articulated) {
+      jp::evaluation::merge_articulated(out, *articulated);
+    }
   }
   for (const auto& category : unmapped) {
     spdlog::warn("label category {} has no twin class and is ignored", category);
@@ -107,11 +116,13 @@ std::vector<std::vector<jp::evaluation::TruthObject>> load_truth(
   return frames;
 }
 
-jp::evaluation::Sequence load_run(const RunSpec& run, const jp::core::ClassCatalog& catalog,
-                                  jp::benchmark::GroundTruthLabels labels) {
+jp::evaluation::Sequence load_run(
+    const RunSpec& run, const jp::core::ClassCatalog& catalog,
+    jp::benchmark::GroundTruthLabels labels,
+    const std::optional<jp::evaluation::ArticulatedMerge>& articulated) {
   const auto ground =
       jp::calibration::load_ground_calibration(run.scene / "ground_homography.yaml");
-  const auto truth = load_truth(run.sequence, ground, catalog, labels);
+  const auto truth = load_truth(run.sequence, ground, catalog, labels, articulated);
   jp::evaluation::Sequence sequence;
   sequence.label = run.label;
   sequence.condition = run.condition;
@@ -368,6 +379,9 @@ int main(int argc, char** argv) {
   bool ignore_unlabelled = false;
   app.add_flag("--ignore-unlabelled", ignore_unlabelled,
                "Predictions farther than the displaced gate from every label are not counted");
+  bool merge_trailers = false;
+  app.add_flag("--merge-trailers", merge_trailers,
+               "A labelled tractor and the trailer behind it are one truck (as detected)");
   CLI11_PARSE(app, argc, argv);
 
   try {
@@ -381,7 +395,9 @@ int main(int argc, char** argv) {
     std::vector<jp::evaluation::Sequence> sequences;
     sequences.reserve(runs.size());
     for (const auto& text : runs) {
-      sequences.push_back(load_run(parse_run(text), catalog, *label_set));
+      sequences.push_back(
+          load_run(parse_run(text), catalog, *label_set,
+                   merge_trailers ? std::optional(load_articulated(config)) : std::nullopt));
     }
     const auto select = [&](const auto& keep) {
       std::vector<const jp::evaluation::Sequence*> selected;
@@ -417,7 +433,8 @@ int main(int argc, char** argv) {
                            {{"vehicle_gate_m", options.vehicle_gate_m},
                             {"vru_gate_m", options.vru_gate_m},
                             {"moving_speed_mps", options.moving_speed_mps},
-                            {"ignore_unlabelled", options.ignore_unlabelled}}},
+                            {"ignore_unlabelled", options.ignore_unlabelled},
+                            {"merge_trailers", merge_trailers}}},
                           {"overall", metrics_json(overall)},
                           {"by_condition", by_condition},
                           {"by_run", by_run}};

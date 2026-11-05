@@ -66,6 +66,17 @@ struct Options {
   bool ignore_unlabelled = false;
 };
 
+/// Tractor and trailer that the labels box separately (TUMTraf TRUCK + TRAILER), one behind the
+/// other on one axis: the camera detector sees one vehicle.
+struct ArticulatedMerge {
+  double max_gap_m = 2.0;       ///< From the tractor's rear to the trailer's front.
+  double max_angle_deg = 30.0;  ///< Between their yaws.
+};
+
+/// Replaces each tractor ("truck") and the trailer ("trailer") behind it by one "truck" label
+/// from the trailer's rear to the tractor's front, with the tractor's track ID and yaw.
+void merge_articulated(std::vector<TruthObject>& frame, const ArticulatedMerge& merge);
+
 /// Count, mean, median and 90th percentile of a set of errors.
 struct ErrorStats {
   std::size_t count = 0;
