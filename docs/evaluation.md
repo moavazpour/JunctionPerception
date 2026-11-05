@@ -225,3 +225,45 @@ Detector time per frame on the RTX 3080 Laptop GPU of the server, nothing else r
 
 With float32 two 10 fps cameras fall behind, and the site model drops the slower one as stale
 (`stale_after_s`); with float16 both keep up.
+
+## The console's own calibration, in world coordinates (2026-11-05)
+
+South2 on s03, the camera and recording of the site `tumtraf_s110_south2_s03`, run as the
+console runs it: `configs/pipeline.yaml` (float16 detector), the site camera's calibration from
+control points on the map (`cameras/south2/ground_homography.yaml`) and, unless stated, its
+detection areas and lines (`jp_run --regions`). The labels are moved into the site's east-north-up
+frame with `tools/tumtraf_site_frame.py`: TUMTraf publishes no geographic position of its frames,
+so the rigid transform (yaw 165.3°, shift 18.1 / −3.6 m) is fitted to the 15 control points of
+south2 through the dataset's homography. Its residuals, 0.85 m RMS and up to 1.44 m on the far
+points, are the disagreement between the map and the dataset's geometry; they are part of every
+position error below and set its floor. `jp_eval --labels merged --merge-trailers
+--ignore-unlabelled`: a label counts if its box centre is in the image; predictions where nothing
+is labelled are ignored. Gates 2 m (vehicles) and 1 m (VRUs); "within 5 m" also counts labels
+whose prediction is 2–5 m away.
+
+| | UI calibration, ROI | UI calibration, no ROI | Dataset calibration, ROI |
+|---|---|---|---|
+| Labels | 10 098 | 10 098 | 10 098 |
+| Found within the gate (recall) | 0.400 | 0.449 | 0.504 |
+| Found within 5 m | 0.701 | 0.877 | 0.701 |
+| Position error of found labels, median / P90 (m) | 0.55 / 1.16 | 0.59 / 1.36 | 0.46 / 1.41 |
+| Range bias, median (m, + farther) | +0.42 | | +0.25 |
+| Heading error of moving vehicles, median / P90 (deg) | 2.3 / 7.6 | | 2.0 / 7.9 |
+| BEV IoU / 3D IoU of vehicles with a heading, median | 0.60 / 0.55 | 0.57 / 0.53 | 0.59 / 0.56 |
+| IDF1 / ID switches | 0.42 / 38 | | 0.54 / 75 |
+
+Recall by distance from the camera (UI calibration, ROI / no ROI): 0–20 m 0.04 / 0.49, 20–40 m
+0.70 / 0.73, 40–60 m 0.29 / 0.30, 60–80 m 0.03 / 0.03. By class (ROI): car 0.47, van 0.26,
+truck (with trailer) 0.55, bus 0.02, pedestrian 0.50, motorcycle 0.45, bicycle 0.00; 3D IoU
+median car 0.64, van 0.22, truck 0.07.
+
+- Detection does not depend on the calibration: 70 % of the labels are found within 5 m with
+  either. The UI calibration places more of them 2–5 m off (3 034 against 1 993), mostly beyond
+  40 m, where the control points are sparse and the map residuals largest.
+- The ROI leaves out 18 % of the labels, nearly all within 20 m of the gantry.
+- The 3D IoU assumes both boxes stand on the ground: the twin has no vertical position, its height
+  is the class height. Its footprint is the class size too (the box detector measures no size),
+  so a merged tractor and trailer, far longer than the truck class, and vans, which the detector
+  mostly calls cars, overlap little.
+- One recording of one camera (1 033 frames, day): no night, no other sequence; thresholds of the
+  tracker and the heading were tuned on S1–S4, which include it.
