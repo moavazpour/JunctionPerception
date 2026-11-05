@@ -1,7 +1,8 @@
 """Fetch COCO-pretrained YOLO26 weights and export them to an end-to-end (NMS-free) ONNX model.
 
-Requires the `ultralytics` and `onnx` packages. Weights and the exported model are written to
---out-dir (default: models/, not tracked by git) as <variant>.pt and <variant>_<imgsz>.onnx.
+Requires the `ultralytics`, `onnx` and (for --fp16) `onnxruntime` packages. Weights and the
+exported model are written to --out-dir (default: models/, not tracked by git) as <variant>.pt
+and <variant>_<imgsz>.onnx (and <variant>_<imgsz>_fp16.onnx with --fp16).
 
 Example:
     python tools/export_yolo26.py --variant yolo26s --imgsz 640
@@ -13,6 +14,7 @@ import pathlib
 import shutil
 
 import onnx
+from onnxruntime.transformers.float16 import convert_float_to_float16
 from ultralytics import YOLO
 
 VARIANTS = ("yolo26n", "yolo26s", "yolo26m", "yolo26l", "yolo26x")
@@ -38,6 +40,11 @@ def main() -> None:
     parser.add_argument("--variant", default="yolo26s", choices=VARIANTS)
     parser.add_argument("--imgsz", type=int, default=640, help="square network input size (px)")
     parser.add_argument("--out-dir", type=pathlib.Path, default=pathlib.Path("models"))
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help="also write <variant>_<imgsz>_fp16.onnx (float16 weights)",
+    )
     args = parser.parse_args()
 
     out_dir = args.out_dir.resolve()
@@ -53,6 +60,12 @@ def main() -> None:
     target = out_dir / f"{args.variant}_{args.imgsz}.onnx"
     shutil.move(exported, target)
     print(f"wrote {target}")
+    if args.fp16:
+        # Inputs and outputs stay float32, so the detector feeds it like the float32 model.
+        half = out_dir / f"{args.variant}_{args.imgsz}_fp16.onnx"
+        onnx.save(convert_float_to_float16(onnx.load(str(target)), keep_io_types=True), str(half))
+        print(f"wrote {half}")
+        target = half
     describe(target)
 
 

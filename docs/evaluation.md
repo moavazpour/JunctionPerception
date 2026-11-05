@@ -199,3 +199,29 @@ Tried and dropped: summing the overlap of each candidate axis over a headingless
 uncovered frames (instead of the best axis per frame). On synthetic covered boxes it lowered the
 mean centre error from 1.9 to 1.5 m with large scatter; on TUMTraf it changed nothing (bus recall
 0.354 vs 0.368, the standing s03 south2 bus 56 vs 59 matches), so its error is not the axis choice.
+
+## Float16 detector weights (2026-11-05)
+
+`yolo26l_1280_fp16` is `yolo26l_1280` with float16 weights (`tools/export_yolo26.py --fp16`,
+float32 input and output), on the ONNX Runtime CUDA provider. Same evaluation as above
+(S1–S4, both south cameras, box fit, merged labels, `--ignore-unlabelled --merge-trailers`).
+
+| | float32 | float16 |
+|---|---|---|
+| Recall / precision | 0.557 / 0.701 | 0.556 / 0.700 |
+| Matched labels / false positives | 18 285 / 7 783 | 18 261 / 7 839 |
+| Position error median / P90 (m) | 0.658 / 1.686 | 0.658 / 1.690 |
+| IDF1 / ID switches | 0.586 / 269 | 0.584 / 270 |
+| Moving heading error median (deg) | 2.29 | 2.27 |
+| Largest per-class change of recall or precision | | 0.004 (pedestrian precision) |
+
+Detector time per frame on the RTX 3080 Laptop GPU of the server, nothing else running
+(`jp_run`, 400 frames of s03, 20 warm-up frames excluded, decoding excluded):
+
+| | float32 | float16 |
+|---|---|---|
+| One camera: inference / throughput | 59 ms / 15.4 fps | 35 ms / 24.4 fps |
+| Two cameras in parallel: inference / throughput each | 121 ms / 7.8 fps | 66 ms / 13.7 fps |
+
+With float32 two 10 fps cameras fall behind, and the site model drops the slower one as stale
+(`stale_after_s`); with float16 both keep up.

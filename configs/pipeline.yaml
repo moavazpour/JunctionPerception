@@ -1,11 +1,13 @@
 # Perception pipeline settings. Paths are relative to the repository root.
 detection:
-  # COCO-pretrained YOLO26l (tools/export_yolo26.py --variant yolo26l --imgsz 1280), box only.
+  # COCO-pretrained YOLO26l with float16 weights (tools/export_yolo26.py --variant yolo26l
+  # --imgsz 1280 --fp16), box only: 1.7x faster than float32 on the GPU (two cameras 13.7 vs
+  # 7.8 fps each), recall and precision 0.001 lower (docs/evaluation.md).
   # On TUMTraf R02 s03 south2 it finds clearly more road users than the keypoint model
   # (recall within 5 m 0.84 vs 0.65 at the same precision 0.98). The keypoint model
   # (models/jp_pose5_736x1280.onnx, class_source jp_pose5) gives the four bottom corners of the
   # 3D box, i.e. better heading and size, but misses many vehicles.
-  model: models/yolo26l_1280.onnx
+  model: models/yolo26l_1280_fp16.onnx
   confidence_threshold: 0.1        # low enough for the tracker's second association stage
   execution_provider: cuda         # cuda (falls back to cpu if unavailable) or cpu
   cuda_device: 0
