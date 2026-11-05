@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <opencv2/core/mat.hpp>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -16,6 +17,7 @@
 
 #include "jp/server/site_clock.hpp"
 #include "jp/server/twin_server.hpp"
+#include "jp/server/video_encoder.hpp"
 
 namespace jp::server {
 
@@ -74,7 +76,8 @@ struct TwinServer::Impl {
   // Messages of one frame, built before the frame is due.
   struct Prepared {
     std::string world;
-    std::string video;  // empty if no image was requested
+    cv::Mat image;  // console image with overlays; empty if none was requested
+    cv::Mat raw_image;
     std::int64_t frame = 0;
     std::int64_t timestamp_ns = 0;
     std::size_t objects = 0;
@@ -114,6 +117,13 @@ struct TwinServer::Impl {
   [[nodiscard]] Prepared prepare(sources::SourceFrame frame, Clock::time_point started);
   void send(const Prepared& prepared);
   void wait_until_due(std::int64_t timestamp_ns);
+  /// Compresses and sends one console frame (on the encoder's thread).
+  void send_video(std::int64_t frame, const cv::Mat& image, const cv::Mat& raw);
+
+  // Last member: its thread stops before the channels and the scene it uses are destroyed.
+  VideoEncoder video_encoder{[this](std::int64_t frame, const cv::Mat& image, const cv::Mat& raw) {
+    send_video(frame, image, raw);
+  }};
 };
 
 }  // namespace jp::server

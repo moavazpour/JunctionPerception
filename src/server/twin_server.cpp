@@ -187,16 +187,10 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
   Prepared prepared;
   prepared.world = twin::to_json(state);
   if (!frame.image.empty()) {
-    prepared.video =
-        video_message(frame.index, frame.image, options.video_width_px, options.jpeg_quality);
     last_video = started;
   }
-  if (!frame.raw_image.empty()) {
-    std::vector<unsigned char> jpeg;
-    cv::imencode(".jpg", frame.raw_image, jpeg, {cv::IMWRITE_JPEG_QUALITY, kRawJpegQuality});
-    const std::scoped_lock lock(scene_mutex);
-    latest_raw_jpeg.assign(jpeg.begin(), jpeg.end());
-  }
+  prepared.image = std::move(frame.image);
+  prepared.raw_image = std::move(frame.raw_image);
   prepared.frame = state.frame;
   prepared.timestamp_ns = state.timestamp_ns;
   prepared.objects = state.objects.size();
@@ -207,14 +201,28 @@ TwinServer::Impl::Prepared TwinServer::Impl::prepare(sources::SourceFrame frame,
 
 void TwinServer::Impl::send(const Prepared& prepared) {
   world_clients.send_text(prepared.world);
-  if (!prepared.video.empty()) {
-    video_clients.send_binary(prepared.video);
+  // Handed over when the frame is due, so the video never runs ahead of the world state.
+  if (!prepared.image.empty() || !prepared.raw_image.empty()) {
+    video_encoder.submit(prepared.frame, prepared.image, prepared.raw_image);
   }
   const std::scoped_lock lock(status_mutex);
   status["frame"] = prepared.frame;
   status["timestamp_ns"] = prepared.timestamp_ns;
   status["objects"] = prepared.objects;
   status["latency_ms"] = prepared.processing_ms;
+}
+
+void TwinServer::Impl::send_video(std::int64_t frame, const cv::Mat& image, const cv::Mat& raw) {
+  if (!image.empty()) {
+    video_clients.send_binary(
+        video_message(frame, image, options.video_width_px, options.jpeg_quality));
+  }
+  if (!raw.empty()) {
+    std::vector<unsigned char> jpeg;
+    cv::imencode(".jpg", raw, jpeg, {cv::IMWRITE_JPEG_QUALITY, kRawJpegQuality});
+    const std::scoped_lock lock(scene_mutex);
+    latest_raw_jpeg.assign(jpeg.begin(), jpeg.end());
+  }
 }
 
 // Real-time pacing on the recording's timestamps.
