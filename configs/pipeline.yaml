@@ -59,7 +59,7 @@ localization:
   # the image and overlaps min_overlap of its width) measures a contact point that is not the
   # road user's: its position standard deviation is multiplied by noise_scale (1: off).
   occlusion:
-    noise_scale: 3.0
+    noise_scale: 5.0
     min_overlap: 0.2
   forget_after_s: 5.0
   # Keypoint models (four bottom corners of the 3D box): the projected corners give the

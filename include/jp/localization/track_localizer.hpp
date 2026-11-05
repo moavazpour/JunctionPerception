@@ -60,7 +60,7 @@ struct LocalizerOptions {
   /// A measurement whose box bottom another road user's box covers (one whose bottom is lower
   /// in the image, so nearer to the camera, over at least `occlusion_min_overlap` of the
   /// width) has its position standard deviation multiplied by this factor (1: off).
-  double occlusion_noise_scale = 3.0;
+  double occlusion_noise_scale = 5.0;
   double occlusion_min_overlap = 0.2;
   /// Keypoint models: the footprint from the four bottom corners replaces the contact model, its
   /// front and rear corners give the heading (also of standing objects) and its sides the size.

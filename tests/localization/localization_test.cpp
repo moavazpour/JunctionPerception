@@ -224,8 +224,9 @@ classes:
 sources: {}
 )yaml");
   const Eigen::Matrix3d h = Eigen::Vector3d(0.1, 0.1, 1.0).asDiagonal();
-  // Largest speed of a standing bus while a van in front of it (lower in the image) covers its
-  // box bottom, which therefore moves up 2 m.
+  // Largest speed of a standing bus while a van passing in front of it (lower in the image)
+  // covers more and more of its box bottom, which creeps up 0.25 m per frame. (A sudden jump is
+  // the innovation gate's case, not this one.)
   const auto worst_speed = [&](double noise_scale) {
     jp::localization::LocalizerOptions options;
     options.contact_model = jp::localization::ContactModel::kNone;
@@ -241,7 +242,7 @@ sources: {}
     double worst = 0.0;
     for (int i = 0; i < 40; ++i) {
       const bool covered = i >= 20 && i < 30;
-      const float bottom = covered ? 280.0F : 300.0F;
+      const float bottom = covered ? 300.0F - (2.5F * static_cast<float>(i - 19)) : 300.0F;
       bus.detection.box = cv::Rect2f(80, bottom - 60, 120, 60);
       van.detection.box = cv::Rect2f(60 + (4.0F * static_cast<float>(i)), 270, 60, 50);
       std::vector<jp::tracking::TrackedObject> tracks{bus};
@@ -249,13 +250,16 @@ sources: {}
         tracks.push_back(van);
       }
       const auto objects = localizer.update(tracks, i * kFrameNs);
-      if (i >= 20) {
+      if (covered) {
         worst = std::max(worst, objects.front().speed_mps);
       }
     }
     return worst;
   };
-  EXPECT_LT(worst_speed(3.0), 0.5 * worst_speed(1.0));
+  // Off, the filter follows the creep at 1.8 m/s; at the default scale it stays below the 1 m/s
+  // motion-heading gate.
+  EXPECT_LT(worst_speed(5.0), 0.5 * worst_speed(1.0));
+  EXPECT_LT(worst_speed(5.0), 1.0);
 }
 
 TEST(TrackLocalizer, VehicleHeadingTurnsAtALimitedRate) {
