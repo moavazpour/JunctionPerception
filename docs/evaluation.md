@@ -11,7 +11,8 @@ JP_DATA_ROOT=<dataset root> JP_PYTHON=<python with matplotlib> scripts/run_bench
 
 runs every sequence and camera for each bias-correction variant, evaluates them with `jp_eval`
 (settings in `configs/evaluation.yaml`) and writes `outputs/<run>/eval/<variant>/report.md`,
-`metrics.json`, a comparison `summary.md` and figures (`tools/plot_evaluation.py`).
+`metrics.json`, `objects.csv` (each road user the twin shows with a heading, per frame, with its
+label and errors), a comparison `summary.md` and figures (`tools/plot_evaluation.py`).
 
 ## Method
 
@@ -329,3 +330,36 @@ control points and nothing entered (estimates: cam1 19.66 / 10.86 m, 8.69 m high
 cam1 now matches the dataset calibration's recall. south2 loses 1.6 points of recall and 0.06 of
 3D IoU against the ray offset: its control points estimate the camera 0.9 m too high, and box
 fit needs a better camera model than the ray offset does.
+
+## Road users the twin shows with a heading (2026-11-06)
+
+What a viewer of the twin sees: each road user drawn with a heading (oriented box), in each frame,
+against the labels of that frame (`objects.csv`, report section "Road users of the twin with a
+heading"). Road users without a heading, and the labels they match, are left out: the twin makes no
+claim on their orientation. Both site cameras as the console runs them (UI calibration, pose
+estimated from the control points, ROI, float16 detector), labels in the site frame, merged labels
+and trailers. Correct: a label within 2 m (vehicles) or 1 m (VRUs); misplaced: an unmatched label
+within 5 m; no label: nothing labelled near it (an unlabelled road user or a false detection).
+
+| | Objects (road user × frame) | Correct | Misplaced | No label | Position error, median / P90 (m) | Heading error, median / P90 (deg) | 3D IoU, median |
+|---|---|---|---|---|---|---|---|
+| Both | 7 128 | 52 % | 32 % | 17 % | 0.55 / 1.13 | 3.8 / 11.5 | 0.49 |
+| south1 s01 | 55 | 95 % | 5 % | 0 % | 0.25 / 0.75 | 3.4 / 21.4 | (pedestrians only) |
+| south2 s03 | 7 073 | 51 % | 32 % | 17 % | 0.55 / 1.13 | 3.8 / 11.0 | 0.49 |
+
+By distance from the camera: 20–40 m (3 200 objects) 85 % correct, median error 0.54 m;
+40–60 m (3 638) 25 % correct and 50 % misplaced (median 3.1 m off); 60–80 m (242) 9 % correct.
+By label class (correct ones): car median error 0.55 m, heading 3.4°, 3D IoU 0.53; van 0.36 m,
+IoU 0.22 (class size of a car); truck 1.0 m, IoU 0.07; bus 1.6 m; pedestrian 0.64 m.
+
+- Within 40 m the twin's oriented road users are where the labels are. Beyond it the error is
+  the calibration's: south2's pose is estimated 0.9 m too high and the site frame is aligned to
+  the labels with 0.85 m RMS (up to 1.44 m on the far points), both growing with distance.
+- On s01 nearly every vehicle stands, so south1 shows only 55 oriented objects.
+- Motorcycles: heading median 166° from the label yaw, i.e. reversed; whether the labels' or the
+  twin's direction is wrong is not checked.
+- 17 % "no label" are 38 twin tracks; one of them is 280 of 1 189. Which are unlabelled road
+  users and which false detections is not checked (it needs a look at the images).
+- Labels found (labels matched by an oriented road user, over the labels not matched by a
+  headingless one) is 33 %: the rest are matched by no road user (outside the ROI, beyond the
+  gate or not detected).
