@@ -147,7 +147,34 @@ TEST(ControlPoints, FilesRoundTrip) {
   EXPECT_TRUE(read.image_to_ground.isApprox(calibration.image_to_ground, 1e-9));
   EXPECT_TRUE(read.ground_projection_estimated);
   EXPECT_NEAR(read.camera_height_m, 9.0, 1e-3);
+  // An estimated pose is written as such, so the page does not take it over as entered.
+  EXPECT_FALSE(read.camera_position_entered);
+  EXPECT_FALSE(read.camera_height_entered);
+
+  const auto entered =
+      jp::calibration::calibration_from_fit(fit, "test", 1920, 1080, std::nullopt, 9.0);
+  jp::calibration::write_ground_calibration(dir / "ground_homography.yaml", entered, fit);
+  const auto read_entered =
+      jp::calibration::load_ground_calibration(dir / "ground_homography.yaml");
+  EXPECT_FALSE(read_entered.camera_position_entered);
+  EXPECT_TRUE(read_entered.camera_height_entered);
   std::filesystem::remove_all(dir);
+}
+
+TEST(ControlPointFit, EnteredHeightAloneUsesTheEstimatedPosition) {
+  const auto projection = test_projection();
+  const auto fit = jp::calibration::fit_control_points(points_on_ground(projection), 1920, 1080);
+  // The true height with the position the points give: the projection matches the camera.
+  const auto calibration =
+      jp::calibration::calibration_from_fit(fit, "test", 1920, 1080, std::nullopt, 9.0);
+  EXPECT_TRUE(calibration.camera_height_entered);
+  EXPECT_FALSE(calibration.camera_position_entered);
+  ASSERT_TRUE(calibration.ground_projection.has_value());
+  const Eigen::Vector4d top(12, 35, 3, 1);
+  EXPECT_LT(
+      ((*calibration.ground_projection * top).hnormalized() - (projection * top).hnormalized())
+          .norm(),
+      0.1);
 }
 
 }  // namespace

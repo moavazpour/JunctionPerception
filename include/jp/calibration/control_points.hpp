@@ -55,10 +55,10 @@ struct ControlPointFit {
 /// Camera centre (x, y, z) of a projection matrix in its world frame.
 [[nodiscard]] Eigen::Vector3d camera_center(const Eigen::Matrix<double, 3, 4>& projection);
 
-/// Ground calibration of a custom scene from a fit. `camera_position` overrides the camera
-/// ground position recovered from the homography (e.g. marked on the map); with
-/// `camera_height_m` as well, the camera projection is derived from that centre instead of the
-/// focal length estimate.
+/// Ground calibration of a custom scene from a fit. `camera_position` (marked on the map) and
+/// `camera_height_m` (entered) override the camera pose recovered from the homography and are
+/// flagged as entered; with either, the camera projection is derived from the camera centre
+/// (the other coordinate estimated) instead of the focal length estimate.
 [[nodiscard]] GroundCalibration calibration_from_fit(
     const ControlPointFit& fit, const std::string& camera, int width_px, int height_px,
     const std::optional<Eigen::Vector2d>& camera_position = std::nullopt,

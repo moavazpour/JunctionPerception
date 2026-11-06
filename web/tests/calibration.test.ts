@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { View2D } from '../src/calibration/panZoom';
 import { crossingSuggestions, type OsmLayer, widenSegment } from '../src/map/mapData';
-import { applyHomography, invert3 } from '../src/net/calibrationApi';
+import { applyHomography, enteredCameraPose, invert3 } from '../src/net/calibrationApi';
+import type { SceneDescription } from '../src/net/client';
 
 describe('View2D', () => {
   it('round-trips content and screen coordinates with y up', () => {
@@ -106,5 +107,35 @@ describe('map geometry', () => {
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(4);
     expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(8);
     expect(way).toHaveLength(4);
+  });
+});
+
+describe('enteredCameraPose', () => {
+  const scene = (entered: { position?: boolean; height?: boolean }): SceneDescription => ({
+    scene_id: 's',
+    kind: 'custom',
+    image_size_px: [1920, 1200],
+    calibrated: true,
+    camera_ground_position_m: [18, -1],
+    camera_height_m: 8.7,
+    camera_position_entered: entered.position,
+    camera_height_entered: entered.height,
+    geo_anchor: null,
+    map: null,
+    zones: { type: 'FeatureCollection', features: [] },
+    classes: [],
+  });
+
+  it('does not take over an estimated pose', () => {
+    // Saved back as entered, it would stay when the control points change.
+    expect(enteredCameraPose(scene({}))).toEqual({ position: null, height: null });
+  });
+
+  it('keeps what was entered, each on its own', () => {
+    expect(enteredCameraPose(scene({ position: true }))).toEqual({
+      position: [18, -1],
+      height: null,
+    });
+    expect(enteredCameraPose(scene({ height: true }))).toEqual({ position: null, height: 8.7 });
   });
 });

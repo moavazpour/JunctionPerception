@@ -109,7 +109,8 @@ returns the latest site state for headless use.
 layers are downloaded around it) and its one to four cameras with their sources (uploaded video,
 video below the data root, RTSP/HTTP stream or recording). Calibrate each camera in
 *Calibration*: at least eight points in the camera image and the same points on the aerial image,
-check the residuals, set the camera position if needed, draw zones, save and apply
+check the residuals, set the camera position or height by hand only if the points cannot
+constrain them (entered values stay until *Use the estimate*), draw zones, save and apply
 ([docs/map-data.md](docs/map-data.md)). In *ROI and lines*, areas and banded lines limit where
 road users are detected, and signal areas around traffic-light heads are read for their colour;
 place the lights in the twin with *Traffic lights*. Cameras whose recordings did not start

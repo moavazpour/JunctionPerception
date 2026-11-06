@@ -152,10 +152,19 @@ GroundCalibration calibration_from_fit(const ControlPointFit& fit, const std::st
   }
   if (camera_position) {
     calibration.camera_ground_position_m = *camera_position;
+    calibration.camera_position_entered = true;
   }
-  if (camera_position && camera_height_m) {
-    const Eigen::Vector3d center(camera_position->x(), camera_position->y(), *camera_height_m);
+  if (camera_height_m) {
     calibration.camera_height_m = *camera_height_m;
+    calibration.camera_height_entered = true;
+  }
+  // An entered position or height, completed by the estimate where only one was entered, fixes
+  // the camera centre the projection is derived from.
+  if ((camera_position || camera_height_m) && (camera_position || fit.camera_position) &&
+      calibration.camera_height_m > 0.0) {
+    const Eigen::Vector3d center(calibration.camera_ground_position_m.x(),
+                                 calibration.camera_ground_position_m.y(),
+                                 calibration.camera_height_m);
     calibration.ground_projection =
         projection_from_camera_center(fit.image_to_ground.inverse(), center, width_px, height_px);
     calibration.ground_projection_estimated = calibration.ground_projection.has_value();
@@ -179,6 +188,8 @@ void write_ground_calibration(const std::filesystem::path& path,
   root["camera_ground_position_m"] =
       flow_pair(calibration.camera_ground_position_m.x(), calibration.camera_ground_position_m.y());
   root["camera_height_m"] = calibration.camera_height_m;
+  root["camera_position_entered"] = calibration.camera_position_entered;
+  root["camera_height_entered"] = calibration.camera_height_entered;
   YAML::Node check;
   check["fit_points"] = fit.fit_points;
   check["inliers"] = fit.inliers;

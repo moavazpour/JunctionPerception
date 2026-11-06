@@ -30,6 +30,9 @@ export interface SceneDescription {
   /** Image-to-ground homography (row-major 3 x 3) of a calibrated camera; absent in older servers. */
   image_to_ground?: number[][] | null;
   camera_height_m: number | null;
+  /** The pose above was entered by hand, else estimated from the control points (absent: older servers). */
+  camera_position_entered?: boolean;
+  camera_height_entered?: boolean;
   geo_anchor: { lat_deg: number; lon_deg: number; alt_m: number } | null;
   /** URL of the map manifest, or null if the scene has no map layers. */
   map: string | null;

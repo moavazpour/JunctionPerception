@@ -102,6 +102,8 @@ std::string scene_description(const ServedScene& scene, const core::ClassCatalog
                       {"calibrated", scene.ground.has_value()},
                       {"camera_ground_position_m", nullptr},
                       {"camera_height_m", nullptr},
+                      {"camera_position_entered", false},
+                      {"camera_height_entered", false},
                       {"geo_anchor", nullptr},
                       {"image_to_ground", nullptr},
                       {"map", has_map ? json("/map/map.json") : json(nullptr)},
@@ -110,6 +112,8 @@ std::string scene_description(const ServedScene& scene, const core::ClassCatalog
   if (scene.ground) {
     description["camera_ground_position_m"] = pair(scene.ground->camera_ground_position_m);
     description["camera_height_m"] = scene.ground->camera_height_m;
+    description["camera_position_entered"] = scene.ground->camera_position_entered;
+    description["camera_height_entered"] = scene.ground->camera_height_entered;
     json h = json::array();
     for (int r = 0; r < 3; ++r) {
       const auto& m = scene.ground->image_to_ground;

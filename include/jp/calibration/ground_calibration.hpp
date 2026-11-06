@@ -16,6 +16,10 @@ struct GroundCalibration {
   Eigen::Matrix3d image_to_ground = Eigen::Matrix3d::Identity();
   Eigen::Vector2d camera_ground_position_m = Eigen::Vector2d::Zero();
   double camera_height_m = 0.0;
+  /// The position and height above were entered by hand (control-point calibrations), else
+  /// estimated from the homography. Only entered values are kept when the points change.
+  bool camera_position_entered = false;
+  bool camera_height_entered = false;
   /// Full camera projection from the ground frame to pixels: stored for benchmark scenes,
   /// otherwise estimated from the homography (square pixels, centred principal point).
   std::optional<Eigen::Matrix<double, 3, 4>> ground_projection;

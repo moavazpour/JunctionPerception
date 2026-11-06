@@ -10,6 +10,7 @@ import {
 import {
   applyHomography,
   type ControlPoint,
+  enteredCameraPose,
   fetchControlPoints,
   fitControlPoints,
   type FitResult,
@@ -190,11 +191,11 @@ class CalibrationApp {
         : 'crosswalk',
       polygon: (f.geometry.coordinates[0] ?? []).slice(0, -1).map(([x = 0, y = 0]) => [x, y]),
     }));
-    // A camera pose set by hand earlier stays until it is changed.
-    if (scene.camera_ground_position_m && scene.camera_height_m && scene.camera_height_m > 0) {
-      this.cameraOverride = scene.camera_ground_position_m;
-      this.cameraHeight = scene.camera_height_m;
-    }
+    // A camera pose entered by hand earlier stays until it is changed; an estimated one follows
+    // the control points.
+    const entered = enteredCameraPose(scene);
+    this.cameraOverride = entered.position;
+    this.cameraHeight = entered.height;
     this.bindControls();
     this.loadImages();
   }
@@ -227,6 +228,13 @@ class CalibrationApp {
     height.addEventListener('change', () => {
       const value = Number.parseFloat(height.value);
       this.cameraHeight = Number.isFinite(value) && value > 0 ? value : null;
+    });
+    element('#camera-estimate').addEventListener('click', () => {
+      this.cameraOverride = null;
+      this.cameraHeight = null;
+      height.value = '';
+      this.message('Camera pose estimated from the control points; Save to keep it.');
+      this.redraw();
     });
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && this.mode === 'zones') {
@@ -300,7 +308,7 @@ class CalibrationApp {
       regions:
         'Click points in the camera image, then "Finish ROI" (3+ points), "Finish line" (2+ points) or "Finish signal" (two corners around a traffic light head). With an ROI (region of interest), only road users inside it are detected and shown. A line with three or more points outlines a lane: after finishing it, click where its traffic comes from and then where it goes; the twin shows its queue and the statistics count the vehicles passing it in that direction. Lines with a band keep only road users that close to the line. Signals are read for their colour and shown in the twin once placed there. Save applies them at once.',
       camera:
-        'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and enter its height above the road.',
+        'The camera pose is estimated from the control points. Where they cannot constrain it (long lenses, points along one road), click the camera position on the map and/or enter its height above the road: entered values are kept when the points change, "Use the estimate" drops them.',
     };
     element('#hint').textContent = hints[mode];
     this.renderList();
@@ -1003,10 +1011,19 @@ function layout(): HTMLElement {
         h('div', { id: 'summary', class: 'summary' }),
         h('ul', { id: 'items', class: 'items' }),
         h(
-          'label',
-          { id: 'camera-height', class: 'field', hidden: true },
-          h('span', {}, 'Camera height above the road (m)'),
-          h('input', { type: 'number', min: 0.5, step: 0.1, class: 'input' }),
+          'div',
+          { id: 'camera-height', class: 'actions', hidden: true },
+          h(
+            'label',
+            { class: 'field' },
+            h('span', {}, 'Camera height above the road (m)'),
+            h('input', { type: 'number', min: 0.5, step: 0.1, class: 'input' }),
+          ),
+          h(
+            'button',
+            { id: 'camera-estimate', type: 'button', class: 'btn small' },
+            'Use the estimate',
+          ),
         ),
         h(
           'div',

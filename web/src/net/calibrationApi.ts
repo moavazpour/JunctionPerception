@@ -1,4 +1,4 @@
-import { siteUrl, type ZoneCollection } from './client';
+import { type SceneDescription, siteUrl, type ZoneCollection } from './client';
 
 /** A control point: image position (px) and map position (world frame, m). */
 export interface ControlPoint {
@@ -110,8 +110,23 @@ export function saveCalibration(
   return post<FitResult>(siteUrl('/api/calibration/save'), {
     points,
     camera_position_m: cameraPosition,
-    camera_height_m: cameraPosition ? cameraHeight : null,
+    camera_height_m: cameraHeight,
   });
+}
+
+/**
+ * The camera pose of a calibration that was entered by hand. An estimated pose is not taken
+ * over: saving it back as entered would keep it when the control points change.
+ */
+export function enteredCameraPose(scene: SceneDescription): {
+  position: [number, number] | null;
+  height: number | null;
+} {
+  const height = scene.camera_height_m;
+  return {
+    position: scene.camera_position_entered ? scene.camera_ground_position_m : null,
+    height: scene.camera_height_entered && height !== null && height > 0 ? height : null,
+  };
 }
 
 /** Saves the zones on the selected camera's server (or the one at `base`). */

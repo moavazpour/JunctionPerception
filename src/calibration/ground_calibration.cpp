@@ -43,6 +43,11 @@ GroundCalibration parse_ground_calibration(std::string_view yaml_text) {
     const YAML::Node position = root["camera_ground_position_m"];
     calibration.camera_ground_position_m = {position[0].as<double>(), position[1].as<double>()};
     calibration.camera_height_m = root["camera_height_m"].as<double>();
+    // Files written before these keys: the pose counts as estimated.
+    calibration.camera_position_entered =
+        root["camera_position_entered"] && root["camera_position_entered"].as<bool>();
+    calibration.camera_height_entered =
+        root["camera_height_entered"] && root["camera_height_entered"].as<bool>();
     if (root["ground_projection"]) {
       // Site calibrations were written with the homography's scale; benchmark ones are metric.
       calibration.ground_projection =
