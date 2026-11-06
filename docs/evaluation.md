@@ -286,14 +286,26 @@ vehicles stand (884 of 923 matched), so none gets a motion heading and no IoU ca
 Recall by distance, ROI / no ROI: 0–20 m 0.29 / 0.86, 20–40 m 0.65 / 0.66, 40–60 m 0.03 / 0.60,
 60–80 m 0.00 / 0.73. Vans and trucks (with trailer) 0.00 with the ROI, 0.86 and 0.54 without.
 
-- The cam1 detection area ends about 40 m from the gantry and leaves out the far lanes: two thirds of
-  the labels it misses are outside it.
-- The ground mapping of the UI calibration agrees with the dataset's within 0.2–0.5 m over most
-  of the image (1.2 m in the far upper right). The 1.6 m error comes from the camera model that
-  box fit uses: with the dataset's camera model and the UI homography, the run matches the
-  dataset calibration (recall 0.500, 0.72 m). The console builds that model from the camera
-  position and height entered with the control points (`projection_from_camera_center`); 0.4 m
-  off in position (19.22 / 10.71 against 19.61 / 10.55) and 0.1 m in height tilt it by 2° and
-  place the vehicles 1.6 m too far. Estimating it from the homography alone (square pixels,
-  principal point at the image centre) recovers most of it here (0.95 m), but not on south2 s03
-  (recall 0.384 against 0.400), whose entered position is 5 m off and whose model is skewed.
+- The cam1 detection area ends about 40 m from the gantry and leaves out the far lanes: two
+  thirds of the labels it misses are outside it.
+- Box fit never ran with these calibrations. A camera model built from control points kept the
+  homography's arbitrary scale, so its third projected coordinate was no depth in metres, box
+  fit rejected every fit as "behind the camera" and the localizer fell back to the ray offset
+  (identical output). The ray offset moves cam1's vehicles 2.25 m from the box bottom, box fit
+  with the dataset's model 1.0 m: hence the 1.6 m. The ground mappings themselves differ by 0.40 m
+  (median) where cam1's vehicles are, 0.56 m for south2's.
+
+### Box fit with control-point calibrations (`metric_projection`)
+
+Camera models are now scaled to metres when built and when loaded, so box fit runs with site
+calibrations. Same runs as above (ROI, labels in the site frame):
+
+| | Ray offset (before) | Box fit, entered camera position | Box fit, model from the homography alone | Box fit, dataset's camera position | Dataset calibration |
+|---|---|---|---|---|---|
+| cam1 s01: recall / median error (m) | 0.396 / 1.64 | 0.483 / 1.09 | 0.483 / 1.12 | | 0.500 / 0.71 |
+| south2 s03: recall / median error (m) | 0.400 / 0.55 | 0.367 / 0.77 | 0.387 / 0.65 | 0.399 / 0.65 | 0.504 / 0.46 |
+| south2 s03: 3D IoU, median | 0.55 | 0.38 | 0.45 | 0.45 | 0.56 |
+
+Box fit is only as good as the camera model under it: on cam1 it removes most of the error, on
+south2, whose entered camera position is 5 m off and whose homography disagrees more with the
+dataset, it is worse than the ray offset even with the dataset's camera position.

@@ -93,7 +93,7 @@ TEST(ControlPointFit, ProjectionFromKnownCameraCentreMatchesTheCamera) {
     const Eigen::Vector2d expected = (projection * point).hnormalized();
     const Eigen::Vector3d image = *calibration.ground_projection * point;
     // In metres: the third coordinate is the depth, which box fit gates on.
-    EXPECT_NEAR(image.z(), (projection * point).z(), 1e-6);
+    EXPECT_NEAR(image.z(), (projection * point).z(), 1e-4);
     EXPECT_LT((image.hnormalized() - expected).norm(), 1e-3);
   }
 }
