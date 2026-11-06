@@ -207,3 +207,34 @@ TEST(Evaluation, ErrorsByDistanceFromTheCamera) {
 }
 
 }  // namespace
+
+TEST(Evaluation, TwinAccuracyCountsOnlyRoadUsersWithAHeading) {
+  // Label 1 matched 0.5 m off with a heading 10 degrees off; label 2 matched by a road user
+  // without a heading (left out with its label); label 3 missed, a road user 3 m from it;
+  // a road user 20 m from every label; label 4 missed by everything.
+  const auto with_heading = [](std::int64_t id, double x, double y) {
+    auto p = predicted(id, false, x, y);
+    p.heading_rad = 10.0 * std::numbers::pi / 180.0;
+    p.size_m = {4.5, 1.8};
+    return p;
+  };
+  const auto s = one_frame({truth(1, false, 0, 0), truth(2, false, 0, 10), truth(3, false, 0, 30),
+                            truth(4, false, 0, 60)},
+                           {with_heading(7, 0.5, 0), predicted(8, false, 0, 10),
+                            with_heading(9, 3, 30), with_heading(10, 0, 100)});
+  const auto a = jp::evaluation::twin_accuracy({&s}, {});
+  EXPECT_EQ(a.objects, 3U);
+  EXPECT_EQ(a.correct, 1U);
+  EXPECT_EQ(a.misplaced, 1U);
+  EXPECT_EQ(a.no_label, 1U);
+  EXPECT_NEAR(a.position_m.median, 0.5, 1e-12);
+  EXPECT_NEAR(a.heading_deg.median, 10.0, 1e-9);
+  EXPECT_EQ(a.iou.count, 1U);
+  EXPECT_EQ(a.labels, 3U);
+  EXPECT_EQ(a.labels_found, 1U);
+  ASSERT_EQ(a.records.size(), 3U);
+  EXPECT_EQ(a.records[1].status, jp::evaluation::TwinObjectStatus::kMisplaced);
+  EXPECT_EQ(a.records[1].label_track_id, 3);
+  EXPECT_NEAR(a.records[1].distance_m, 3.0, 1e-12);
+  EXPECT_FALSE(a.records[2].label_track_id.has_value());
+}

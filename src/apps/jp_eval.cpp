@@ -8,6 +8,7 @@
 #include <fstream>
 #include <map>
 #include <nlohmann/json.hpp>
+#include <numbers>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -361,6 +362,87 @@ std::string report(const std::string& title, const jp::evaluation::Options& opti
   return md;
 }
 
+const char* status_name(jp::evaluation::TwinObjectStatus status) {
+  switch (status) {
+    case jp::evaluation::TwinObjectStatus::kCorrect:
+      return "correct";
+    case jp::evaluation::TwinObjectStatus::kMisplaced:
+      return "misplaced";
+    case jp::evaluation::TwinObjectStatus::kNoLabel:
+      return "no_label";
+  }
+  return "";
+}
+
+json twin_json(const jp::evaluation::TwinAccuracy& a) {
+  return {{"objects", a.objects},
+          {"correct", a.correct},
+          {"misplaced", a.misplaced},
+          {"no_label", a.no_label},
+          {"correct_share", ratio(a.correct, a.objects)},
+          {"correct_share_of_labelled", ratio(a.correct, a.correct + a.misplaced)},
+          {"position_m", stats_json(a.position_m)},
+          {"heading_deg", stats_json(a.heading_deg)},
+          {"iou", stats_json(a.iou)},
+          {"iou_3d", stats_json(a.iou_3d)},
+          {"labels", a.labels},
+          {"labels_found", a.labels_found},
+          {"recall", ratio(a.labels_found, a.labels)}};
+}
+
+std::string twin_row(const std::string& name, const jp::evaluation::TwinAccuracy& a) {
+  return std::format(
+      "| {} | {} | {} | {} | {} | {:.2f} / {:.2f} / {:.2f} | {:.1f} / {:.1f} | {:.2f} / {:.2f} | "
+      "{} / {} ({:.0f} %) |\n",
+      name, a.objects, share(a.correct, a.objects), share(a.misplaced, a.objects),
+      share(a.no_label, a.objects), a.position_m.mean, a.position_m.median, a.position_m.p90,
+      a.heading_deg.median, a.heading_deg.p90, a.iou.median, a.iou_3d.median, a.labels_found,
+      a.labels, 100.0 * ratio(a.labels_found, a.labels));
+}
+
+std::string twin_report(
+    const jp::evaluation::Options& options,
+    const std::vector<std::pair<std::string, jp::evaluation::TwinAccuracy>>& groups) {
+  std::string md = std::format(
+      "\n## Road users of the twin with a heading\n\nEach road user the twin shows with a heading, "
+      "in each frame (objects.csv lists them). Correct: matched to a label within {:.1f} m "
+      "(vehicles) or {:.1f} m (VRUs). Misplaced: an unmatched label within {:.1f} m. No label: "
+      "nothing labelled near it, an unlabelled road user or a false detection. Road users without "
+      "a heading and the labels they match are left out. Position error of the correct ones (m), "
+      "heading against the label yaw (deg), IoU medians of correct vehicles. Labels found: visible "
+      "labels matched by a road user with a heading.\n\n| Group | Objects | Correct | Misplaced | "
+      "No label | Position error (m) | Heading error (deg) | BEV / 3D IoU | Labels found "
+      "|\n|---|---|---|---|---|---|---|---|---|\n",
+      options.vehicle_gate_m, options.vru_gate_m, options.displaced_gate_m);
+  for (const auto& [name, a] : groups) {
+    md += twin_row(name, a);
+  }
+  return md;
+}
+
+std::string optional_text(const std::optional<double>& value) {
+  return value ? std::format("{:.3f}", *value) : std::string{};
+}
+
+std::string objects_csv(const jp::evaluation::TwinAccuracy& accuracy) {
+  std::string csv =
+      "run,frame,timestamp_ns,id,class,x_m,y_m,heading_deg,status,label_track_id,label_class,"
+      "label_x_m,label_y_m,distance_m,heading_error_deg,iou,iou_3d\n";
+  for (const auto& r : accuracy.records) {
+    const bool labelled = r.label_track_id.has_value();
+    csv += std::format("{},{},{},{},{},{:.3f},{:.3f},{:.1f},{},{},{},{},{},{},{},{},{}\n", r.run,
+                       r.frame, r.timestamp_ns, r.id, r.twin_class, r.position.x(), r.position.y(),
+                       r.heading_rad * 180.0 / std::numbers::pi, status_name(r.status),
+                       labelled ? std::to_string(*r.label_track_id) : "", r.label_class,
+                       labelled ? std::format("{:.3f}", r.label_position.x()) : "",
+                       labelled ? std::format("{:.3f}", r.label_position.y()) : "",
+                       labelled ? std::format("{:.3f}", r.distance_m) : "",
+                       optional_text(r.heading_error_deg), optional_text(r.iou),
+                       optional_text(r.iou_3d));
+  }
+  return csv;
+}
+
 void write_text(const std::filesystem::path& path, const std::string& text) {
   std::ofstream out(path);
   if (!out) {
@@ -384,7 +466,8 @@ int main(int argc, char** argv) {
       ->required();
   app.add_option("--classes", classes, "Class catalog")->capture_default_str();
   app.add_option("--config", config, "Evaluation settings")->capture_default_str();
-  app.add_option("--out", out_dir, "Output folder for metrics.json and report.md")->required();
+  app.add_option("--out", out_dir, "Output folder for metrics.json, report.md and objects.csv")
+      ->required();
   app.add_option("--title", title, "Report title")->capture_default_str();
   app.add_option("--labels", labels,
                  "Ground truth: south (south LiDAR labels) or merged (south and north)")
@@ -436,10 +519,17 @@ int main(int argc, char** argv) {
       groups.emplace_back(condition, m);
     }
     json by_run = json::object();
+    const auto twin =
+        jp::evaluation::twin_accuracy(select([](const auto&) { return true; }), options);
+    std::vector<std::pair<std::string, jp::evaluation::TwinAccuracy>> twin_groups = {{"all", twin}};
+    json twin_by_run = json::object();
     for (const auto& s : sequences) {
       const auto m = jp::evaluation::evaluate({&s}, options);
       by_run[s.label] = metrics_json(m);
       groups.emplace_back(s.label, m);
+      const auto a = jp::evaluation::twin_accuracy({&s}, options);
+      twin_by_run[s.label] = twin_json(a);
+      twin_groups.emplace_back(s.label, a);
     }
     const json metrics = {{"title", title},
                           {"options",
@@ -450,11 +540,13 @@ int main(int argc, char** argv) {
                             {"merge_trailers", merge_trailers}}},
                           {"overall", metrics_json(overall)},
                           {"by_condition", by_condition},
-                          {"by_run", by_run}};
+                          {"by_run", by_run},
+                          {"twin_objects", {{"all", twin_json(twin)}, {"by_run", twin_by_run}}}};
     std::filesystem::create_directories(out_dir);
     write_text(std::filesystem::path(out_dir) / "metrics.json", metrics.dump(2) + "\n");
     write_text(std::filesystem::path(out_dir) / "report.md",
-               report(title, options, groups, overall));
+               report(title, options, groups, overall) + twin_report(options, twin_groups));
+    write_text(std::filesystem::path(out_dir) / "objects.csv", objects_csv(twin));
     spdlog::info("{}: precision {:.3f}, recall {:.3f}, position error median {:.2f} m; wrote {}",
                  title, overall.precision(), overall.recall(), overall.position_m.median, out_dir);
   } catch (const std::exception& error) {

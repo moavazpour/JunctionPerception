@@ -589,4 +589,128 @@ Metrics evaluate(const std::vector<const Sequence*>& sequences, const Options& o
   return metrics;
 }
 
+namespace {
+
+// A twin road user with a heading, before it is compared with the labels.
+TwinObjectRecord twin_record(const Sequence& sequence, const Frame& frame,
+                             const PredictedObject& prediction) {
+  TwinObjectRecord record;
+  record.run = sequence.label;
+  record.frame = frame.index;
+  record.timestamp_ns = frame.timestamp_ns;
+  record.id = prediction.id;
+  record.twin_class = prediction.twin_class;
+  record.position = prediction.position;
+  record.heading_rad = prediction.heading_rad.value_or(0.0);
+  return record;
+}
+
+void set_label(TwinObjectRecord& record, const TruthObject& label) {
+  record.label_track_id = label.track_id;
+  record.label_class = label.twin_class;
+  record.label_position = label.position;
+  record.distance_m = (label.position - record.position).norm();
+}
+
+void score_match(TwinObjectRecord& record, const TruthObject& label,
+                 const PredictedObject& prediction) {
+  set_label(record, label);
+  record.status = TwinObjectStatus::kCorrect;
+  record.heading_error_deg = angle_error_deg(record.heading_rad, label.yaw_rad);
+  if (label.vru || prediction.size_m.x() <= 0.0) {
+    return;
+  }
+  const Polygon a = rectangle(label.position, label.yaw_rad, label.length_m, label.width_m);
+  const Polygon b =
+      rectangle(record.position, record.heading_rad, prediction.size_m.x(), prediction.size_m.y());
+  record.iou = footprint_iou(a, b);
+  if (label.height_m > 0.0 && prediction.height_m > 0.0) {
+    record.iou_3d = box_iou(a, label.height_m, b, prediction.height_m);
+  }
+}
+
+// Nearest visible unmatched label within `gate` of `position`.
+const TruthObject* nearest_unmatched(const Frame& frame, const std::vector<std::size_t>& matches,
+                                     const Eigen::Vector2d& position, double gate) {
+  const TruthObject* nearest = nullptr;
+  double best = gate;
+  for (std::size_t t = 0; t < frame.truth.size(); ++t) {
+    const double d = (frame.truth[t].position - position).norm();
+    if (frame.truth[t].visible && matches[t] == kNone && d <= best) {
+      best = d;
+      nearest = &frame.truth[t];
+    }
+  }
+  return nearest;
+}
+
+void twin_frame(const Sequence& sequence, const Frame& frame, const Options& options,
+                TwinAccuracy& result) {
+  const auto matches = match_frame(frame, options);
+  std::vector<std::size_t> label_of(frame.predicted.size(), kNone);
+  for (std::size_t t = 0; t < matches.size(); ++t) {
+    const std::size_t p = matches[t];
+    if (p != kNone) {
+      label_of[p] = t;
+    }
+    if (frame.truth[t].visible && (p == kNone || frame.predicted[p].heading_rad)) {
+      ++result.labels;
+      result.labels_found += p != kNone ? 1 : 0;
+    }
+  }
+  for (std::size_t p = 0; p < frame.predicted.size(); ++p) {
+    const PredictedObject& prediction = frame.predicted[p];
+    const std::size_t t = label_of[p];
+    if (!prediction.heading_rad || (t != kNone && !frame.truth[t].visible)) {
+      continue;
+    }
+    TwinObjectRecord record = twin_record(sequence, frame, prediction);
+    if (t != kNone) {
+      score_match(record, frame.truth[t], prediction);
+    } else if (const TruthObject* label = nearest_unmatched(frame, matches, prediction.position,
+                                                            options.displaced_gate_m)) {
+      set_label(record, *label);
+      record.status = TwinObjectStatus::kMisplaced;
+    }
+    result.records.push_back(std::move(record));
+  }
+}
+
+}  // namespace
+
+TwinAccuracy twin_accuracy(const std::vector<const Sequence*>& sequences, const Options& options) {
+  TwinAccuracy result;
+  for (const Sequence* sequence : sequences) {
+    for (const Frame& frame : sequence->frames) {
+      twin_frame(*sequence, frame, options, result);
+    }
+  }
+  std::vector<double> position;
+  std::vector<double> heading;
+  std::vector<double> iou;
+  std::vector<double> iou_3d;
+  for (const auto& r : result.records) {
+    result.correct += r.status == TwinObjectStatus::kCorrect ? 1 : 0;
+    result.misplaced += r.status == TwinObjectStatus::kMisplaced ? 1 : 0;
+    result.no_label += r.status == TwinObjectStatus::kNoLabel ? 1 : 0;
+    if (r.status != TwinObjectStatus::kCorrect) {
+      continue;
+    }
+    position.push_back(r.distance_m);
+    heading.push_back(r.heading_error_deg.value_or(0.0));
+    if (r.iou) {
+      iou.push_back(*r.iou);
+    }
+    if (r.iou_3d) {
+      iou_3d.push_back(*r.iou_3d);
+    }
+  }
+  result.objects = result.records.size();
+  result.position_m = error_stats(position);
+  result.heading_deg = error_stats(heading);
+  result.iou = error_stats(iou);
+  result.iou_3d = error_stats(iou_3d);
+  return result;
+}
+
 }  // namespace jp::evaluation

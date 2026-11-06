@@ -161,4 +161,49 @@ struct Metrics {
 [[nodiscard]] Metrics evaluate(const std::vector<const Sequence*>& sequences,
                                const Options& options);
 
+/// What a road user of the twin with a heading is, against the labels of its frame.
+enum class TwinObjectStatus : std::uint8_t {
+  kCorrect,    ///< Matched to a label within the class gate.
+  kMisplaced,  ///< Not matched; an unmatched label lies within the displaced gate.
+  kNoLabel,    ///< Nothing labelled near it: an unlabelled road user or a false detection.
+};
+
+/// One road user of the twin with a heading in one frame, and its label if matched.
+struct TwinObjectRecord {
+  std::string run;
+  std::int64_t frame = 0;
+  std::int64_t timestamp_ns = 0;
+  std::int64_t id = 0;
+  std::string twin_class;
+  Eigen::Vector2d position = Eigen::Vector2d::Zero();
+  double heading_rad = 0.0;
+  TwinObjectStatus status = TwinObjectStatus::kNoLabel;
+  std::optional<std::int64_t> label_track_id;  ///< Matched or, if misplaced, nearest label.
+  std::string label_class;
+  Eigen::Vector2d label_position = Eigen::Vector2d::Zero();
+  double distance_m = 0.0;                  ///< To that label; 0 without one.
+  std::optional<double> heading_error_deg;  ///< Against the label's yaw (0-180); matched only.
+  std::optional<double> iou;                ///< Bird's-eye-view footprints; matched only.
+  std::optional<double> iou_3d;
+};
+
+/// Accuracy of what the twin shows: only road users with a heading, the ones the twin draws as
+/// oriented boxes. Road users without one, and the labels they are matched to, are left out.
+struct TwinAccuracy {
+  std::size_t objects = 0;  ///< Twin road users with a heading, not matched to unseen labels.
+  std::size_t correct = 0;
+  std::size_t misplaced = 0;
+  std::size_t no_label = 0;
+  ErrorStats position_m;  ///< Correct ones: distance to the label.
+  ErrorStats heading_deg;
+  ErrorStats iou;                ///< Correct vehicles.
+  ErrorStats iou_3d;             ///< Correct vehicles with label and class height.
+  std::size_t labels = 0;        ///< Visible labels, without those matched to headingless ones.
+  std::size_t labels_found = 0;  ///< ... matched to a twin road user with a heading.
+  std::vector<TwinObjectRecord> records;
+};
+
+[[nodiscard]] TwinAccuracy twin_accuracy(const std::vector<const Sequence*>& sequences,
+                                         const Options& options);
+
 }  // namespace jp::evaluation
