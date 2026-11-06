@@ -309,3 +309,23 @@ calibrations. Same runs as above (ROI, labels in the site frame):
 Box fit is only as good as the camera model under it: on cam1 it removes most of the error, on
 south2, whose entered camera position is 5 m off and whose homography disagrees more with the
 dataset, it is worse than the ray offset even with the dataset's camera position.
+
+### A camera pose locked as "entered"
+
+The calibration page took the camera position and height in the file as set by hand and saved
+them back as such, although the file always holds them: south2 kept the dataset's height from
+the file the site was created from and a position placed 5 m off on the map, cam1 the estimate of
+an older point set. The file now records which values were entered; saved again with their own
+control points and nothing entered (estimates: cam1 19.66 / 10.86 m, 8.69 m high; south2
+17.77 / −5.33 m, 9.63 m high, against the dataset's 17.32 / −6.18 m, 8.71 m):
+
+| | Before both fixes | Box fit, pose re-estimated | Dataset calibration |
+|---|---|---|---|
+| cam1 s01: recall / median error (m) | 0.396 / 1.64 | 0.502 / 0.95 | 0.500 / 0.71 |
+| south2 s03: recall / median error (m) | 0.400 / 0.55 | 0.384 / 0.57 | 0.504 / 0.46 |
+| south2 s03: 3D IoU, median | 0.55 | 0.49 | 0.56 |
+| Both: recall over 12 674 labels | 0.399 | 0.408 | 0.503 |
+
+cam1 now matches the dataset calibration's recall. south2 loses 1.6 points of recall and 0.06 of
+3D IoU against the ray offset: its control points estimate the camera 0.9 m too high, and box
+fit needs a better camera model than the ray offset does.
