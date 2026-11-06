@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { drawnSize, headingMeasured } from '../src/bev/bevView';
+import { drawnSize, groundOutline, headingMeasured } from '../src/bev/bevView';
 import {
   covarianceEllipse,
   footprintCorners,
@@ -163,5 +163,50 @@ describe('ground projection', () => {
   it('keeps a homography that is already positive on the ground', () => {
     const flipped = south2.map((row) => row.map((v) => -v));
     expect(groundHomography(flipped, size)).toBe(flipped);
+  });
+});
+
+describe('detection areas on the ground', () => {
+  // A camera 10 m above the origin looking along +y: v = 600 is the horizon.
+  const h = [
+    [0.01, 0, -9.6],
+    [0, 0, 10],
+    [0, 0.001, -0.6],
+  ];
+
+  it('projects an area below the horizon and keeps it within range', () => {
+    const area = groundOutline(
+      h,
+      [
+        [800, 800],
+        [1100, 800],
+        [1100, 1000],
+        [800, 1000],
+      ],
+      [0, 0],
+    );
+    expect(area.length).toBeGreaterThan(8);
+    for (const [, y] of area) {
+      expect(y).toBeGreaterThanOrEqual(25 - 1e-9);
+      expect(y).toBeLessThanOrEqual(50 + 1e-9);
+    }
+  });
+
+  it('leaves out the part above the horizon', () => {
+    const area = groundOutline(
+      h,
+      [
+        [800, 400],
+        [1100, 400],
+        [1100, 1000],
+        [800, 1000],
+      ],
+      [0, 0],
+      100,
+    );
+    for (const [x, y] of area) {
+      expect(Math.hypot(x, y)).toBeLessThanOrEqual(100 + 1e-9);
+      expect(y).toBeGreaterThan(0);
+    }
   });
 });

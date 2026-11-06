@@ -228,12 +228,14 @@ class CalibrationApp {
     height.addEventListener('change', () => {
       const value = Number.parseFloat(height.value);
       this.cameraHeight = Number.isFinite(value) && value > 0 ? value : null;
+      this.renderCameraNote();
     });
     element('#camera-estimate').addEventListener('click', () => {
       this.cameraOverride = null;
       this.cameraHeight = null;
       height.value = '';
       this.message('Camera pose estimated from the control points; Save to keep it.');
+      this.renderCameraNote();
       this.redraw();
     });
     window.addEventListener('keydown', (e) => {
@@ -577,6 +579,7 @@ class CalibrationApp {
     } else if (this.mode === 'camera') {
       this.cameraOverride = [x, y];
       this.message('Camera position set by hand.');
+      this.renderCameraNote();
     } else if (this.pendingPixel) {
       const [u, v] = this.pendingPixel;
       const id = `p${this.nextPoint++}`;
@@ -643,6 +646,28 @@ class CalibrationApp {
         ? `camera at (${fit.camera_position_m[0].toFixed(1)}, ${fit.camera_position_m[1].toFixed(1)}) m, ${fit.camera_height_m.toFixed(1)} m high`
         : 'camera position not recoverable: set it by hand';
     summary.textContent = `${fit.inliers}/${fit.fit_points} fit points kept · RMS ${fit.fit_rms_m.toFixed(2)} m · ${check} · ${camera}`;
+    this.renderCameraNote();
+  }
+
+  /** What the points give for the camera pose, next to what was entered by hand. */
+  private renderCameraNote(): void {
+    const fit = this.fit;
+    const estimate =
+      fit?.camera_position_m && fit.camera_height_m !== null
+        ? `Estimated from the points: ${fit.camera_height_m.toFixed(2)} m high, at (${fit.camera_position_m[0].toFixed(1)}, ${fit.camera_position_m[1].toFixed(1)}) m.`
+        : 'The points do not give the camera pose yet.';
+    const entered = [
+      this.cameraHeight !== null ? `height ${this.cameraHeight.toFixed(2)} m` : null,
+      this.cameraOverride
+        ? `position (${this.cameraOverride[0].toFixed(1)}, ${this.cameraOverride[1].toFixed(1)}) m`
+        : null,
+    ].filter((part) => part !== null);
+    element('#camera-note').textContent =
+      entered.length > 0 ? `${estimate} Entered by hand: ${entered.join(', ')}.` : estimate;
+    if (fit && fit.camera_height_m !== null) {
+      element<HTMLInputElement>('#camera-height input').placeholder =
+        `estimated ${fit.camera_height_m.toFixed(2)}`;
+    }
   }
 
   private renderList(): void {
@@ -1009,10 +1034,10 @@ function layout(): HTMLElement {
         { class: 'calib-sidebar' },
         h('p', { id: 'hint', class: 'hint' }),
         h('div', { id: 'summary', class: 'summary' }),
-        h('ul', { id: 'items', class: 'items' }),
         h(
           'div',
           { id: 'camera-height', class: 'actions', hidden: true },
+          h('p', { id: 'camera-note', class: 'hint' }),
           h(
             'label',
             { class: 'field' },
@@ -1025,6 +1050,7 @@ function layout(): HTMLElement {
             'Use the estimate',
           ),
         ),
+        h('ul', { id: 'items', class: 'items' }),
         h(
           'div',
           { id: 'zone-actions', class: 'actions', hidden: true },

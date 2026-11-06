@@ -288,12 +288,20 @@ class TwinPage {
     void fetchScene(base)
       .then((description) => {
         this.cameras.add(key);
-        this.view.addCamera(site.id, cameraId, description);
+        // Its place among the site's cameras keeps its colour when cameras load out of order.
+        const index = site.cameras.findIndex((c) => c.id === cameraId);
+        const name = site.cameras[index]?.name ?? cameraId;
+        this.view.addCamera(site.id, cameraId, description, name, Math.max(index, 0));
         void fetchRegions(base)
           .then((regions) => {
             this.regions.set(key, { base, regions });
             this.view.setSignals(site.id, cameraId, regions.signals);
             this.view.setLines(site.id, cameraId, regions.lines);
+            this.view.setAreas(
+              site.id,
+              cameraId,
+              regions.areas.map((area) => area.points),
+            );
             this.renderSignalBar(site.id);
           })
           .catch(() => undefined);

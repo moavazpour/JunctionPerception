@@ -62,6 +62,18 @@ export function classCss(name: string): string {
   return colors[name] ?? colors['other'] ?? '#94a3b8';
 }
 
+// One colour per camera of a site (at most four), apart from the blue of the lanes.
+const CAMERA_COLORS: Record<Theme, string[]> = {
+  dark: ['#f472b6', '#a3e635', '#fde047', '#c084fc'],
+  light: ['#db2777', '#65a30d', '#ca8a04', '#9333ea'],
+};
+
+/** CSS colour of the camera at `index` in its site: its marker, coverage and detection areas. */
+export function cameraCss(index: number): string {
+  const colors = CAMERA_COLORS[current];
+  return colors[index % colors.length] ?? '#f472b6';
+}
+
 /** Display names of the classes. */
 export const CLASS_LABELS: Record<string, string> = {
   car: 'Car',

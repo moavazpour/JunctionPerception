@@ -2,7 +2,7 @@ import type { MapData } from '../map/mapData';
 import type { SceneDescription } from '../net/client';
 import type { RoadUser, SiteState } from '../net/siteState';
 import { covarianceEllipse, footprintCorners, groundHomography, homography } from './geometry';
-import { classCss, mapPalette } from './palette';
+import { cameraCss, classCss, mapPalette } from './palette';
 import {
   type MapTransform,
   rotatePlacement,
@@ -54,6 +54,11 @@ interface GroundLine {
 
 interface CameraLayer {
   description: SceneDescription;
+  /** Display name and place among the site's cameras (its colour). */
+  name: string;
+  index: number;
+  /** Detection areas (ROIs) on the ground; empty: the camera detects everywhere it sees. */
+  areas: Vec[][];
   /** Image-to-ground homography oriented with groundHomography; null if not calibrated. */
   ground: number[][] | null;
   position: Vec | null;
@@ -101,12 +106,35 @@ export function cameraCoverage(
   rangeM = COVERAGE_RANGE_M,
 ): Vec[] {
   const [w, hgt] = size;
+  return groundOutline(
+    h,
+    [
+      [0, hgt],
+      [w, hgt],
+      [w, 0],
+      [0, 0],
+    ],
+    camera,
+    rangeM,
+  );
+}
+
+/**
+ * An image polygon (e.g. a detection area) on the ground: its edges sampled and projected,
+ * points above the horizon left out and points beyond `rangeM` from the camera pulled in.
+ */
+export function groundOutline(
+  h: number[][],
+  polygon: Vec[],
+  camera: Vec | null,
+  rangeM = COVERAGE_RANGE_M,
+): Vec[] {
   const border: Vec[] = [];
   const n = COVERAGE_SAMPLES;
-  for (let i = 0; i <= n; i++) border.push([(w * i) / n, hgt]);
-  for (let i = 0; i <= n; i++) border.push([w, hgt - (hgt * i) / n]);
-  for (let i = 0; i <= n; i++) border.push([w - (w * i) / n, 0]);
-  for (let i = 0; i <= n; i++) border.push([0, (hgt * i) / n]);
+  polygon.forEach(([u0, v0], index) => {
+    const [u1, v1] = polygon[(index + 1) % polygon.length] ?? [u0, v0];
+    for (let i = 0; i < n; i++) border.push([u0 + ((u1 - u0) * i) / n, v0 + ((v1 - v0) * i) / n]);
+  });
   const ground: Vec[] = [];
   for (const [u, v] of border) {
     const p = homography(h, u, v);
@@ -237,7 +265,13 @@ export class BevView {
   }
 
   /** A camera of a site: its position, ground coverage and zones (from its scene). */
-  addCamera(siteId: string, cameraId: string, description: SceneDescription): void {
+  addCamera(
+    siteId: string,
+    cameraId: string,
+    description: SceneDescription,
+    name = cameraId,
+    index = this.sites.get(siteId)?.cameras.size ?? 0,
+  ): void {
     const site = this.sites.get(siteId);
     if (!site || site.cameras.has(cameraId)) {
       return;
@@ -248,6 +282,9 @@ export class BevView {
       : null;
     site.cameras.set(cameraId, {
       description,
+      name,
+      index,
+      areas: [],
       ground: h,
       position,
       coverage: h ? cameraCoverage(h, description.image_size_px, position) : [],
@@ -281,6 +318,19 @@ export class BevView {
         };
       })
       .filter((line) => line.points.length >= 2);
+    this.invalidate();
+  }
+
+  /** Detection areas of a camera (image pixels), drawn on the ground in the camera's colour. */
+  setAreas(siteId: string, cameraId: string, areas: Vec[][]): void {
+    const camera = this.sites.get(siteId)?.cameras.get(cameraId);
+    const h = camera?.ground;
+    if (!camera || !h) {
+      return;
+    }
+    camera.areas = areas
+      .map((area) => groundOutline(h, area, camera.position))
+      .filter((area) => area.length >= 3);
     this.invalidate();
   }
 
@@ -753,20 +803,36 @@ export class BevView {
   /** Everything in the site frame: coverage, zones, lines, cameras, signals and road users. */
   private drawScene(site: BevSite): void {
     const { ctx, colors } = this;
-    // Ground coverage of the cameras: no road users outside it does not mean there are none.
+    // Ground coverage of the cameras (dashed) and where each detects (filled), in its colour:
+    // no road users outside them does not mean there are none.
     for (const camera of site.cameras.values()) {
+      const color = cameraCss(camera.index);
       if (camera.coverage.length >= 3) {
         this.path(camera.coverage);
         ctx.closePath();
-        ctx.fillStyle = colors.accent;
-        ctx.globalAlpha = 0.04;
-        ctx.fill();
-        ctx.globalAlpha = 0.35;
-        ctx.strokeStyle = colors.accent;
+        if (camera.areas.length === 0) {
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.06;
+          ctx.fill();
+        }
+        ctx.globalAlpha = 0.45;
+        ctx.strokeStyle = color;
         ctx.lineWidth = this.px(1);
         ctx.setLineDash([this.px(6), this.px(4)]);
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      for (const area of camera.areas) {
+        this.path(area);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.1;
+        ctx.fill();
+        ctx.globalAlpha = 0.6;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = this.px(1.2);
+        ctx.stroke();
         ctx.globalAlpha = 1;
       }
     }
@@ -851,8 +917,8 @@ export class BevView {
       ctx.beginPath();
       ctx.arc(x, y, this.px(4), 0, 2 * Math.PI);
       ctx.fill();
-      ctx.strokeStyle = colors.accent;
-      ctx.lineWidth = this.px(2);
+      ctx.strokeStyle = cameraCss(camera.index);
+      ctx.lineWidth = this.px(2.5);
       ctx.beginPath();
       ctx.arc(x, y, this.px(7), 0, 2 * Math.PI);
       ctx.stroke();
@@ -1044,6 +1110,13 @@ export class BevView {
     this.ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
     this.ctx.textBaseline = 'middle';
     for (const [cameraId, camera] of site.cameras) {
+      // Which camera stands where: its name beside its marker, small, in its colour.
+      if (camera.position) {
+        const [x, y] = this.toScreen(site, camera.position[0], camera.position[1]);
+        this.ctx.font = '10px system-ui, -apple-system, "Segoe UI", sans-serif';
+        this.text(camera.name, x + 11, y, cameraCss(camera.index), 'left', true);
+        this.ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+      }
       for (const def of camera.signals) {
         if (!def.position) {
           continue;
