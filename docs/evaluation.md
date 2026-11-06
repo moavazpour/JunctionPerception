@@ -358,8 +358,11 @@ IoU 0.22 (class size of a car); truck 1.0 m, IoU 0.07; bus 1.6 m; pedestrian 0.6
 - On s01 nearly every vehicle stands, so south1 shows only 55 oriented objects.
 - Motorcycles: heading median 166° from the label yaw, i.e. reversed; whether the labels' or the
   twin's direction is wrong is not checked.
-- 17 % "no label" are 38 twin tracks; one of them is 280 of 1 189. Which are unlabelled road
-  users and which false detections is not checked (it needs a look at the images).
+- 17 % "no label" are 38 twin tracks. The 16 largest (1 052 of the 1 189 objects) were checked
+  on the video frames: all are real road users the labels leave out (cars at the back of the
+  queue, cars in lanes with no label in those frames, pedestrians on the far sidewalk); one, 23
+  frames, may be a second box on a labelled car. No false detection was found among them, so
+  "correct" (52 %) is a lower bound; among objects with a label nearby it is 62 %.
 - Labels found (labels matched by an oriented road user, over the labels not matched by a
   headingless one) is 33 %: the rest are matched by no road user (outside the ROI, beyond the
   gate or not detected).
