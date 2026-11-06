@@ -4,9 +4,12 @@
 
 #include <Eigen/Geometry>
 #include <algorithm>
+#include <format>
 #include <numbers>
 #include <stdexcept>
+#include <string>
 
+#include "jp/calibration/ground_calibration.hpp"
 #include "jp/calibration/ground_homography.hpp"
 
 namespace {
@@ -89,9 +92,41 @@ TEST(ControlPointFit, ProjectionFromKnownCameraCentreMatchesTheCamera) {
        {Eigen::Vector4d(0, 20, 1.5, 1), Eigen::Vector4d(12, 35, 3, 1)}) {
     const Eigen::Vector2d expected = (projection * point).hnormalized();
     const Eigen::Vector3d image = *calibration.ground_projection * point;
-    EXPECT_GT(image.z(), 0.0);
+    // In metres: the third coordinate is the depth, which box fit gates on.
+    EXPECT_NEAR(image.z(), (projection * point).z(), 1e-6);
     EXPECT_LT((image.hnormalized() - expected).norm(), 1e-3);
   }
+}
+
+TEST(GroundCalibration, StoredProjectionIsScaledToMetres) {
+  // A site calibration written with the homography's scale (h33 = 1): loaded, its depths are in
+  // metres again.
+  const auto projection = test_projection();
+  Eigen::Matrix3d ground_to_image;
+  ground_to_image << projection.col(0), projection.col(1), projection.col(3);
+  const Eigen::Matrix3d image_to_ground = ground_to_image.inverse();
+  // Divided by a negative entry: the stored sign is also the wrong one.
+  const Eigen::Matrix<double, 3, 4> stored = projection / -std::abs(projection(2, 3));
+  const auto rows = [](const auto& m) {
+    std::string text;
+    for (Eigen::Index r = 0; r < m.rows(); ++r) {
+      text += "  - [";
+      for (Eigen::Index c = 0; c < m.cols(); ++c) {
+        text += std::format("{:.17g}{}", m(r, c), c + 1 < m.cols() ? ", " : "]\n");
+      }
+    }
+    return text;
+  };
+  std::string yaml = "camera: test\nimage_size_px: [1920, 1080]\nimage_to_ground:\n" +
+                     rows(image_to_ground) +
+                     "camera_ground_position_m: [5, -20]\ncamera_height_m: 9\n"
+                     "ground_projection:\n" +
+                     rows(stored);
+  yaml += "ground_projection_estimated: true\n";
+  const auto calibration = jp::calibration::parse_ground_calibration(yaml);
+  ASSERT_TRUE(calibration.ground_projection.has_value());
+  const Eigen::Vector4d point(0, 20, 1.5, 1);
+  EXPECT_NEAR((*calibration.ground_projection * point).z(), (projection * point).z(), 1e-3);
 }
 
 TEST(ControlPoints, FilesRoundTrip) {

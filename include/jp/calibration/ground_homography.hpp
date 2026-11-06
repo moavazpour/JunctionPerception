@@ -31,6 +31,17 @@ namespace jp::calibration {
 [[nodiscard]] std::optional<Eigen::Matrix<double, 3, 4>> projection_from_homography(
     const Eigen::Matrix3d& ground_to_image, int width_px, int height_px);
 
+/// Camera projection scaled to metres: unit principal axis (third row of the left 3x3) and the
+/// sign that puts `seen_ground_point`, a ground point the camera sees, in front of it. Its third
+/// projected coordinate is then the depth in metres, which box fit gates on; a projection built
+/// from a homography has the homography's arbitrary scale until then.
+[[nodiscard]] Eigen::Matrix<double, 3, 4> metric_projection(
+    const Eigen::Matrix<double, 3, 4>& projection, const Eigen::Vector2d& seen_ground_point);
+
+/// Ground point at the image centre, through an image-to-ground homography.
+[[nodiscard]] Eigen::Vector2d ground_at_image_center(const Eigen::Matrix3d& image_to_ground,
+                                                     int width_px, int height_px);
+
 /// Camera projection (ground frame -> pixels) consistent with a ground-to-image homography and a
 /// known camera centre (x, y, height): the third column follows from P * (centre, 1) = 0. Needs
 /// no intrinsics, so it also works where the homography cannot constrain the focal length (long

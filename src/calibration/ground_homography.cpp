@@ -112,15 +112,24 @@ std::optional<Eigen::Matrix<double, 3, 4>> projection_from_camera_center(
   projection.col(2) =
       -(ground_to_image * Eigen::Vector3d(center.x(), center.y(), 1.0)) / center.z();
   projection.col(3) = ground_to_image.col(2);
-  // Ground points in front of the camera need positive depth: check the image centre's ray.
-  const Eigen::Vector3d center_ground =
-      ground_to_image.inverse() * Eigen::Vector3d(0.5 * width_px, 0.5 * height_px, 1.0);
-  if ((projection * Eigen::Vector4d(center_ground.x() / center_ground.z(),
-                                    center_ground.y() / center_ground.z(), 0.0, 1.0))
-          .z() < 0.0) {
-    projection = -projection;
+  return metric_projection(projection,
+                           ground_at_image_center(ground_to_image.inverse(), width_px, height_px));
+}
+
+Eigen::Matrix<double, 3, 4> metric_projection(const Eigen::Matrix<double, 3, 4>& projection,
+                                              const Eigen::Vector2d& seen_ground_point) {
+  const double axis = projection.block<1, 3>(2, 0).norm();
+  if (axis < kEpsilon) {
+    throw std::invalid_argument("camera projection has no principal axis");
   }
-  return projection;
+  const double depth =
+      (projection * Eigen::Vector4d(seen_ground_point.x(), seen_ground_point.y(), 0.0, 1.0)).z();
+  return projection / (depth < 0.0 ? -axis : axis);
+}
+
+Eigen::Vector2d ground_at_image_center(const Eigen::Matrix3d& image_to_ground, int width_px,
+                                       int height_px) {
+  return (image_to_ground * Eigen::Vector3d(0.5 * width_px, 0.5 * height_px, 1.0)).hnormalized();
 }
 
 }  // namespace jp::calibration

@@ -44,7 +44,11 @@ GroundCalibration parse_ground_calibration(std::string_view yaml_text) {
     calibration.camera_ground_position_m = {position[0].as<double>(), position[1].as<double>()};
     calibration.camera_height_m = root["camera_height_m"].as<double>();
     if (root["ground_projection"]) {
-      calibration.ground_projection = matrix_of(root["ground_projection"], 3, 4);
+      // Site calibrations were written with the homography's scale; benchmark ones are metric.
+      calibration.ground_projection =
+          metric_projection(matrix_of(root["ground_projection"], 3, 4),
+                            ground_at_image_center(calibration.image_to_ground,
+                                                   calibration.width_px, calibration.height_px));
       calibration.ground_projection_estimated =
           root["ground_projection_estimated"] && root["ground_projection_estimated"].as<bool>();
     } else {
