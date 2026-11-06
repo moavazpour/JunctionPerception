@@ -44,6 +44,28 @@ model quantitatively and drive the `oracle` source. Dataset-specific code is lim
 
 ## Results
 
+### What the twin shows, without the dataset's calibration
+
+Each road user the twin draws with a heading, in each frame, compared with the TUMTraf LiDAR
+labels (R02, south1 on s01 and south2 on s03, day, 1 315 frames). The cameras are calibrated only
+with points picked on the map in the console; camera position and height are estimated from them,
+and the detector is not trained on TUMTraf. Road users without a heading are left out.
+
+| Distance from the camera | Within 2 m of a label | Position error, median |
+|---|---|---|
+| 0–40 m | 85 % | 0.54 m |
+| 40–60 m | 25 % (another 50 % 2–5 m off) | 0.57 m |
+| all | 52 % (62 % where the dataset has labels) | 0.55 m (P90 1.13 m) |
+
+Heading error: median 3.8°. Road users the twin shows where nothing is labelled (17 %) were checked
+on the video frames: the 16 largest tracks are all real road users the labels leave out; no false
+detection was found among them. Beyond 40 m the error comes from the calibration (south2's
+height is estimated 0.9 m too high). Limits: two day sequences, nearly all objects from south2;
+the labels are aligned to the map with 0.85 m RMS, which is part of every error.
+[Details](docs/evaluation.md#road-users-the-twin-shows-with-a-heading-2026-11-06).
+
+### Benchmark mode
+
 Live pipeline against the south-LiDAR labels of TUMTraf Intersection R02, S1–S4, both south
 cameras (4320 frames); matching gates 2 m for vehicles, 1 m for VRUs. Errors: mean / median /
 P90.
