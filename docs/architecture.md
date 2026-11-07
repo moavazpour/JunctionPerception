@@ -25,7 +25,7 @@ flowchart LR
     SS -- "/sites/&lt;id&gt;/ws/site" --> B[browser: BEV view<br/>draws only]
     SS -- "/manager/api/sites/&lt;id&gt;/state" --> H[headless clients, tools]
     O -- "jp_run --world-jsonl" --> E[jp_eval, tools/eval_fusion.py]
-    C -. clock.json .-> camera
+    C -. "clock.json" .-> camera
 ```
 
 Processes: one manager (`manager/jp_manager.py`, aiohttp) per host; one `jp_server` per running
